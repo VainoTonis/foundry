@@ -29,7 +29,7 @@ Foundry handles everything above that: specs, phases, sequencing, review, memory
 
 ```
 idea dumped as spec
-  → auto-queued as PoC
+  → you start it as PoC from the UI
   → phases run via cerberus (one at a time)
   → each phase: LLM reviews diff vs goal
     → pass: commit applied, next phase starts
@@ -48,7 +48,7 @@ Runs unattended. Check results in the UI whenever.
 
 ### PoC
 Prompt overlay: "Make it work. Prove the concept. Structure and tests are secondary."
-Triggered automatically. Any spec in the dumpster starts here.
+Default track for any new spec. Triggered manually from the UI.
 
 ### Polish
 Prompt overlay: "Write this properly. Clean structure, explicit error handling, proper tests. This goes long-term into the codebase."
@@ -111,13 +111,17 @@ specs
 
 workflows
   id, spec_id, track (snapshot at run time), status,
+  max_cost_usd,             -- nullable, defaults from config; runner pauses workflow if cumulative phase cost would exceed
   created_at, finished_at
 
 phases
-  id, workflow_id, position, name, goal,
+  id, workflow_id,
+  position,                 -- execution order
+  name, goal,
   prompt_sent,              -- exact string sent to cerberus
   status,                   -- pending|running|awaiting_review|done|failed
   retry_count,
+  timeout_seconds,          -- wall-clock kill for cerberus run; defaults from config
   cerberus_session,
   cerberus_commit,
   cost_usd,
@@ -152,6 +156,10 @@ cerberus --name <session> clean
 ```
 
 `start` is blocking. Foundry runs it in a goroutine. Polls logs every 2s, writes to phase_logs.
+A wall-clock timer enforces `phases.timeout_seconds`; on expiry the cerberus session is killed and the phase fails as if cerberus returned non-zero.
+
+Before each phase starts, the runner checks `SUM(cost_usd)` for the workflow against `workflows.max_cost_usd`.
+If the next phase would plausibly exceed the budget, the workflow is paused before the phase begins (no cerberus session opened).
 
 On phase done:
 1. Phase → awaiting_review
@@ -165,8 +173,13 @@ On phase done:
 ## Review model
 
 Uses opencode (same image as cerberus agents). Cheap/fast model (e.g. haiku).
-Prompt: diff + phase goal → structured JSON: verdict, notes, decisions, rationale, adjusted_prompt.
+Output is structured JSON: verdict, notes, decisions, rationale, adjusted_prompt.
 Model and image configurable, defaults to same cerberus image.
+
+The reviewer prompt is chosen from `workflows.track`:
+
+- **PoC**: diff + phase goal → verdict. Bar is "does this plausibly accomplish the goal."
+- **Polish**: diff + phase goal + test output (from cerberus) → verdict. Bar is "diff accomplishes the goal, tests cover the public surface, no direct tests against unexported functions." Private functions are expected to be exercised through their public callers; a test that imports and calls an unexported symbol is a fail.
 
 ---
 
@@ -183,9 +196,11 @@ GET    /api/specs/:id
 PATCH  /api/specs/:id                  edit content, title, tags
 POST   /api/specs/:id/promote          poc → polish
 
-POST   /api/workflows                  {spec_id}  manual trigger (auto-queue also exists)
+POST   /api/workflows                  {spec_id}  manual trigger
 GET    /api/workflows/:id
 GET    /api/workflows/:id/phases
+POST   /api/workflows/:id/resume       re-runs the failed phase from scratch (fresh prompt, retry_count reset).
+                                       To change the prompt, edit the spec first.
 
 GET    /api/phases/:id
 GET    /api/phases/:id/logs
@@ -216,8 +231,9 @@ db_url: "postgres://foundry:foundry@localhost:5432/foundry?sslmode=disable"
 cerberus_bin: "cerberus"
 cerberus_image: "your-dev-image"
 server_port: 8080
-auto_queue: true              # automatically start PoC workflows for dumpster specs
-max_concurrent_workflows: 1   # keep it simple for now
+max_concurrent_workflows: 1            # keep it simple for now
+default_workflow_budget_usd: 5.00      # used for workflows.max_cost_usd when not set per-workflow
+default_phase_timeout_seconds: 1800    # used for phases.timeout_seconds when not set per-phase
 ```
 
 ---
@@ -243,7 +259,7 @@ foundry/
     cerberus/   exec wrapper
     spec/       markdown parser (phases, context extraction)
     review/     LLM review client
-    workflow/   phase state machine + runner + auto-queue loop
+    workflow/   runner, phase state machine
     config/     config.yaml loader
   migrations/   001_init.sql ...
   web/          index.html, app.js, style.css
@@ -263,7 +279,7 @@ foundry/
 3. `internal/cerberus/` — exec wrapper (start, status, logs, review, apply, clean)
 4. `internal/spec/` — markdown parser
 5. `internal/review/` — LLM review client
-6. `internal/workflow/` — state machine, runner goroutines, auto-queue loop
+6. `internal/workflow/` — linear runner, state machine, runner goroutine
 7. `internal/api/` — HTTP handlers
 8. `cmd/server/` — main: config load, db init, routes, listen
 9. `web/` — HTML/JS/CSS
