@@ -31,10 +31,10 @@ function navigate(view, params = {}) {
 function render() {
   const { view, params } = _view;
   app.innerHTML = '';
-  // update nav active state
   document.querySelectorAll('nav a').forEach(a => a.classList.remove('active'));
   if (view === 'backlog') { document.getElementById('nav-backlog').classList.add('active'); renderBacklog(); }
   else if (view === 'projects') { document.getElementById('nav-projects').classList.add('active'); renderProjects(); }
+  else if (view === 'settings') { document.getElementById('nav-settings').classList.add('active'); renderSettings(); }
   else if (view === 'spec') renderSpec(params.id);
   else if (view === 'workflow') renderWorkflow(params.id);
 }
@@ -96,7 +96,6 @@ async function renderBacklog() {
 async function renderSpec(id) {
   let spec = await api.get(`/api/specs/${id}`).catch(e => { app.append(el('div', {className:'empty'}, e.message)); return null; });
   if (!spec) return;
-  const workflows = await api.get(`/api/specs`).catch(() => null); // we'll fetch workflows separately
 
   app.append(el('span', { className: 'back', onclick: () => navigate('backlog') }, '← Backlog'));
 
@@ -130,7 +129,9 @@ async function renderSpec(id) {
   const fieldTitle = el('div', { className: 'field' });
   fieldTitle.append(el('label', {}, 'Title'), titleInput);
   const fieldContent = el('div', { className: 'field' });
-  fieldContent.append(el('label', {}, 'Content (markdown)'), contentTA);
+  const hint = el('div', { style: 'font-size:.75rem;color:var(--muted);margin-bottom:.3rem' },
+    'Needs at least one phase: ## Phase 1: Name');
+  fieldContent.append(el('label', {}, 'Content (markdown)'), hint, contentTA);
   section.append(fieldTitle, fieldContent,
     el('div', { style: 'display:flex;gap:.5rem' }, saveBtn, promoteBtn, runBtn));
   app.append(section);
@@ -138,16 +139,26 @@ async function renderSpec(id) {
   // workflows
   const wfSection = el('div', { className: 'section' });
   wfSection.append(el('h3', {}, 'Workflow runs'));
-  // fetch by listing phases won't work; we'd need a workflow list endpoint by spec.
-  // For now show a message — we'll link from nav.
   const wfList = el('div', { id: 'wf-list' });
   wfList.append(el('div', { className: 'empty' }, 'Loading...'));
   wfSection.append(wfList);
   app.append(wfSection);
 
-  // fetch workflows for this spec via all workflows (no dedicated endpoint — build from known IDs)
-  // We store locally or just give user the run button above. For richer history we'd need GET /api/workflows?spec_id=
-  wfList.innerHTML = '<div class="empty">Start a workflow from the button above.</div>';
+  api.get(`/api/specs/${id}/workflows`).then(wfs => {
+    wfList.innerHTML = '';
+    if (!wfs || !wfs.length) {
+      wfList.append(el('div', { className: 'empty' }, 'No runs yet.'));
+      return;
+    }
+    for (const wf of wfs) {
+      const row = el('div', { className: 'card', style: 'cursor:pointer', onclick: () => navigate('workflow', { id: wf.id }) });
+      const hd = el('div', { className: 'card-header' });
+      hd.append(el('span', { className: 'card-title' }, `Workflow #${wf.id}`), chip(wf.track), chip(wf.status));
+      const meta = el('div', { className: 'card-meta' }, fmtDate(wf.created_at) + (wf.finished_at ? ' → ' + fmtDate(wf.finished_at) : ' (running)'));
+      row.append(hd, meta);
+      wfList.append(row);
+    }
+  }).catch(() => { wfList.innerHTML = '<div class="empty">Could not load workflows.</div>'; });
 }
 
 // ---- Workflow detail ----
@@ -184,7 +195,12 @@ async function renderWorkflow(id) {
     app.append(row);
   }
 
-  if (!phases || !phases.length) app.append(el('div', { className: 'empty' }, 'No phases yet.'));
+  if (!phases || !phases.length) {
+    const msg = wf.status === 'paused'
+      ? 'No phases found — spec content needs ## Phase 1: sections. Edit the spec and resume.'
+      : 'No phases yet.';
+    app.append(el('div', { className: 'empty' }, msg));
+  }
 
   // auto-refresh if running
   if (wf.status === 'running') {
@@ -223,8 +239,20 @@ function togglePhaseDetail(ph, row) {
     const text = await fetch(`/api/phases/${ph.id}/diff`).then(r => r.text()).catch(e => e.message);
     renderDiff(det, text);
   });
+  const cleanBtn = btn('Clean session', 'btn-danger', async () => {
+    if (!confirm(`Clean cerberus session for phase ${ph.position}?`)) return;
+    await api.post(`/api/phases/${ph.id}/clean`).catch(e => alert(e.message));
+    navigate('workflow', { id: ph.workflow_id });
+  });
   acts.append(approveBtn, rejectBtn, diffBtn);
+  if (ph.cerberus_session) acts.append(cleanBtn);
   det.append(acts);
+
+  // session name
+  if (ph.cerberus_session) {
+    det.append(el('div', { style: 'font-size:.75rem;color:var(--muted);margin-bottom:.75rem' },
+      'Session: ' + ph.cerberus_session));
+  }
 
   // decision record
   if (ph.decision_summary || ph.review_notes) {
@@ -479,7 +507,79 @@ async function renderProjects() {
   }
 }
 
+// ---- Settings view ----
+async function renderSettings() {
+  app.append(el('h2', { style: 'margin-bottom:1.25rem' }, 'Settings'));
+
+  const fields = [
+    { key: 'db_url',                       label: 'Database URL',                    type: 'text' },
+    { key: 'cerberus_bin',                  label: 'Cerberus binary',                 type: 'text' },
+    { key: 'cerberus_image',                label: 'Cerberus image (blank = default)', type: 'text' },
+    { key: 'cerberus_model',                label: 'Cerberus model (blank = default)', type: 'text' },
+    { key: 'server_port',                   label: 'Server port',                     type: 'text' },
+    { key: 'git_root',                      label: 'Git root path',                   type: 'text' },
+    { key: 'max_concurrent_workflows',      label: 'Max concurrent workflows',        type: 'text' },
+    { key: 'default_workflow_budget_usd',   label: 'Default workflow budget (USD)',   type: 'text' },
+    { key: 'default_phase_timeout_seconds', label: 'Default phase timeout (sec)',     type: 'text' },
+  ];
+
+  // load current yaml
+  let yamlText = '';
+  try {
+    const r = await fetch('/api/settings');
+    yamlText = await r.text();
+  } catch(e) {
+    app.append(el('div', { className: 'empty' }, 'Could not load settings: ' + e.message));
+    return;
+  }
+
+  // parse key: "value" or key: value into a map
+  function parseYAML(text) {
+    const map = {};
+    for (const line of text.split('\n')) {
+      const m = line.match(/^(\w+):\s*"?([^"]*)"?\s*$/);
+      if (m) map[m[1]] = m[2];
+    }
+    return map;
+  }
+
+  const current = parseYAML(yamlText);
+  const inputs = {};
+
+  const form = el('div');
+  for (const f of fields) {
+    const inp = input(f.type, current[f.key] || '');
+    inputs[f.key] = inp;
+    form.append(field(f.label, inp));
+  }
+  app.append(form);
+
+  const note = el('div', { style: 'font-size:.75rem;color:var(--muted);margin-bottom:1rem' },
+    'Changes are written to config.yaml immediately. Restart the server for most changes to take effect.');
+  app.append(note);
+
+  const saveBtn = btn('Save', 'btn-primary', async () => {
+    const patch = {};
+    for (const f of fields) {
+      const val = inputs[f.key].value;
+      if (val !== (current[f.key] || '')) patch[f.key] = val;
+    }
+    if (!Object.keys(patch).length) { alert('No changes.'); return; }
+    try {
+      await fetch('/api/settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      alert('Saved. Restart server to apply.');
+      navigate('settings');
+    } catch(e) { alert(e.message); }
+  });
+  app.append(saveBtn);
+}
+
 // ---- boot ----
 document.getElementById('nav-backlog').onclick = e => { e.preventDefault(); navigate('backlog'); };
 document.getElementById('nav-projects').onclick = e => { e.preventDefault(); navigate('projects'); };
+document.getElementById('nav-settings').onclick = e => { e.preventDefault(); navigate('settings'); };
 navigate('backlog');
