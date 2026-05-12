@@ -1,0 +1,17 @@
+# build output
+server
+foundry
+
+# Go
+*.test
+*.out
+
+# env / secrets
+.env
+*.env
+
+# editor
+.idea/
+.vscode/
+*.swp
+*.swo
