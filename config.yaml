@@ -1,0 +1,11 @@
+db_url: "postgres://foundry:foundry@localhost:5432/foundry?sslmode=disable"
+cerberus_bin: "cerberus"
+cerberus_image: "your-dev-image"
+server_port: 8080
+max_concurrent_workflows: 1
+default_workflow_budget_usd: 5.00
+default_phase_timeout_seconds: 1800
+review_base_url: "https://api.openai.com/v1"
+review_api_key: ""
+review_model: "claude-haiku-4-5"
+git_root: "~/git"
