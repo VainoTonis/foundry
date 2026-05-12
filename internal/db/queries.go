@@ -242,6 +242,25 @@ func GetWorkflow(ctx context.Context, pool *pgxpool.Pool, id int64) (Workflow, e
 	return w, err
 }
 
+func ListWorkflowsBySpec(ctx context.Context, pool *pgxpool.Pool, specID int64) ([]Workflow, error) {
+	rows, err := pool.Query(ctx,
+		`SELECT id, spec_id, track, status, max_cost_usd, created_at, finished_at FROM workflows WHERE spec_id = $1 ORDER BY id DESC`, specID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Workflow
+	for rows.Next() {
+		var w Workflow
+		if err := rows.Scan(&w.ID, &w.SpecID, &w.Track, &w.Status, &w.MaxCostUSD, &w.CreatedAt, &w.FinishedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
 func UpdateWorkflowStatus(ctx context.Context, pool *pgxpool.Pool, id int64, status string) error {
 	var finishedAt *time.Time
 	if status == "done" || status == "failed" || status == "paused" {

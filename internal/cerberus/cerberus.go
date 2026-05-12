@@ -12,16 +12,16 @@ import (
 // Client wraps the cerberus binary.
 type Client struct {
 	bin   string // path to cerberus binary
-	image string // container image passed to start
+	image string // optional: container image; empty = cerberus default
+	model string // optional: model override; empty = cerberus default
 }
 
-func New(bin, image string) *Client {
-	return &Client{bin: bin, image: image}
+func New(bin, image, model string) *Client {
+	return &Client{bin: bin, image: image, model: model}
 }
 
-// Start launches a cerberus session with the given prompt. It writes the prompt
-// to a temp file and calls: cerberus --name <session> start --prompt-file <f> --image <image>
-// The call is blocking; run it in a goroutine.
+// Start launches a cerberus session with the given prompt. Blocking — run in a goroutine.
+// cerberus start --name <session> --prompt-file <f> [--image <image>]
 func (c *Client) Start(ctx context.Context, session, prompt string) error {
 	f, err := os.CreateTemp("", "foundry-prompt-*.txt")
 	if err != nil {
@@ -34,12 +34,20 @@ func (c *Client) Start(ctx context.Context, session, prompt string) error {
 	}
 	f.Close()
 
-	return c.run(ctx, "--name", session, "start", "--prompt-file", f.Name(), "--image", c.image)
+	args := []string{"start", "--name", session, "--prompt-file", f.Name()}
+	if c.image != "" {
+		args = append(args, "--image", c.image)
+	}
+	if c.model != "" {
+		args = append(args, "--model", c.model)
+	}
+	return c.run(ctx, args...)
 }
 
 // Status returns the raw status string from cerberus.
+// cerberus status --name <session>
 func (c *Client) Status(ctx context.Context, session string) (string, error) {
-	out, err := c.output(ctx, "--name", session, "status")
+	out, err := c.output(ctx, "status", "--name", session)
 	if err != nil {
 		return "", err
 	}
@@ -47,41 +55,32 @@ func (c *Client) Status(ctx context.Context, session string) (string, error) {
 }
 
 // Logs returns the full log output for a session.
+// cerberus logs --name <session>
 func (c *Client) Logs(ctx context.Context, session string) (string, error) {
-	out, err := c.output(ctx, "--name", session, "logs")
-	if err != nil {
-		return "", err
-	}
-	return out, nil
+	return c.output(ctx, "logs", "--name", session)
 }
 
 // Diff returns the git diff produced by the cerberus session.
+// cerberus review --name <session> --diff
 func (c *Client) Diff(ctx context.Context, session string) (string, error) {
-	out, err := c.output(ctx, "--name", session, "review", "--diff")
-	if err != nil {
-		return "", err
-	}
-	return out, nil
+	return c.output(ctx, "review", "--name", session, "--diff")
 }
 
-// Commit returns the commit hash applied by cerberus (cherry-pick source).
-func (c *Client) Commit(ctx context.Context, session string) (string, error) {
-	out, err := c.output(ctx, "--name", session, "commit")
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(out), nil
+// Review returns the plain review summary (files touched, commit hash).
+// cerberus review --name <session>
+func (c *Client) Review(ctx context.Context, session string) (string, error) {
+	return c.output(ctx, "review", "--name", session)
 }
 
 // Clean removes the cerberus session.
+// cerberus clean --name <session>
 func (c *Client) Clean(ctx context.Context, session string) error {
-	return c.run(ctx, "--name", session, "clean")
+	return c.run(ctx, "clean", "--name", session)
 }
 
 // SessionName builds the canonical session name for a phase.
-// specIDShort is the first 8 chars of the spec id (as string), n is the phase position.
-func SessionName(specIDShort string, n int) string {
-	return fmt.Sprintf("foundry-%s-p%d", specIDShort, n)
+func SessionName(specID int64, position int) string {
+	return fmt.Sprintf("foundry-%d-p%d", specID, position)
 }
 
 func (c *Client) run(ctx context.Context, args ...string) error {

@@ -2,17 +2,14 @@ package workflow
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
-	"os/exec"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tonis2/foundry/internal/cerberus"
 	"github.com/tonis2/foundry/internal/db"
-	"github.com/tonis2/foundry/internal/review"
 	"github.com/tonis2/foundry/internal/spec"
 )
 
@@ -25,14 +22,13 @@ type Config struct {
 
 // Runner owns the long-running workflow execution loop.
 type Runner struct {
-	pool     *pgxpool.Pool
-	cerb     *cerberus.Client
-	reviewer *review.Reviewer
-	cfg      Config
+	pool *pgxpool.Pool
+	cerb *cerberus.Client
+	cfg  Config
 }
 
-func NewRunner(pool *pgxpool.Pool, cerb *cerberus.Client, rev *review.Reviewer, cfg Config) *Runner {
-	return &Runner{pool: pool, cerb: cerb, reviewer: rev, cfg: cfg}
+func NewRunner(pool *pgxpool.Pool, cerb *cerberus.Client, cfg Config) *Runner {
+	return &Runner{pool: pool, cerb: cerb, cfg: cfg}
 }
 
 // Start launches the workflow for the given workflowID in a goroutine and returns immediately.
@@ -60,6 +56,13 @@ func (r *Runner) run(ctx context.Context, workflowID int64) error {
 	}
 
 	parsed := spec.Parse(sp.Content)
+	if len(parsed.Phases) == 0 {
+		log.Printf("workflow %d: spec has no phases, pausing", workflowID)
+		_ = db.UpdateWorkflowStatus(ctx, r.pool, workflowID, "paused")
+		failStatus := "paused"
+		_, _ = db.UpdateSpec(ctx, r.pool, sp.ID, db.UpdateSpecParams{Status: &failStatus})
+		return fmt.Errorf("spec %d has no ## Phase N: sections", sp.ID)
+	}
 	// ensure phase rows exist
 	for _, ph := range parsed.Phases {
 		timeout := r.cfg.DefaultPhaseTimeoutSeconds
@@ -129,7 +132,12 @@ func (r *Runner) execPhase(
 	prompt string,
 	isRetry bool,
 ) error {
-	sessionName := cerberus.SessionName(fmt.Sprintf("%d", sp.ID)[:min(8, len(fmt.Sprintf("%d", sp.ID)))], phase.Position)
+	sessionName := cerberus.SessionName(sp.ID, phase.Position)
+
+	// clean any leftover session from a previous attempt
+	if err := r.cerb.Clean(ctx, sessionName); err != nil {
+		log.Printf("pre-clean session %s: %v (ignored)", sessionName, err)
+	}
 
 	now := time.Now()
 	status := "running"
@@ -182,42 +190,32 @@ loop:
 	awaitStatus := "awaiting_review"
 	_, _ = db.UpdatePhase(ctx, r.pool, phase.ID, db.UpdatePhaseParams{Status: &awaitStatus})
 
-	// get diff
+	// get diff from cerberus — non-empty diff = pass
 	diff, err := r.cerb.Diff(ctx, sessionName)
 	if err != nil {
-		diff = "(diff unavailable: " + err.Error() + ")"
+		diff = ""
 	}
 
-	// run reviewer
-	res, reviewErr := r.reviewer.Review(ctx, phase.Goal, diff, wf.Track, "")
-	if reviewErr != nil {
-		log.Printf("review error phase %d: %v — treating as fail", phase.ID, reviewErr)
-		res = review.Result{Verdict: "fail", Notes: reviewErr.Error()}
-	}
-
-	filesJSON, _ := json.Marshal(res.FilesTouched)
 	now3 := time.Now()
-	verdict := res.Verdict
+	verdict := "pass"
+	notes := "cerberus produced changes"
+	if strings.TrimSpace(diff) == "" {
+		verdict = "fail"
+		notes = "cerberus exited 0 but produced no diff"
+	}
+
+	// extract files touched from review output (first line of cerberus review without --diff)
+	reviewOut, _ := r.cerb.Review(ctx, sessionName)
+	filesJSON := extractFilesJSON(reviewOut)
+
 	_, _ = db.UpdatePhase(ctx, r.pool, phase.ID, db.UpdatePhaseParams{
-		ReviewVerdict:     &verdict,
-		ReviewNotes:       &res.Notes,
-		DecisionSummary:   &res.DecisionSummary,
-		DecisionRationale: &res.Rationale,
-		FilesTouched:      filesJSON,
-		FinishedAt:        &now3,
+		ReviewVerdict: &verdict,
+		ReviewNotes:   &notes,
+		FilesTouched:  filesJSON,
+		FinishedAt:    &now3,
 	})
 
-	if res.Verdict == "pass" {
-		// cherry-pick commit to base branch
-		commit, err := r.cerb.Commit(ctx, sessionName)
-		if err == nil && commit != "" {
-			if err := cherryPick(proj.RepoPath, commit); err != nil {
-				log.Printf("cherry-pick %s: %v", commit, err)
-			} else {
-				_, _ = db.UpdatePhase(ctx, r.pool, phase.ID, db.UpdatePhaseParams{CerberusCommit: &commit})
-			}
-		}
-		_ = r.cerb.Clean(ctx, sessionName)
+	if verdict == "pass" {
 		doneStatus := "done"
 		_, _ = db.UpdatePhase(ctx, r.pool, phase.ID, db.UpdatePhaseParams{Status: &doneStatus})
 		return nil
@@ -230,11 +228,8 @@ loop:
 		return fmt.Errorf("phase %d failed after retry", phase.ID)
 	}
 
-	// retry once with adjusted prompt
-	adjusted := res.AdjustedPrompt
-	if adjusted == "" {
-		adjusted = prompt + "\n\n[Previous attempt failed. Reviewer notes: " + res.Notes + "]"
-	}
+	// retry once
+	adjusted := prompt + "\n\n[Previous attempt produced no changes. Try again.]"
 	newRetry := phase.RetryCount + 1
 	_, _ = db.UpdatePhase(ctx, r.pool, phase.ID, db.UpdatePhaseParams{
 		AdjustedPrompt: &adjusted,
@@ -272,20 +267,24 @@ func (r *Runner) collectLogs(ctx context.Context, phaseID int64, session string,
 	}
 }
 
-func cherryPick(repoPath, commit string) error {
-	cmd := exec.Command("git", "-C", repoPath, "cherry-pick", commit)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("%w: %s", err, string(out))
-	}
-	return nil
-}
+func strPtr(s string) *string { return &s }
 
-func min(a, b int) int {
-	if a < b {
-		return a
+// extractFilesJSON parses cerberus review output and returns a JSON array of filenames.
+// Output lines look like: "  hello_kitten.md" after the commit line.
+func extractFilesJSON(reviewOut string) []byte {
+	var files []string
+	for _, line := range strings.Split(reviewOut, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "commit") || strings.HasPrefix(line, "status") {
+			continue
+		}
+		files = append(files, line)
 	}
+	if len(files) == 0 {
+		return []byte("[]")
+	}
+	b := []byte(`["`)
+	b = append(b, []byte(strings.Join(files, `","`))...)
+	b = append(b, []byte(`"]`)...)
 	return b
 }
-
-func strPtr(s string) *string { return &s }
