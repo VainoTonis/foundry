@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -24,10 +25,11 @@ type Server struct {
 	mux           *http.ServeMux
 	defaultBudget float64
 	gitRoot       string
+	cfgPath       string
 }
 
-func NewServer(pool *pgxpool.Pool, runner *workflow.Runner, cerb *cerberus.Client, defaultBudget float64, gitRoot string) *Server {
-	s := &Server{pool: pool, runner: runner, cerb: cerb, defaultBudget: defaultBudget, gitRoot: gitRoot}
+func NewServer(pool *pgxpool.Pool, runner *workflow.Runner, cerb *cerberus.Client, defaultBudget float64, gitRoot string, cfgPath string) *Server {
+	s := &Server{pool: pool, runner: runner, cerb: cerb, defaultBudget: defaultBudget, gitRoot: gitRoot, cfgPath: cfgPath}
 	s.mux = http.NewServeMux()
 	s.routes()
 	return s
@@ -49,6 +51,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/api/workflows/", s.handleWorkflow)
 
 	s.mux.HandleFunc("/api/phases/", s.handlePhase)
+	s.mux.HandleFunc("/api/settings", s.handleSettings)
 }
 
 // ---- projects ----
@@ -193,6 +196,13 @@ func (s *Server) handleSpec(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch {
+	case suffix == "workflows" && r.Method == http.MethodGet:
+		wfs, err := db.ListWorkflowsBySpec(r.Context(), s.pool, id)
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonOK(w, wfs, http.StatusOK)
 	case suffix == "promote" && r.Method == http.MethodPost:
 		sp, err := db.GetSpec(r.Context(), s.pool, id)
 		if errors.Is(err, db.ErrNotFound) {
@@ -450,6 +460,23 @@ func (s *Server) handlePhase(w http.ResponseWriter, r *http.Request) {
 		}
 		ph, _ := db.GetPhase(r.Context(), s.pool, id)
 		jsonOK(w, ph, http.StatusOK)
+	case suffix == "clean" && r.Method == http.MethodPost:
+		ph, err := db.GetPhase(r.Context(), s.pool, id)
+		if errors.Is(err, db.ErrNotFound) {
+			jsonErr(w, "not found", http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if ph.CerberusSession != nil {
+			if err := s.cerb.Clean(r.Context(), *ph.CerberusSession); err != nil {
+				jsonErr(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+		jsonOK(w, map[string]string{"status": "cleaned"}, http.StatusOK)
 	default:
 		jsonErr(w, "not found", http.StatusNotFound)
 	}
@@ -515,4 +542,75 @@ func pathID(path, prefix string) (int64, error) {
 	s := strings.TrimPrefix(path, prefix)
 	s = strings.TrimSuffix(s, "/")
 	return strconv.ParseInt(s, 10, 64)
+}
+
+// ---- settings ----
+
+func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		data, err := os.ReadFile(s.cfgPath)
+		if err != nil {
+			jsonErr(w, "cannot read config: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/x-yaml")
+		w.Write(data)
+	case http.MethodPatch:
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			jsonErr(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		// read current yaml as text, update matching key: value lines
+		data, err := os.ReadFile(s.cfgPath)
+		if err != nil {
+			jsonErr(w, "cannot read config: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		updated := applyYAMLPatch(string(data), body)
+		if err := os.WriteFile(s.cfgPath, []byte(updated), 0644); err != nil {
+			jsonErr(w, "cannot write config: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/x-yaml")
+		w.Write([]byte(updated))
+	default:
+		jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// applyYAMLPatch does a naive line-by-line replacement of top-level YAML keys.
+func applyYAMLPatch(yaml string, patch map[string]any) string {
+	lines := strings.Split(yaml, "\n")
+	replaced := map[string]bool{}
+	for i, line := range lines {
+		for k, v := range patch {
+			prefix := k + ":"
+			if strings.HasPrefix(strings.TrimSpace(line), prefix) {
+				lines[i] = fmt.Sprintf("%s: %s", k, yamlValue(v))
+				replaced[k] = true
+			}
+		}
+	}
+	for k, v := range patch {
+		if !replaced[k] {
+			lines = append(lines, fmt.Sprintf("%s: %s", k, yamlValue(v)))
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// yamlValue formats a value for a YAML line.
+// Strings get quoted; numbers and booleans are written bare.
+func yamlValue(v any) string {
+	s := fmt.Sprint(v)
+	// if it parses as a number or bool, write bare
+	if _, err := strconv.ParseFloat(s, 64); err == nil {
+		return s
+	}
+	if _, err := strconv.ParseBool(s); err == nil {
+		return s
+	}
+	return fmt.Sprintf("%q", s)
 }
