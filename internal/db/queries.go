@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"strconv"
 	"strings"
 	"time"
@@ -500,19 +501,19 @@ func joinComma(s []string) string {
 // --- SpecDrafts ---
 
 type SpecDraft struct {
-	ID              int64      `json:"id"`
-	ProjectID       *int64     `json:"project_id"`
-	Title           string     `json:"title"`
-	CerberusSession string     `json:"cerberus_session"`
-	Messages        []byte     `json:"messages"`
-	Status          string     `json:"status"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	ID              int64           `json:"id"`
+	ProjectID       *int64          `json:"project_id"`
+	Title           string          `json:"title"`
+	CerberusSession string          `json:"cerberus_session"`
+	Messages        json.RawMessage `json:"messages"`
+	Status          string          `json:"status"`
+	CreatedAt       time.Time       `json:"created_at"`
+	UpdatedAt       time.Time       `json:"updated_at"`
 }
 
 type UpdateSpecDraftParams struct {
 	Title           *string
-	Messages        []byte
+	Messages        json.RawMessage
 	Status          *string
 	CerberusSession *string
 }

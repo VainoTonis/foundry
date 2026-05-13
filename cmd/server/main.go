@@ -63,6 +63,9 @@ func main() {
 	}
 	runner := workflow.NewRunner(pool, cerb, runnerCfg)
 
+	// orphan draft recovery (non-blocking)
+	go api.RecoverOrphanDrafts(context.Background(), pool, cerb)
+
 	// API server
 	srv := api.NewServer(pool, runner, cerb, cfg.DefaultWorkflowBudgetUSD, cfg.GitRoot, cfgPath)
 

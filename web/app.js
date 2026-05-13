@@ -36,6 +36,7 @@ function render() {
   else if (view === 'projects') { document.getElementById('nav-projects').classList.add('active'); renderProjects(); }
   else if (view === 'settings') { document.getElementById('nav-settings').classList.add('active'); renderSettings(); }
   else if (view === 'spec') renderSpec(params.id);
+  else if (view === 'spec_builder') renderSpecBuilder(params.id);
   else if (view === 'workflow') renderWorkflow(params.id);
 }
 
@@ -51,7 +52,8 @@ async function renderBacklog() {
   const actions = el('div', { style: 'display:flex;gap:.5rem' });
   const btnProj = btn('+ Project', () => showCreateProject());
   const btnSpec = btn('+ Spec', 'btn-primary', () => showCreateSpec(projects));
-  actions.append(btnProj, btnSpec);
+  const btnBuild = btn('Build with AI', '', () => navigate('spec_builder', {}));
+  actions.append(btnProj, btnSpec, btnBuild);
   header.append(title, actions);
   app.append(header);
 
@@ -90,6 +92,25 @@ async function renderBacklog() {
     }
   }
   if (!any) app.append(el('div', { className: 'empty' }, 'No specs yet. Create one to get started.'));
+
+  // active spec drafts
+  const drafts = await api.get('/api/spec-drafts').catch(() => []);
+  const activeDrafts = (drafts || []).filter(d => d.status === 'active');
+  if (activeDrafts.length > 0) {
+    app.append(el('div', { className: 'group-label', style: 'margin-top:1.5rem' }, 'spec builder drafts'));
+    for (const d of activeDrafts) {
+      const card = el('div', { className: 'card' });
+      const hd = el('div', { className: 'card-header' });
+      const title = el('span', { className: 'card-title' }, d.title || '(untitled draft)');
+      title.onclick = () => navigate('spec_builder', { id: d.id });
+      hd.append(title, chip('active'));
+      const meta = el('div', { className: 'card-meta' }, fmtDate(d.created_at));
+      const actions = el('div', { className: 'card-actions' });
+      actions.append(btn('Resume', 'btn-primary', () => navigate('spec_builder', { id: d.id })));
+      card.append(hd, meta, actions);
+      app.append(card);
+    }
+  }
 }
 
 // ---- Spec detail ----
@@ -576,6 +597,213 @@ async function renderSettings() {
     } catch(e) { alert(e.message); }
   });
   app.append(saveBtn);
+}
+
+// ---- Spec Builder ----
+async function renderSpecBuilder(draftId) {
+  // if we have a draftId, resume existing session
+  if (draftId) {
+    const draft = await api.get(`/api/spec-drafts/${draftId}`).catch(e => {
+      app.append(el('div', { className: 'empty' }, e.message));
+      return null;
+    });
+    if (!draft) return;
+    renderDraftChat(draft);
+    return;
+  }
+
+  // start form
+  app.append(el('span', { className: 'back', onclick: () => navigate('backlog') }, '← Backlog'));
+  app.append(el('h2', { style: 'margin-bottom:1.25rem' }, 'Build a Spec with AI'));
+
+  const projects = await api.get('/api/projects').catch(() => []);
+
+  const titleInput = input('text', '');
+  titleInput.placeholder = 'e.g. User authentication';
+
+  const projSelect = el('select');
+  const optNone = el('option', { value: '' }, '— no project —');
+  projSelect.append(optNone);
+  for (const p of (projects || [])) {
+    projSelect.append(el('option', { value: p.id }, p.name));
+  }
+
+  const form = el('div', { className: 'section' });
+  form.append(
+    field('Feature title', titleInput),
+    field('Project (optional)', projSelect),
+  );
+  app.append(form);
+
+  const startBtn = btn('Start', 'btn-primary', async () => {
+    const title = titleInput.value.trim();
+    startBtn.disabled = true;
+    startBtn.textContent = 'Starting…';
+    try {
+      const body = { title };
+      const pid = projSelect.value ? parseInt(projSelect.value) : null;
+      if (pid) body.project_id = pid;
+      // returns immediately — session starts in background
+      const draft = await api.post('/api/spec-drafts', body);
+      app.innerHTML = '';
+      renderDraftChat(draft);
+    } catch (e) {
+      startBtn.disabled = false;
+      startBtn.textContent = 'Start';
+      alert(e.message);
+    }
+  });
+  app.append(startBtn);
+}
+
+function renderDraftChat(draft) {
+  app.innerHTML = '';
+  app.append(el('span', { className: 'back', onclick: () => navigate('backlog') }, '← Backlog'));
+
+  const hdr = el('div', { style: 'display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem' });
+  hdr.append(
+    el('h2', {}, draft.title || 'Spec Builder'),
+    el('span', { style: 'font-size:.75rem;color:var(--muted)' }, 'session: ' + draft.cerberus_session),
+  );
+  app.append(hdr);
+
+  const chatBox = el('div', { className: 'chat-messages' });
+  app.append(chatBox);
+
+  // render existing messages — draft.messages is already a parsed array from JSON response
+  let msgs = Array.isArray(draft.messages) ? draft.messages : [];
+
+  let pollTimer = null;
+
+  function stopPolling() {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  }
+
+  if (draft.status === 'error') {
+    chatBox.append(el('div', { className: 'empty' }, 'Session error — the AI session failed to start. Abandon and try again.'));
+    const actionRow = el('div', { style: 'display:flex;gap:.5rem;margin-top:.75rem' });
+    actionRow.append(btn('Abandon', 'btn-danger', abandonDraft));
+    app.append(actionRow);
+    return;
+  }
+
+  if (msgs.length === 0) {
+    // session starting — show spinner and poll
+    const waitMsg = el('div', { className: 'empty' }, 'AI is thinking… this can take up to 60s');
+    chatBox.append(waitMsg);
+    pollTimer = setInterval(async () => {
+      const updated = await api.get(`/api/spec-drafts/${draft.id}`).catch(() => null);
+      if (!updated) return;
+      draft = updated;
+      const updatedMsgs = Array.isArray(updated.messages) ? updated.messages : [];
+      if (updated.status === 'error') {
+        stopPolling();
+        chatBox.innerHTML = '';
+        chatBox.append(el('div', { className: 'empty' }, 'Session error — the AI session failed to start. Abandon and try again.'));
+        return;
+      }
+      if (updatedMsgs.length > 0) {
+        stopPolling();
+        msgs = updatedMsgs;
+        chatBox.innerHTML = '';
+        for (const m of msgs) renderChatMsg(chatBox, m.role, m.content);
+        chatBox.scrollTop = chatBox.scrollHeight;
+        enableInput();
+      }
+    }, 3000);
+  } else {
+    for (const m of msgs) renderChatMsg(chatBox, m.role, m.content);
+    chatBox.scrollTop = chatBox.scrollHeight;
+  }
+  // input row — disabled until session ready
+  const inputRow = el('div', { className: 'chat-input-row' });
+  const msgTA = el('textarea', { className: 'chat-textarea', placeholder: 'Type a message…', rows: 3 });
+  msgTA.disabled = msgs.length === 0;
+  msgTA.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); }
+  });
+  const sendB = btn('Send', 'btn-primary', sendMsg);
+  sendB.disabled = msgs.length === 0;
+  inputRow.append(msgTA, sendB);
+  app.append(inputRow);
+
+  // action row
+  const actionRow = el('div', { style: 'display:flex;gap:.5rem;margin-top:.75rem' });
+  const saveB = btn('Save as Draft Spec', 'btn-primary', saveSpec);
+  saveB.disabled = msgs.length === 0;
+  const abandonB = btn('Abandon', 'btn-danger', abandonDraft);
+  actionRow.append(saveB, abandonB);
+  app.append(actionRow);
+
+  function enableInput() {
+    msgTA.disabled = false;
+    sendB.disabled = false;
+    saveB.disabled = false;
+    msgTA.focus();
+  }
+
+  async function sendMsg() {
+    const content = msgTA.value.trim();
+    if (!content) return;
+    const prevCount = msgs.length;
+    msgTA.value = '';
+    msgTA.disabled = true;
+    sendB.disabled = true;
+    renderChatMsg(chatBox, 'user', content);
+    chatBox.scrollTop = chatBox.scrollHeight;
+    const typing = el('div', { className: 'chat-msg chat-msg-assistant chat-typing' }, '…');
+    chatBox.append(typing);
+    chatBox.scrollTop = chatBox.scrollHeight;
+    try {
+      const updated = await api.post(`/api/spec-drafts/${draft.id}/message`, { content });
+      typing.remove();
+      const updatedMsgs = Array.isArray(updated.messages) ? updated.messages : [];
+      msgs = updatedMsgs;
+      draft.messages = updated.messages;
+      // render only new non-user messages — user is already rendered optimistically
+      for (const m of updatedMsgs.slice(prevCount)) {
+        if (m.role !== 'user') renderChatMsg(chatBox, m.role, m.content);
+      }
+    } catch (e) {
+      typing.remove();
+      renderChatMsg(chatBox, 'assistant', 'Error: ' + e.message);
+    } finally {
+      msgTA.disabled = false;
+      sendB.disabled = false;
+      msgTA.focus();
+      chatBox.scrollTop = chatBox.scrollHeight;
+    }
+  }
+
+  async function saveSpec() {
+    if (!confirm('Save this conversation as a draft spec and open it in the editor?')) return;
+    saveB.disabled = true;
+    saveB.textContent = 'Saving…';
+    try {
+      const result = await api.post(`/api/spec-drafts/${draft.id}/save`, {});
+      navigate('spec', { id: result.spec_id });
+    } catch (e) {
+      saveB.disabled = false;
+      saveB.textContent = 'Save as Draft Spec';
+      alert(e.message);
+    }
+  }
+
+  async function abandonDraft() {
+    if (!confirm('Abandon this spec draft and close the AI session?')) return;
+    try {
+      await fetch(`/api/spec-drafts/${draft.id}`, { method: 'DELETE' });
+    } catch (_) {}
+    navigate('backlog');
+  }
+}
+
+function renderChatMsg(box, role, content) {
+  const wrap = el('div', { className: `chat-msg chat-msg-${role}` });
+  const label = el('div', { className: 'chat-msg-label' }, role === 'user' ? 'you' : 'ai');
+  const body = el('div', { className: 'chat-msg-body' }, content);
+  wrap.append(label, body);
+  box.append(wrap);
 }
 
 // ---- boot ----

@@ -629,23 +629,37 @@ func (s *Server) handleSpecDrafts(w http.ResponseWriter, r *http.Request) {
 		if body.Title != "" {
 			initialPrompt += "\n\nThe user wants to build: " + body.Title
 		}
-
-		ctx120, cancel := context.WithTimeout(r.Context(), 120*time.Second)
-		defer cancel()
-		if err := s.cerb.Chat(ctx120, session, initialPrompt); err != nil {
-			log.Printf("spec-builder chat start error: %v", err)
+		var extraMounts []string
+		if body.ProjectID != nil {
+			if proj, err := db.GetProject(r.Context(), s.pool, *body.ProjectID); err == nil {
+				initialPrompt += "\n\nProject name: " + proj.Name + "\nProject is mounted at: /project"
+				extraMounts = append(extraMounts, proj.RepoPath+":/project")
+			}
 		}
 
-		ctx90, cancel2 := context.WithTimeout(r.Context(), 90*time.Second)
-		defer cancel2()
-		agentMsg, err := s.cerb.Message(ctx90, session, "Hello! What would you like to build? Tell me about the feature or system you have in mind.")
-		if err != nil {
-			log.Printf("spec-builder first message error: %v", err)
-			agentMsg = "Hello! Tell me what you'd like to build."
-		}
+		// Start session in background — cerberus chat takes 60-120s.
+		// Client polls GET /api/spec-drafts/:id until messages is non-empty.
+		pool := s.pool
+		cerb := s.cerb
+		draftID := draft.ID
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+			defer cancel()
+			// Chat runs the first turn; the agent's response IS the first message.
+			agentMsg, err := cerb.Chat(ctx, session, initialPrompt, extraMounts)
+			if err != nil {
+				log.Printf("spec-builder chat start error: %v", err)
+				errStatus := "error"
+				db.UpdateSpecDraft(ctx, pool, draftID, db.UpdateSpecDraftParams{Status: &errStatus})
+				return
+			}
+			if agentMsg == "" {
+				agentMsg = "Ready. What would you like to build?"
+			}
+			msgs := appendMessage(nil, "assistant", agentMsg)
+			db.UpdateSpecDraft(ctx, pool, draftID, db.UpdateSpecDraftParams{Messages: msgs})
+		}()
 
-		msgs := appendMessage(nil, "assistant", agentMsg)
-		draft, _ = db.UpdateSpecDraft(r.Context(), s.pool, draft.ID, db.UpdateSpecDraftParams{Messages: msgs})
 		jsonOK(w, draft, http.StatusCreated)
 	default:
 		jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -666,6 +680,19 @@ func (s *Server) handleSpecDraft(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch {
+	case suffix == "messages" && r.Method == http.MethodGet:
+		draft, err := db.GetSpecDraft(r.Context(), s.pool, id)
+		if errors.Is(err, db.ErrNotFound) {
+			jsonErr(w, "not found", http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(draft.Messages)
+
 	case suffix == "" && r.Method == http.MethodGet:
 		draft, err := db.GetSpecDraft(r.Context(), s.pool, id)
 		if errors.Is(err, db.ErrNotFound) {
@@ -927,6 +954,11 @@ func RecoverOrphanDrafts(ctx context.Context, pool *pgxpool.Pool, cerb *cerberus
 		if err != nil || strings.Contains(status, "not found") || strings.Contains(status, "done") || strings.Contains(status, "failed") {
 			log.Printf("orphan recovery: marking draft %d as error (status=%q err=%v)", d.ID, status, err)
 			db.UpdateSpecDraft(ctx, pool, d.ID, db.UpdateSpecDraftParams{Status: &errStatus})
+			continue
+		}
+		// session is alive (waiting) — leave it alone, user can resume from the UI
+		if strings.Contains(status, "waiting") {
+			log.Printf("orphan recovery: draft %d session %s is alive and waiting — keeping active", d.ID, d.CerberusSession)
 		}
 	}
 }
