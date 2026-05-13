@@ -1,9 +1,11 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -52,6 +54,8 @@ func (s *Server) routes() {
 
 	s.mux.HandleFunc("/api/phases/", s.handlePhase)
 	s.mux.HandleFunc("/api/settings", s.handleSettings)
+	s.mux.HandleFunc("/api/spec-drafts", s.handleSpecDrafts)
+	s.mux.HandleFunc("/api/spec-drafts/", s.handleSpecDraft)
 }
 
 // ---- projects ----
@@ -542,6 +546,147 @@ func pathID(path, prefix string) (int64, error) {
 	s := strings.TrimPrefix(path, prefix)
 	s = strings.TrimSuffix(s, "/")
 	return strconv.ParseInt(s, 10, 64)
+}
+
+// ---- spec-drafts ----
+
+const specBuilderPrompt = `You are a spec writer for Foundry, a spec-driven development loop that runs AI agents.
+
+Your job: help the user write a Foundry spec — a markdown document that defines what should be built and how it should be broken into phases for an AI agent to execute.
+
+## Spec format
+
+A spec is markdown with this structure:
+
+# Feature title
+
+Global context — background, constraints, anything the agent needs to know.
+This is prepended to every phase prompt automatically.
+
+## Phase 1: Name
+What this phase should accomplish. This becomes the exact prompt body sent to the agent.
+Be specific: what files to create/edit, what the output should be, how to verify it works.
+
+## Phase 2: Name
+...
+
+Rules:
+- Sections starting with ## Phase N: become executable phases (N must be sequential integers starting at 1)
+- Everything before the first phase = global context (shared across all phases)
+- Each phase goal should be independently executable by an AI agent in a fresh container
+- Phases should be small enough that one agent can complete them in a single session
+- Prefer explicit over clever — spell out what files to touch, what functions to write
+
+## Good example
+
+# User authentication
+
+Stack: Go + pgx + stdlib net/http. No frameworks, no ORMs.
+Project already has: users table (id, email, password_hash, created_at).
+
+## Phase 1: Password hashing utilities
+Create internal/auth/hash.go with HashPassword(plain string) (string, error) using bcrypt cost 12, and CheckPassword(plain, hash string) bool. Add internal/auth/hash_test.go covering both. No external deps beyond golang.org/x/crypto.
+
+## Phase 2: Login endpoint
+Add POST /api/login to internal/api/handlers.go. Accept {email, password} JSON. Return {token} on success, 401 on failure.
+
+## Phase 3: Auth middleware
+Add AuthMiddleware(next http.Handler) http.Handler in internal/api/middleware.go. Reads Authorization: Bearer <token>, validates JWT, sets user_id in context.
+
+When ready to output the final spec, put it in a markdown code block preceded by the exact line: FINAL SPEC:`
+
+func (s *Server) handleSpecDrafts(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		list, err := db.ListSpecDrafts(r.Context(), s.pool)
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonOK(w, list, http.StatusOK)
+	case http.MethodPost:
+		var body struct {
+			ProjectID *int64 `json:"project_id"`
+			Title     string `json:"title"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			jsonErr(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		draft, err := db.CreateSpecDraft(r.Context(), s.pool, body.ProjectID, body.Title)
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		session := cerberus.DraftSessionName(draft.ID)
+		if _, err := db.UpdateSpecDraft(r.Context(), s.pool, draft.ID, db.UpdateSpecDraftParams{CerberusSession: &session}); err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		draft.CerberusSession = session
+
+		initialPrompt := specBuilderPrompt
+		if body.Title != "" {
+			initialPrompt += "\n\nThe user wants to build: " + body.Title
+		}
+
+		ctx120, cancel := context.WithTimeout(r.Context(), 120*time.Second)
+		defer cancel()
+		if err := s.cerb.Chat(ctx120, session, initialPrompt); err != nil {
+			log.Printf("spec-builder chat start error: %v", err)
+		}
+
+		ctx90, cancel2 := context.WithTimeout(r.Context(), 90*time.Second)
+		defer cancel2()
+		agentMsg, err := s.cerb.Message(ctx90, session, "Hello! What would you like to build? Tell me about the feature or system you have in mind.")
+		if err != nil {
+			log.Printf("spec-builder first message error: %v", err)
+			agentMsg = "Hello! Tell me what you'd like to build."
+		}
+
+		msgs := appendMessage(nil, "assistant", agentMsg)
+		draft, _ = db.UpdateSpecDraft(r.Context(), s.pool, draft.ID, db.UpdateSpecDraftParams{Messages: msgs})
+		jsonOK(w, draft, http.StatusCreated)
+	default:
+		jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleSpecDraft(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r.URL.Path, "/api/spec-drafts/")
+	if err != nil {
+		jsonErr(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	if r.Method != http.MethodGet {
+		jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	draft, err := db.GetSpecDraft(r.Context(), s.pool, id)
+	if errors.Is(err, db.ErrNotFound) {
+		jsonErr(w, "not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		jsonErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonOK(w, draft, http.StatusOK)
+}
+
+func appendMessage(existing []byte, role, content string) []byte {
+	type msg struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+		Ts      string `json:"ts"`
+	}
+	var msgs []msg
+	if len(existing) > 0 {
+		_ = json.Unmarshal(existing, &msgs)
+	}
+	msgs = append(msgs, msg{Role: role, Content: content, Ts: time.Now().Format(time.RFC3339)})
+	b, _ := json.Marshal(msgs)
+	return b
 }
 
 // ---- settings ----
