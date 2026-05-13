@@ -2,8 +2,10 @@ package workflow
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"time"
 
@@ -18,6 +20,7 @@ type Config struct {
 	DefaultPhaseTimeoutSeconds int
 	DefaultWorkflowBudgetUSD   float64
 	MaxConcurrentWorkflows     int
+	CerberusProfile            string // name of the active cerberus profile (looked up from DB at run time)
 }
 
 // Runner owns the long-running workflow execution loop.
@@ -155,6 +158,14 @@ func (r *Runner) execPhase(
 	phaseCtx, cancel := context.WithTimeout(ctx, time.Duration(phase.TimeoutSeconds)*time.Second)
 	defer cancel()
 
+	profilePath, err := r.writeProfileFile(ctx, r.cfg.CerberusProfile, sessionName)
+	if err != nil {
+		log.Printf("phase %d: write profile file: %v (proceeding without profile)", phase.ID, err)
+	}
+	if profilePath != "" {
+		r.cerb.SetProfile(profilePath)
+	}
+
 	// run cerberus blocking in goroutine, collect logs in parallel
 	cerberusDone := make(chan error, 1)
 	go func() {
@@ -268,6 +279,58 @@ func (r *Runner) collectLogs(ctx context.Context, phaseID int64, session string,
 }
 
 func strPtr(s string) *string { return &s }
+
+// profileFilePath returns the fixed path for a session's profile file.
+func profileFilePath(session string) string {
+	return "/tmp/foundry-profile-" + session + ".json"
+}
+
+// removeProfileFile deletes the profile file for a session if it exists.
+func removeProfileFile(session string) {
+	os.Remove(profileFilePath(session))
+}
+
+// writeProfileFile looks up the named profile from the DB and writes its contents
+// to a fixed path derived from the session name. The file persists until
+// removeProfileFile is called at session cleanup.
+// Returns empty string (no error) if profileName is empty or the profile is not found.
+func (r *Runner) writeProfileFile(ctx context.Context, profileName, session string) (string, error) {
+	if profileName == "" {
+		return "", nil
+	}
+	p, err := db.GetProfileByName(ctx, r.pool, profileName)
+	if err == db.ErrNotFound {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("lookup profile %q: %w", profileName, err)
+	}
+	payload := map[string]any{}
+	if p.DefaultModel != "" {
+		payload["default_model"] = p.DefaultModel
+	}
+	if p.DefaultImage != "" {
+		payload["default_image"] = p.DefaultImage
+	}
+	if p.AWSProfile != "" {
+		payload["aws_profile"] = p.AWSProfile
+	}
+	if p.AWSRegion != "" {
+		payload["aws_region"] = p.AWSRegion
+	}
+	if len(p.ExtraEnv) > 0 {
+		payload["extra_env"] = p.ExtraEnv
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("marshal profile: %w", err)
+	}
+	path := profileFilePath(session)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return "", fmt.Errorf("write profile file: %w", err)
+	}
+	return path, nil
+}
 
 // extractFilesJSON parses cerberus review output and returns a JSON array of filenames.
 // Output lines look like: "  hello_kitten.md" after the commit line.

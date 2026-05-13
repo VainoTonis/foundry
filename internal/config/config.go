@@ -14,6 +14,7 @@ type Config struct {
 	CerberusBin                string  `yaml:"cerberus_bin"`
 	CerberusImage              string  `yaml:"cerberus_image"`
 	CerberusModel              string  `yaml:"cerberus_model"`
+	CerberusProfile            string  `yaml:"cerberus_profile"`
 	ServerPort                 int     `yaml:"server_port"`
 	MaxConcurrentWorkflows     int     `yaml:"max_concurrent_workflows"`
 	DefaultWorkflowBudgetUSD   float64 `yaml:"default_workflow_budget_usd"`

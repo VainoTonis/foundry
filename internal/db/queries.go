@@ -599,3 +599,86 @@ func DeleteSpecDraft(ctx context.Context, pool *pgxpool.Pool, id int64) error {
 	_, err := pool.Exec(ctx, `DELETE FROM spec_drafts WHERE id = $1`, id)
 	return err
 }
+
+// --- Profiles ---
+
+type Profile struct {
+	ID           int64             `json:"id"`
+	Name         string            `json:"name"`
+	DefaultModel string            `json:"default_model"`
+	DefaultImage string            `json:"default_image"`
+	AWSProfile   string            `json:"aws_profile"`
+	AWSRegion    string            `json:"aws_region"`
+	ExtraEnv     map[string]string `json:"extra_env"`
+	CreatedAt    time.Time         `json:"created_at"`
+	UpdatedAt    time.Time         `json:"updated_at"`
+}
+
+func CreateProfile(ctx context.Context, pool *pgxpool.Pool, name, defaultModel, defaultImage, awsProfile, awsRegion string, extraEnv map[string]string) (Profile, error) {
+	envJSON, err := json.Marshal(extraEnv)
+	if err != nil {
+		return Profile{}, err
+	}
+	var p Profile
+	var rawEnv []byte
+	err = pool.QueryRow(ctx,
+		`INSERT INTO profiles (name, default_model, default_image, aws_profile, aws_region, extra_env)
+		 VALUES ($1, $2, $3, $4, $5, $6)
+		 RETURNING id, name, default_model, default_image, aws_profile, aws_region, extra_env, created_at, updated_at`,
+		name, defaultModel, defaultImage, awsProfile, awsRegion, envJSON,
+	).Scan(&p.ID, &p.Name, &p.DefaultModel, &p.DefaultImage, &p.AWSProfile, &p.AWSRegion, &rawEnv, &p.CreatedAt, &p.UpdatedAt)
+	if err != nil {
+		return Profile{}, err
+	}
+	if err := json.Unmarshal(rawEnv, &p.ExtraEnv); err != nil {
+		return Profile{}, err
+	}
+	return p, nil
+}
+
+func ListProfiles(ctx context.Context, pool *pgxpool.Pool) ([]Profile, error) {
+	rows, err := pool.Query(ctx,
+		`SELECT id, name, default_model, default_image, aws_profile, aws_region, extra_env, created_at, updated_at
+		 FROM profiles ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var profiles []Profile
+	for rows.Next() {
+		var p Profile
+		var rawEnv []byte
+		if err := rows.Scan(&p.ID, &p.Name, &p.DefaultModel, &p.DefaultImage, &p.AWSProfile, &p.AWSRegion, &rawEnv, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(rawEnv, &p.ExtraEnv); err != nil {
+			return nil, err
+		}
+		profiles = append(profiles, p)
+	}
+	return profiles, rows.Err()
+}
+
+func GetProfileByName(ctx context.Context, pool *pgxpool.Pool, name string) (Profile, error) {
+	var p Profile
+	var rawEnv []byte
+	err := pool.QueryRow(ctx,
+		`SELECT id, name, default_model, default_image, aws_profile, aws_region, extra_env, created_at, updated_at
+		 FROM profiles WHERE name = $1`, name,
+	).Scan(&p.ID, &p.Name, &p.DefaultModel, &p.DefaultImage, &p.AWSProfile, &p.AWSRegion, &rawEnv, &p.CreatedAt, &p.UpdatedAt)
+	if err == pgx.ErrNoRows {
+		return p, ErrNotFound
+	}
+	if err != nil {
+		return p, err
+	}
+	if err := json.Unmarshal(rawEnv, &p.ExtraEnv); err != nil {
+		return p, err
+	}
+	return p, nil
+}
+
+func DeleteProfile(ctx context.Context, pool *pgxpool.Pool, id int64) error {
+	_, err := pool.Exec(ctx, `DELETE FROM profiles WHERE id = $1`, id)
+	return err
+}

@@ -597,6 +597,124 @@ async function renderSettings() {
     } catch(e) { alert(e.message); }
   });
   app.append(saveBtn);
+
+  // ---- Profiles ----
+  app.append(el('h3', { style: 'margin-top:2rem;margin-bottom:1rem' }, 'Profiles'));
+
+  let profiles = [];
+  try { profiles = await api.get('/api/profiles'); } catch(_) {}
+
+  const activeProfileName = current['cerberus_profile'] || '';
+
+  // profile list with delete buttons
+  const profileList = el('div', { style: 'margin-bottom:1rem' });
+  function renderProfileList() {
+    profileList.innerHTML = '';
+    if (!profiles.length) {
+      profileList.append(el('div', { style: 'color:var(--muted);font-size:.875rem' }, 'No profiles saved.'));
+      return;
+    }
+    for (const p of profiles) {
+      const row = el('div', { style: 'display:flex;align-items:center;gap:.5rem;margin-bottom:.35rem' });
+      const isActive = p.name === activeProfileName;
+      const label = el('span', { style: 'flex:1;font-size:.875rem' + (isActive ? ';font-weight:600' : '') },
+        p.name + (isActive ? ' (active)' : ''));
+      const delBtn = btn('Delete', 'btn-danger', async () => {
+        if (!confirm(`Delete profile "${p.name}"?`)) return;
+        try {
+          await fetch(`/api/profiles/${p.id}`, { method: 'DELETE' });
+          profiles = profiles.filter(x => x.id !== p.id);
+          // if deleted profile was active, clear it
+          if (profileSelect.value === p.name) {
+            profileSelect.value = '';
+          }
+          renderProfileList();
+        } catch(e) { alert(e.message); }
+      });
+      delBtn.style.cssText = 'font-size:.75rem;padding:.2rem .5rem';
+      row.append(label, delBtn);
+      profileList.append(row);
+    }
+  }
+  renderProfileList();
+  app.append(profileList);
+
+  const profileSelect = document.createElement('select');
+  profileSelect.style.cssText = 'width:100%;padding:.4rem .5rem;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:.875rem';
+  const noneOpt = document.createElement('option');
+  noneOpt.value = '';
+  noneOpt.textContent = '— none —';
+  profileSelect.append(noneOpt);
+  for (const p of profiles) {
+    const o = document.createElement('option');
+    o.value = p.name;
+    o.textContent = p.name;
+    if (p.name === activeProfileName) o.selected = true;
+    profileSelect.append(o);
+  }
+  app.append(field('Active profile', profileSelect));
+
+  const applyProfileBtn = btn('Apply profile', 'btn-primary', async () => {
+    try {
+      await fetch('/api/settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cerberus_profile: profileSelect.value }),
+      });
+      alert('Profile applied. Restart server to take effect.');
+      navigate('settings');
+    } catch(e) { alert(e.message); }
+  });
+  app.append(applyProfileBtn);
+
+  app.append(el('h4', { style: 'margin-top:1.5rem;margin-bottom:.75rem' }, 'Create new profile'));
+
+  const pName    = input('text', '');
+  const pModel   = input('text', '');
+  const pImage   = input('text', '');
+  const pAWSProf = input('text', '');
+  const pAWSReg  = input('text', '');
+  const pEnvTA   = textarea('');
+  pEnvTA.placeholder = 'KEY=VALUE (one per line)';
+  pEnvTA.style.cssText = 'font-family:monospace;font-size:.8rem;height:5rem';
+
+  const pForm = el('div');
+  pForm.append(
+    field('Name', pName),
+    field('Default model', pModel),
+    field('Default image', pImage),
+    field('AWS profile', pAWSProf),
+    field('AWS region', pAWSReg),
+    field('Extra env (KEY=VALUE, one per line)', pEnvTA),
+  );
+  app.append(pForm);
+
+  const createProfileBtn = btn('Create profile', 'btn-primary', async () => {
+    if (!pName.value.trim()) { alert('Name is required.'); return; }
+    const extraEnv = {};
+    for (const line of pEnvTA.value.split('\n')) {
+      const eq = line.indexOf('=');
+      if (eq > 0) extraEnv[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
+    }
+    const body = { name: pName.value.trim() };
+    if (pModel.value.trim())   body.default_model = pModel.value.trim();
+    if (pImage.value.trim())   body.default_image = pImage.value.trim();
+    if (pAWSProf.value.trim()) body.aws_profile   = pAWSProf.value.trim();
+    if (pAWSReg.value.trim())  body.aws_region    = pAWSReg.value.trim();
+    if (Object.keys(extraEnv).length) body.extra_env = extraEnv;
+    try {
+      const created = await api.post('/api/profiles', body);
+      profiles.push(created);
+      const o = document.createElement('option');
+      o.value = created.name;
+      o.textContent = created.name;
+      profileSelect.append(o);
+      renderProfileList();
+      pName.value = pModel.value = pImage.value = pAWSProf.value = pAWSReg.value = pEnvTA.value = '';
+      alert(`Profile "${created.name}" created.`);
+    } catch(e) { alert(e.message); }
+  });
+  app.append(createProfileBtn);
 }
 
 // ---- Spec Builder ----

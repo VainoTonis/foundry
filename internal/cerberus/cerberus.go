@@ -11,13 +11,19 @@ import (
 
 // Client wraps the cerberus binary.
 type Client struct {
-	bin   string // path to cerberus binary
-	image string // optional: container image; empty = cerberus default
-	model string // optional: model override; empty = cerberus default
+	bin     string // path to cerberus binary
+	image   string // optional: container image; empty = cerberus default
+	model   string // optional: model override; empty = cerberus default
+	profile string // optional: path to cerberus profile file; empty = no profile
 }
 
-func New(bin, image, model string) *Client {
-	return &Client{bin: bin, image: image, model: model}
+func New(bin, image, model, profile string) *Client {
+	return &Client{bin: bin, image: image, model: model, profile: profile}
+}
+
+// SetProfile overrides the profile file path for the next session start.
+func (c *Client) SetProfile(path string) {
+	c.profile = path
 }
 
 // Start launches a cerberus session with the given prompt. Blocking — run in a goroutine.
@@ -40,6 +46,9 @@ func (c *Client) Start(ctx context.Context, session, prompt string) error {
 	}
 	if c.model != "" {
 		args = append(args, "--model", c.model)
+	}
+	if c.profile != "" {
+		args = append(args, "--profile-file", c.profile)
 	}
 	return c.run(ctx, args...)
 }
@@ -112,17 +121,16 @@ func DraftSessionName(draftID int64) string {
 // Chat starts an interactive cerberus session (first turn). Blocking — run in a goroutine.
 // Returns the agent's response text from the first turn (prefix stripped).
 // extraMounts: optional list of "host:container" paths mounted read-only into the container.
-func (c *Client) Chat(ctx context.Context, session, prompt string, extraMounts []string) (string, error) {
-	args := []string{"chat", "--name", session, "--prompt", prompt,
-		"--system-prompt", specBuilderSystemPrompt}
-	for _, m := range extraMounts {
-		args = append(args, "--mount", m)
-	}
+func (c *Client) Chat(ctx context.Context, session, prompt string) (string, error) {
+	args := []string{"chat", "--name", session, "--prompt", specBuilderSystemPrompt + "\n\n" + prompt}
 	if c.image != "" {
 		args = append(args, "--image", c.image)
 	}
 	if c.model != "" {
 		args = append(args, "--model", c.model)
+	}
+	if c.profile != "" {
+		args = append(args, "--profile-file", c.profile)
 	}
 	raw, err := c.output(ctx, args...)
 	if err != nil {

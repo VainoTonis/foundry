@@ -21,17 +21,18 @@ import (
 
 // Server holds all handler dependencies.
 type Server struct {
-	pool          *pgxpool.Pool
-	runner        *workflow.Runner
-	cerb          *cerberus.Client
-	mux           *http.ServeMux
-	defaultBudget float64
-	gitRoot       string
-	cfgPath       string
+	pool            *pgxpool.Pool
+	runner          *workflow.Runner
+	cerb            *cerberus.Client
+	mux             *http.ServeMux
+	defaultBudget   float64
+	gitRoot         string
+	cfgPath         string
+	cerberusProfile string // name of the active cerberus profile (resolved from DB at session start)
 }
 
-func NewServer(pool *pgxpool.Pool, runner *workflow.Runner, cerb *cerberus.Client, defaultBudget float64, gitRoot string, cfgPath string) *Server {
-	s := &Server{pool: pool, runner: runner, cerb: cerb, defaultBudget: defaultBudget, gitRoot: gitRoot, cfgPath: cfgPath}
+func NewServer(pool *pgxpool.Pool, runner *workflow.Runner, cerb *cerberus.Client, defaultBudget float64, gitRoot string, cfgPath string, cerberusProfile string) *Server {
+	s := &Server{pool: pool, runner: runner, cerb: cerb, defaultBudget: defaultBudget, gitRoot: gitRoot, cfgPath: cfgPath, cerberusProfile: cerberusProfile}
 	s.mux = http.NewServeMux()
 	s.routes()
 	return s
@@ -54,6 +55,8 @@ func (s *Server) routes() {
 
 	s.mux.HandleFunc("/api/phases/", s.handlePhase)
 	s.mux.HandleFunc("/api/settings", s.handleSettings)
+	s.mux.HandleFunc("/api/profiles", s.handleProfiles)
+	s.mux.HandleFunc("/api/profiles/", s.handleProfile)
 	s.mux.HandleFunc("/api/spec-drafts", s.handleSpecDrafts)
 	s.mux.HandleFunc("/api/spec-drafts/", s.handleSpecDraft)
 }
@@ -479,6 +482,7 @@ func (s *Server) handlePhase(w http.ResponseWriter, r *http.Request) {
 				jsonErr(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
+			removeProfileFile(*ph.CerberusSession)
 		}
 		jsonOK(w, map[string]string{"status": "cleaned"}, http.StatusOK)
 	default:
@@ -629,11 +633,9 @@ func (s *Server) handleSpecDrafts(w http.ResponseWriter, r *http.Request) {
 		if body.Title != "" {
 			initialPrompt += "\n\nThe user wants to build: " + body.Title
 		}
-		var extraMounts []string
 		if body.ProjectID != nil {
 			if proj, err := db.GetProject(r.Context(), s.pool, *body.ProjectID); err == nil {
-				initialPrompt += "\n\nProject name: " + proj.Name + "\nProject is mounted at: /project"
-				extraMounts = append(extraMounts, proj.RepoPath+":/project")
+				initialPrompt += "\n\nProject name: " + proj.Name + "\nRepo path: " + proj.RepoPath
 			}
 		}
 
@@ -645,8 +647,15 @@ func (s *Server) handleSpecDrafts(w http.ResponseWriter, r *http.Request) {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 			defer cancel()
+			profilePath, profileErr := s.writeProfileFile(ctx, session)
+			if profileErr != nil {
+				log.Printf("spec-builder: write profile file: %v (proceeding without profile)", profileErr)
+			}
+			if profilePath != "" {
+				cerb.SetProfile(profilePath)
+			}
 			// Chat runs the first turn; the agent's response IS the first message.
-			agentMsg, err := cerb.Chat(ctx, session, initialPrompt, extraMounts)
+			agentMsg, err := cerb.Chat(ctx, session, initialPrompt)
 			if err != nil {
 				log.Printf("spec-builder chat start error: %v", err)
 				errStatus := "error"
@@ -771,6 +780,7 @@ func (s *Server) handleSpecDraft(w http.ResponseWriter, r *http.Request) {
 		if err := s.cerb.Clean(r.Context(), draft.CerberusSession); err != nil {
 			log.Printf("spec-builder clean error: %v", err)
 		}
+		removeProfileFile(draft.CerberusSession)
 		var projID int64
 		if draft.ProjectID != nil {
 			projID = *draft.ProjectID
@@ -801,6 +811,7 @@ func (s *Server) handleSpecDraft(w http.ResponseWriter, r *http.Request) {
 			if err := s.cerb.Clean(r.Context(), draft.CerberusSession); err != nil {
 				log.Printf("spec-builder clean on delete: %v", err)
 			}
+			removeProfileFile(draft.CerberusSession)
 		}
 		if err := db.DeleteSpecDraft(r.Context(), s.pool, id); err != nil {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
@@ -933,6 +944,121 @@ func yamlValue(v any) string {
 		return s
 	}
 	return fmt.Sprintf("%q", s)
+}
+
+// ---- profiles ----
+
+// profileFilePath returns the fixed path for a session's profile file.
+func profileFilePath(session string) string {
+	return "/tmp/foundry-profile-" + session + ".json"
+}
+
+// writeProfileFile looks up the server's active profile from the DB and writes it to a
+// fixed path derived from the session name. Returns empty string (no error) when no
+// profile is configured or the profile is not found. The file persists until
+// removeProfileFile is called at session cleanup.
+func (s *Server) writeProfileFile(ctx context.Context, session string) (string, error) {
+	if s.cerberusProfile == "" {
+		return "", nil
+	}
+	p, err := db.GetProfileByName(ctx, s.pool, s.cerberusProfile)
+	if err == db.ErrNotFound {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("lookup profile %q: %w", s.cerberusProfile, err)
+	}
+	payload := map[string]any{}
+	if p.DefaultModel != "" {
+		payload["default_model"] = p.DefaultModel
+	}
+	if p.DefaultImage != "" {
+		payload["default_image"] = p.DefaultImage
+	}
+	if p.AWSProfile != "" {
+		payload["aws_profile"] = p.AWSProfile
+	}
+	if p.AWSRegion != "" {
+		payload["aws_region"] = p.AWSRegion
+	}
+	if len(p.ExtraEnv) > 0 {
+		payload["extra_env"] = p.ExtraEnv
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("marshal profile: %w", err)
+	}
+	path := profileFilePath(session)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return "", fmt.Errorf("write profile file: %w", err)
+	}
+	return path, nil
+}
+
+// removeProfileFile deletes the profile file for a session if it exists.
+func removeProfileFile(session string) {
+	os.Remove(profileFilePath(session))
+}
+
+func (s *Server) handleProfiles(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		profiles, err := db.ListProfiles(r.Context(), s.pool)
+		if err != nil {
+			jsonErr(w, "list profiles: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if profiles == nil {
+			profiles = []db.Profile{}
+		}
+		json.NewEncoder(w).Encode(profiles)
+
+	case http.MethodPost:
+		var body struct {
+			Name         string            `json:"name"`
+			DefaultModel string            `json:"default_model"`
+			DefaultImage string            `json:"default_image"`
+			AWSProfile   string            `json:"aws_profile"`
+			AWSRegion    string            `json:"aws_region"`
+			ExtraEnv     map[string]string `json:"extra_env"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			jsonErr(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if body.Name == "" {
+			jsonErr(w, "name is required", http.StatusBadRequest)
+			return
+		}
+		p, err := db.CreateProfile(r.Context(), s.pool, body.Name, body.DefaultModel, body.DefaultImage, body.AWSProfile, body.AWSRegion, body.ExtraEnv)
+		if err != nil {
+			jsonErr(w, "create profile: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(p)
+
+	default:
+		jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleProfile(w http.ResponseWriter, r *http.Request) {
+	idStr := strings.TrimPrefix(r.URL.Path, "/api/profiles/")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		jsonErr(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	if r.Method != http.MethodDelete {
+		jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := db.DeleteProfile(r.Context(), s.pool, id); err != nil {
+		jsonErr(w, "delete profile: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func RecoverOrphanDrafts(ctx context.Context, pool *pgxpool.Pool, cerb *cerberus.Client) {

@@ -52,14 +52,15 @@ func main() {
 		log.Fatalf("db ping: %v", err)
 	}
 
-	// cerberus client
-	cerb := cerberus.New(cfg.CerberusBin, cfg.CerberusImage, cfg.CerberusModel)
+	// cerberus client — profile is resolved per-session by the runner; pass empty here
+	cerb := cerberus.New(cfg.CerberusBin, cfg.CerberusImage, cfg.CerberusModel, "")
 
 	// workflow runner
 	runnerCfg := workflow.Config{
 		DefaultPhaseTimeoutSeconds: cfg.DefaultPhaseTimeoutSeconds,
 		DefaultWorkflowBudgetUSD:   cfg.DefaultWorkflowBudgetUSD,
 		MaxConcurrentWorkflows:     cfg.MaxConcurrentWorkflows,
+		CerberusProfile:            cfg.CerberusProfile,
 	}
 	runner := workflow.NewRunner(pool, cerb, runnerCfg)
 
@@ -67,7 +68,7 @@ func main() {
 	go api.RecoverOrphanDrafts(context.Background(), pool, cerb)
 
 	// API server
-	srv := api.NewServer(pool, runner, cerb, cfg.DefaultWorkflowBudgetUSD, cfg.GitRoot, cfgPath)
+	srv := api.NewServer(pool, runner, cerb, cfg.DefaultWorkflowBudgetUSD, cfg.GitRoot, cfgPath, cfg.CerberusProfile)
 
 	// serve web static files
 	mux := http.NewServeMux()
