@@ -103,3 +103,44 @@ func (c *Client) output(ctx context.Context, args ...string) (string, error) {
 	}
 	return stdout.String(), nil
 }
+
+// DraftSessionName builds the canonical session name for a spec draft.
+func DraftSessionName(draftID int64) string {
+	return fmt.Sprintf("foundry-draft-%d", draftID)
+}
+
+// Chat starts an interactive cerberus session (first turn). Blocking — run in a goroutine.
+// cerberus chat --name <session> --prompt <prompt> [--image] [--model]
+func (c *Client) Chat(ctx context.Context, session, prompt string) error {
+	args := []string{"chat", "--name", session, "--prompt", prompt}
+	if c.image != "" {
+		args = append(args, "--image", c.image)
+	}
+	if c.model != "" {
+		args = append(args, "--model", c.model)
+	}
+	return c.run(ctx, args...)
+}
+
+// Message sends a follow-up message in an existing interactive session.
+// Returns the agent response text with session prefix stripped.
+// cerberus message --name <session> --message <msg>
+func (c *Client) Message(ctx context.Context, session, msg string) (string, error) {
+	raw, err := c.output(ctx, "message", "--name", session, "--message", msg)
+	if err != nil {
+		return "", err
+	}
+	prefix := "[" + session + "] "
+	var lines []string
+	for _, line := range strings.Split(raw, "\n") {
+		trimmed := strings.TrimPrefix(line, prefix)
+		lines = append(lines, trimmed)
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n")), nil
+}
+
+// Close commits any changes and cleans up an interactive session.
+// cerberus close --name <session>
+func (c *Client) Close(ctx context.Context, session string) error {
+	return c.run(ctx, "close", "--name", session)
+}
