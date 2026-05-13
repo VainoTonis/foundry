@@ -653,25 +653,173 @@ func (s *Server) handleSpecDrafts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSpecDraft(w http.ResponseWriter, r *http.Request) {
-	id, err := pathID(r.URL.Path, "/api/spec-drafts/")
+	path := strings.TrimPrefix(r.URL.Path, "/api/spec-drafts/")
+	parts := strings.SplitN(path, "/", 2)
+	id, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil {
 		jsonErr(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	if r.Method != http.MethodGet {
-		jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+	suffix := ""
+	if len(parts) == 2 {
+		suffix = parts[1]
 	}
-	draft, err := db.GetSpecDraft(r.Context(), s.pool, id)
-	if errors.Is(err, db.ErrNotFound) {
+
+	switch {
+	case suffix == "" && r.Method == http.MethodGet:
+		draft, err := db.GetSpecDraft(r.Context(), s.pool, id)
+		if errors.Is(err, db.ErrNotFound) {
+			jsonErr(w, "not found", http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonOK(w, draft, http.StatusOK)
+
+	case suffix == "message" && r.Method == http.MethodPost:
+		var body struct {
+			Content string `json:"content"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			jsonErr(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		draft, err := db.GetSpecDraft(r.Context(), s.pool, id)
+		if errors.Is(err, db.ErrNotFound) {
+			jsonErr(w, "not found", http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		msgs := appendMessage(draft.Messages, "user", body.Content)
+		ctx90, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+		defer cancel()
+		agentResp, err := s.cerb.Message(ctx90, draft.CerberusSession, body.Content)
+		if err != nil {
+			jsonErr(w, "agent error: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		msgs = appendMessage(msgs, "assistant", agentResp)
+		draft, err = db.UpdateSpecDraft(r.Context(), s.pool, id, db.UpdateSpecDraftParams{Messages: msgs})
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonOK(w, draft, http.StatusOK)
+
+	case suffix == "save" && r.Method == http.MethodPost:
+		draft, err := db.GetSpecDraft(r.Context(), s.pool, id)
+		if errors.Is(err, db.ErrNotFound) {
+			jsonErr(w, "not found", http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		specContent := extractFinalSpec(draft.Messages)
+		if specContent == "" {
+			ctx60, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+			defer cancel()
+			agentResp, err := s.cerb.Message(ctx60, draft.CerberusSession, "Please output the final spec now. Write exactly the line 'FINAL SPEC:' followed by a markdown code block containing the complete spec.")
+			if err != nil {
+				jsonErr(w, "could not get final spec: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			msgs := appendMessage(draft.Messages, "assistant", agentResp)
+			draft, _ = db.UpdateSpecDraft(r.Context(), s.pool, id, db.UpdateSpecDraftParams{Messages: msgs})
+			specContent = extractFinalSpec(draft.Messages)
+		}
+		if specContent == "" {
+			jsonErr(w, "could not extract spec from conversation", http.StatusUnprocessableEntity)
+			return
+		}
+		if err := s.cerb.Close(r.Context(), draft.CerberusSession); err != nil {
+			log.Printf("spec-builder close error: %v", err)
+		}
+		if err := s.cerb.Clean(r.Context(), draft.CerberusSession); err != nil {
+			log.Printf("spec-builder clean error: %v", err)
+		}
+		var projID int64
+		if draft.ProjectID != nil {
+			projID = *draft.ProjectID
+		}
+		sp, err := db.CreateSpec(r.Context(), s.pool, projID, draft.Title, specContent, []byte("[]"))
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		saved := "saved"
+		db.UpdateSpecDraft(r.Context(), s.pool, id, db.UpdateSpecDraftParams{Status: &saved})
+		jsonOK(w, map[string]int64{"spec_id": sp.ID}, http.StatusCreated)
+
+	case suffix == "" && r.Method == http.MethodDelete:
+		draft, err := db.GetSpecDraft(r.Context(), s.pool, id)
+		if errors.Is(err, db.ErrNotFound) {
+			jsonErr(w, "not found", http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if draft.CerberusSession != "" {
+			if err := s.cerb.Close(r.Context(), draft.CerberusSession); err != nil {
+				log.Printf("spec-builder close on delete: %v", err)
+			}
+			if err := s.cerb.Clean(r.Context(), draft.CerberusSession); err != nil {
+				log.Printf("spec-builder clean on delete: %v", err)
+			}
+		}
+		if err := db.DeleteSpecDraft(r.Context(), s.pool, id); err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
 		jsonErr(w, "not found", http.StatusNotFound)
-		return
 	}
-	if err != nil {
-		jsonErr(w, err.Error(), http.StatusInternalServerError)
-		return
+}
+
+func extractFinalSpec(messages []byte) string {
+	type msg struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
 	}
-	jsonOK(w, draft, http.StatusOK)
+	var msgs []msg
+	if err := json.Unmarshal(messages, &msgs); err != nil {
+		return ""
+	}
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role != "assistant" {
+			continue
+		}
+		content := msgs[i].Content
+		idx := strings.Index(content, "FINAL SPEC:")
+		if idx == -1 {
+			continue
+		}
+		after := content[idx+len("FINAL SPEC:"):]
+		start := strings.Index(after, "```")
+		if start == -1 {
+			return strings.TrimSpace(after)
+		}
+		after = after[start+3:]
+		if strings.HasPrefix(after, "markdown") {
+			after = after[8:]
+		}
+		end := strings.Index(after, "```")
+		if end == -1 {
+			return strings.TrimSpace(after)
+		}
+		return strings.TrimSpace(after[:end])
+	}
+	return ""
 }
 
 func appendMessage(existing []byte, role, content string) []byte {
@@ -758,4 +906,27 @@ func yamlValue(v any) string {
 		return s
 	}
 	return fmt.Sprintf("%q", s)
+}
+
+func RecoverOrphanDrafts(ctx context.Context, pool *pgxpool.Pool, cerb *cerberus.Client) {
+	drafts, err := db.ListSpecDrafts(ctx, pool)
+	if err != nil {
+		log.Printf("orphan recovery: list drafts: %v", err)
+		return
+	}
+	errStatus := "error"
+	for _, d := range drafts {
+		if d.Status != "active" {
+			continue
+		}
+		if d.CerberusSession == "" {
+			db.UpdateSpecDraft(ctx, pool, d.ID, db.UpdateSpecDraftParams{Status: &errStatus})
+			continue
+		}
+		status, err := cerb.Status(ctx, d.CerberusSession)
+		if err != nil || strings.Contains(status, "not found") || strings.Contains(status, "done") || strings.Contains(status, "failed") {
+			log.Printf("orphan recovery: marking draft %d as error (status=%q err=%v)", d.ID, status, err)
+			db.UpdateSpecDraft(ctx, pool, d.ID, db.UpdateSpecDraftParams{Status: &errStatus})
+		}
+	}
 }
