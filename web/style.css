@@ -164,6 +164,33 @@ button:hover, .btn:hover { background: var(--border); }
 .chat-msg-user .chat-msg-body { background: var(--accent); color: #fff; border-radius: 8px 8px 2px 8px; }
 .chat-msg-assistant .chat-msg-body { background: var(--bg); border: 1px solid var(--border); border-radius: 8px 8px 8px 2px; }
 .chat-typing { color: var(--muted); font-style: italic; }
+.chat-msg-streaming { font-family: var(--mono); font-size: .82rem; white-space: pre-wrap; color: var(--muted); }
+
+/* markdown inside assistant bubbles */
+.chat-msg-assistant .chat-msg-body p { margin: 0 0 .5em; }
+.chat-msg-assistant .chat-msg-body p:last-child { margin-bottom: 0; }
+.chat-msg-assistant .chat-msg-body code {
+  background: rgba(124,106,247,.15); padding: .1em .35em; border-radius: 3px;
+  font-family: var(--mono); font-size: .82em;
+}
+.chat-msg-assistant .chat-msg-body pre {
+  background: #090910; border: 1px solid var(--border); border-radius: 6px;
+  padding: .6rem .75rem; margin: .5em 0; overflow-x: auto;
+  font-family: var(--mono); font-size: .8rem; line-height: 1.5;
+}
+.chat-msg-assistant .chat-msg-body pre code {
+  background: none; padding: 0; border-radius: 0; font-size: inherit;
+}
+.chat-msg-assistant .chat-msg-body ul, .chat-msg-assistant .chat-msg-body ol {
+  margin: .4em 0; padding-left: 1.5em;
+}
+.chat-msg-assistant .chat-msg-body h1, .chat-msg-assistant .chat-msg-body h2,
+.chat-msg-assistant .chat-msg-body h3, .chat-msg-assistant .chat-msg-body h4 {
+  font-size: .9rem; margin: .6em 0 .3em; color: var(--text);
+}
+.chat-msg-assistant .chat-msg-body blockquote {
+  border-left: 3px solid var(--accent); padding-left: .75rem; color: var(--muted); margin: .5em 0;
+}
 .chat-input-row { display: flex; gap: .5rem; align-items: flex-end; }
 .chat-textarea {
   flex: 1; padding: .45rem .6rem; background: var(--bg); border: 1px solid var(--border);

@@ -183,37 +183,62 @@ async function renderSpec(id) {
 }
 
 // ---- Workflow detail ----
+let _workflowSSE = null;
+
 async function renderWorkflow(id) {
+  // close any previous workflow SSE
+  if (_workflowSSE) { _workflowSSE.close(); _workflowSSE = null; }
+
   const wf = await api.get(`/api/workflows/${id}`).catch(e => { app.append(el('div',{className:'empty'},e.message)); return null; });
   if (!wf) return;
   const phases = await api.get(`/api/workflows/${id}/phases`).catch(() => []);
 
-  app.append(el('span', { className: 'back', onclick: () => navigate('backlog') }, '← Backlog'));
+  app.append(el('span', { className: 'back', onclick: () => { if (_workflowSSE) { _workflowSSE.close(); _workflowSSE = null; } navigate('backlog'); } }, '← Backlog'));
 
+  // header with updatable status chip
   const hdr = el('div', { style: 'display:flex;align-items:center;gap:.6rem;margin-bottom:1rem' });
-  hdr.append(el('h2', { style: 'flex:1' }, `Workflow #${wf.id}`), chip(wf.track), chip(wf.status));
+  const statusChip = chip(wf.status);
+  hdr.append(el('h2', { style: 'flex:1' }, `Workflow #${wf.id}`), chip(wf.track), statusChip);
   app.append(hdr);
 
-  if (wf.status === 'paused' || wf.status === 'failed') {
-    const resumeBtn = btn('Resume', 'btn-primary', async () => {
-      try { await api.post(`/api/workflows/${id}/resume`); navigate('workflow', { id }); }
-      catch(e) { alert(e.message); }
-    });
-    app.append(el('div', { style: 'margin-bottom:1rem' }, resumeBtn));
+  // action bar — stop or resume
+  const actionBar = el('div', { style: 'display:flex;gap:.5rem;margin-bottom:1rem' });
+  app.append(actionBar);
+
+  function updateActionBar(status) {
+    actionBar.innerHTML = '';
+    if (status === 'running') {
+      actionBar.append(btn('Stop', 'btn-danger', async () => {
+        if (!confirm('Stop this workflow?')) return;
+        try { await api.post(`/api/workflows/${id}/stop`); } catch(e) { alert(e.message); }
+      }));
+    } else if (status === 'paused' || status === 'failed') {
+      actionBar.append(btn('Resume', 'btn-primary', async () => {
+        try { await api.post(`/api/workflows/${id}/resume`); navigate('workflow', { id }); }
+        catch(e) { alert(e.message); }
+      }));
+    }
   }
+  updateActionBar(wf.status);
+
+  // phase tracking for live updates
+  const phaseElements = new Map(); // phaseID -> { row, chipEl, ph }
+  const expandedPhases = new Map(); // phaseID -> { logBox, detailEl }
 
   for (const ph of (phases || [])) {
-    const row = el('div', { className: 'phase-row', onclick: () => togglePhaseDetail(ph, row) });
+    const row = el('div', { className: 'phase-row', onclick: () => togglePhaseDetail(ph, row, id, expandedPhases) });
     const pos = el('div', { className: 'phase-pos' }, `P${ph.position}`);
     const body = el('div', { className: 'phase-body' });
     const nameRow = el('div', { style: 'display:flex;align-items:center;gap:.5rem' });
-    nameRow.append(el('span', { className: 'phase-name' }, ph.name), chip(ph.status));
+    const phaseChip = chip(ph.status);
+    nameRow.append(el('span', { className: 'phase-name' }, ph.name), phaseChip);
     if (ph.review_verdict) nameRow.append(chip(ph.review_verdict));
     body.append(nameRow);
     row.append(pos, body);
     row._expanded = false;
     row._ph = ph;
     app.append(row);
+    phaseElements.set(ph.id, { row, chipEl: phaseChip, nameRow, ph });
   }
 
   if (!phases || !phases.length) {
@@ -223,17 +248,56 @@ async function renderWorkflow(id) {
     app.append(el('div', { className: 'empty' }, msg));
   }
 
-  // auto-refresh if running
+  // SSE for live updates
   if (wf.status === 'running') {
-    setTimeout(() => navigate('workflow', { id }), 4000);
+    const es = new EventSource(`/api/workflows/${id}/stream`);
+    _workflowSSE = es;
+
+    es.addEventListener('log', e => {
+      const d = JSON.parse(e.data);
+      const ep = expandedPhases.get(d.phase_id);
+      if (ep) {
+        appendLog(ep.logBox, { line: d.line, ts: d.ts });
+        ep.logBox.scrollTop = ep.logBox.scrollHeight;
+      }
+    });
+
+    es.addEventListener('phase_update', e => {
+      const d = JSON.parse(e.data);
+      const pe = phaseElements.get(d.phase_id);
+      if (pe) {
+        const newChip = chip(d.status);
+        pe.chipEl.replaceWith(newChip);
+        pe.chipEl = newChip;
+        pe.ph.status = d.status;
+        // auto-expand running phase
+        if (d.status === 'running' && !pe.row._expanded) {
+          pe.row.click();
+        }
+      }
+    });
+
+    es.addEventListener('workflow_update', e => {
+      const d = JSON.parse(e.data);
+      const newChip = chip(d.status);
+      statusChip.replaceWith(newChip);
+      updateActionBar(d.status);
+      if (d.status === 'done' || d.status === 'paused' || d.status === 'failed') {
+        es.close();
+        _workflowSSE = null;
+      }
+    });
+
+    es.onerror = () => { es.close(); _workflowSSE = null; };
   }
 }
 
-function togglePhaseDetail(ph, row) {
+function togglePhaseDetail(ph, row, workflowId, expandedPhases) {
   if (row._expanded) {
     const det = row.nextSibling;
     if (det && det._isDetail) det.remove();
     row._expanded = false;
+    expandedPhases.delete(ph.id);
     return;
   }
   row._expanded = true;
@@ -298,6 +362,11 @@ function togglePhaseDetail(ph, row) {
   const logBox = el('div', { className: 'log-box', id: `log-${ph.id}` });
   logSec.append(logBox);
   det.append(logSec);
+
+  // register for SSE log routing
+  expandedPhases.set(ph.id, { logBox, detailEl: det });
+
+  // load existing logs
   loadLogs(ph, logBox);
 
   row.after(det);
@@ -309,20 +378,7 @@ async function loadLogs(ph, box) {
   for (const l of (logs || [])) {
     appendLog(box, l);
   }
-  if (ph.status === 'running' || ph.status === 'awaiting_review') {
-    startSSE(ph.id, box);
-  }
-}
-
-function startSSE(phaseID, box) {
-  const es = new EventSource(`/api/phases/${phaseID}/logs/stream`);
-  es.onmessage = e => {
-    const l = JSON.parse(e.data);
-    appendLog(box, l);
-    box.scrollTop = box.scrollHeight;
-  };
-  es.addEventListener('done', () => es.close());
-  es.onerror = () => es.close();
+  box.scrollTop = box.scrollHeight;
 }
 
 function appendLog(box, l) {
@@ -736,8 +792,9 @@ async function renderSpecBuilder(draftId) {
 
   const projects = await api.get('/api/projects').catch(() => []);
 
-  const titleInput = input('text', '');
-  titleInput.placeholder = 'e.g. User authentication';
+  const descTA = textarea('');
+  descTA.placeholder = 'Describe what you want to build or the problem you want to solve…';
+  descTA.style.cssText = 'min-height:5rem';
 
   const projSelect = el('select');
   const optNone = el('option', { value: '' }, '— no project —');
@@ -748,20 +805,20 @@ async function renderSpecBuilder(draftId) {
 
   const form = el('div', { className: 'section' });
   form.append(
-    field('Feature title', titleInput),
+    field('What do you want to build?', descTA),
     field('Project (optional)', projSelect),
   );
   app.append(form);
 
   const startBtn = btn('Start', 'btn-primary', async () => {
-    const title = titleInput.value.trim();
+    const description = descTA.value.trim();
+    if (!description) { alert('Describe what you want to build.'); return; }
     startBtn.disabled = true;
     startBtn.textContent = 'Starting…';
     try {
-      const body = { title };
+      const body = { description };
       const pid = projSelect.value ? parseInt(projSelect.value) : null;
       if (pid) body.project_id = pid;
-      // returns immediately — session starts in background
       const draft = await api.post('/api/spec-drafts', body);
       app.innerHTML = '';
       renderDraftChat(draft);
@@ -780,7 +837,7 @@ function renderDraftChat(draft) {
 
   const hdr = el('div', { style: 'display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem' });
   hdr.append(
-    el('h2', {}, draft.title || 'Spec Builder'),
+    el('h2', {}, 'Spec Builder'),
     el('span', { style: 'font-size:.75rem;color:var(--muted)' }, 'session: ' + draft.cerberus_session),
   );
   app.append(hdr);
@@ -788,127 +845,144 @@ function renderDraftChat(draft) {
   const chatBox = el('div', { className: 'chat-messages' });
   app.append(chatBox);
 
-  // render existing messages — draft.messages is already a parsed array from JSON response
   let msgs = Array.isArray(draft.messages) ? draft.messages : [];
-
-  let pollTimer = null;
-
-  function stopPolling() {
-    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-  }
+  let es = null;       // EventSource
+  let streaming = null; // { wrap, body, text } — the bubble currently receiving deltas
 
   if (draft.status === 'error') {
     chatBox.append(el('div', { className: 'empty' }, 'Session error — the AI session failed to start. Abandon and try again.'));
-    const actionRow = el('div', { style: 'display:flex;gap:.5rem;margin-top:.75rem' });
-    actionRow.append(btn('Abandon', 'btn-danger', abandonDraft));
-    app.append(actionRow);
+    app.append(el('div', { style: 'display:flex;gap:.5rem;margin-top:.75rem' }, btn('Abandon', 'btn-danger', abandonDraft)));
     return;
   }
 
-  if (msgs.length === 0) {
-    // session starting — show spinner and poll
-    const waitMsg = el('div', { className: 'empty' }, 'AI is thinking… this can take up to 60s');
-    chatBox.append(waitMsg);
-    pollTimer = setInterval(async () => {
-      const updated = await api.get(`/api/spec-drafts/${draft.id}`).catch(() => null);
-      if (!updated) return;
-      draft = updated;
-      const updatedMsgs = Array.isArray(updated.messages) ? updated.messages : [];
-      if (updated.status === 'error') {
-        stopPolling();
-        chatBox.innerHTML = '';
-        chatBox.append(el('div', { className: 'empty' }, 'Session error — the AI session failed to start. Abandon and try again.'));
-        return;
-      }
-      if (updatedMsgs.length > 0) {
-        stopPolling();
-        msgs = updatedMsgs;
-        chatBox.innerHTML = '';
-        for (const m of msgs) renderChatMsg(chatBox, m.role, m.content);
-        chatBox.scrollTop = chatBox.scrollHeight;
-        enableInput();
-      }
-    }, 3000);
-  } else {
-    for (const m of msgs) renderChatMsg(chatBox, m.role, m.content);
-    chatBox.scrollTop = chatBox.scrollHeight;
-  }
-  // input row — disabled until session ready
+  // render existing completed messages with markdown
+  for (const m of msgs) renderChatMsg(chatBox, m.role, m.content);
+  chatBox.scrollTop = chatBox.scrollHeight;
+
+  // input row
   const inputRow = el('div', { className: 'chat-input-row' });
   const msgTA = el('textarea', { className: 'chat-textarea', placeholder: 'Type a message…', rows: 3 });
-  msgTA.disabled = msgs.length === 0;
   msgTA.addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); }
   });
   const sendB = btn('Send', 'btn-primary', sendMsg);
-  sendB.disabled = msgs.length === 0;
   inputRow.append(msgTA, sendB);
   app.append(inputRow);
 
   // action row
   const actionRow = el('div', { style: 'display:flex;gap:.5rem;margin-top:.75rem' });
   const saveB = btn('Save as Draft Spec', 'btn-primary', saveSpec);
-  saveB.disabled = msgs.length === 0;
   const abandonB = btn('Abandon', 'btn-danger', abandonDraft);
   actionRow.append(saveB, abandonB);
   app.append(actionRow);
 
-  function enableInput() {
-    msgTA.disabled = false;
-    sendB.disabled = false;
-    saveB.disabled = false;
-    msgTA.focus();
+  function disableInput() { msgTA.disabled = true; sendB.disabled = true; }
+  function enableInput() { msgTA.disabled = false; sendB.disabled = false; saveB.disabled = false; msgTA.focus(); }
+
+  function connectSSE() {
+    es = new EventSource(`/api/spec-drafts/${draft.id}/stream`);
+
+    es.addEventListener('text_delta', e => {
+      const ev = JSON.parse(e.data);
+      if (!streaming) {
+        streaming = startStreamingBubble(chatBox);
+      }
+      streaming.text += ev.content;
+      streaming.body.textContent = streaming.text;
+      chatBox.scrollTop = chatBox.scrollHeight;
+    });
+
+    es.addEventListener('message_end', () => {
+      if (streaming) {
+        streaming.body.innerHTML = renderMarkdown(streaming.text);
+        streaming.body.classList.remove('chat-msg-streaming');
+        msgs.push({ role: 'assistant', content: streaming.text });
+        streaming = null;
+      }
+    });
+
+    es.addEventListener('turn_complete', () => {
+      if (streaming) {
+        streaming.body.innerHTML = renderMarkdown(streaming.text);
+        streaming.body.classList.remove('chat-msg-streaming');
+        msgs.push({ role: 'assistant', content: streaming.text });
+        streaming = null;
+      }
+      enableInput();
+    });
+
+    es.onerror = () => {
+      if (streaming) {
+        streaming.body.innerHTML = renderMarkdown(streaming.text);
+        streaming.body.classList.remove('chat-msg-streaming');
+        streaming = null;
+      }
+      enableInput();
+    };
+  }
+
+  // start SSE if session is active
+  if (draft.status === 'active') {
+    connectSSE();
+    if (msgs.length === 0) disableInput(); // waiting for first response
+    else enableInput();
+  }
+
+  function startStreamingBubble(box) {
+    const wrap = el('div', { className: 'chat-msg chat-msg-assistant' });
+    const label = el('div', { className: 'chat-msg-label' }, 'ai');
+    const body = el('div', { className: 'chat-msg-body chat-msg-streaming' });
+    wrap.append(label, body);
+    box.append(wrap);
+    return { wrap, body, text: '' };
   }
 
   async function sendMsg() {
     const content = msgTA.value.trim();
     if (!content) return;
-    const prevCount = msgs.length;
     msgTA.value = '';
-    msgTA.disabled = true;
-    sendB.disabled = true;
+    disableInput();
+
+    // optimistically render user message
     renderChatMsg(chatBox, 'user', content);
     chatBox.scrollTop = chatBox.scrollHeight;
-    const typing = el('div', { className: 'chat-msg chat-msg-assistant chat-typing' }, '…');
-    chatBox.append(typing);
-    chatBox.scrollTop = chatBox.scrollHeight;
+
     try {
-      const updated = await api.post(`/api/spec-drafts/${draft.id}/message`, { content });
-      typing.remove();
-      const updatedMsgs = Array.isArray(updated.messages) ? updated.messages : [];
-      msgs = updatedMsgs;
-      draft.messages = updated.messages;
-      // render only new non-user messages — user is already rendered optimistically
-      for (const m of updatedMsgs.slice(prevCount)) {
-        if (m.role !== 'user') renderChatMsg(chatBox, m.role, m.content);
-      }
+      // POST sends the message to cerberus — response arrives via SSE
+      await api.post(`/api/spec-drafts/${draft.id}/message`, { content });
+      msgs.push({ role: 'user', content });
     } catch (e) {
-      typing.remove();
       renderChatMsg(chatBox, 'assistant', 'Error: ' + e.message);
-    } finally {
-      msgTA.disabled = false;
-      sendB.disabled = false;
-      msgTA.focus();
-      chatBox.scrollTop = chatBox.scrollHeight;
+      enableInput();
     }
   }
 
   async function saveSpec() {
-    if (!confirm('Save this conversation as a draft spec and open it in the editor?')) return;
-    saveB.disabled = true;
-    saveB.textContent = 'Saving…';
-    try {
-      const result = await api.post(`/api/spec-drafts/${draft.id}/save`, {});
-      navigate('spec', { id: result.spec_id });
-    } catch (e) {
-      saveB.disabled = false;
-      saveB.textContent = 'Save as Draft Spec';
-      alert(e.message);
-    }
+    const titleInput = input('text', draft.title || '');
+    titleInput.placeholder = 'Spec title';
+    modal('Save as Spec', [
+      field('Title (edit if you like)', titleInput),
+    ], async () => {
+      const title = titleInput.value.trim();
+      if (!title) { alert('Title is required.'); return false; }
+      saveB.disabled = true;
+      saveB.textContent = 'Saving…';
+      try {
+        const result = await api.post(`/api/spec-drafts/${draft.id}/save`, { title });
+        if (es) es.close();
+        navigate('spec', { id: result.spec_id });
+      } catch (e) {
+        saveB.disabled = false;
+        saveB.textContent = 'Save as Draft Spec';
+        alert(e.message);
+        return false;
+      }
+    });
   }
 
   async function abandonDraft() {
     if (!confirm('Abandon this spec draft and close the AI session?')) return;
+    if (es) es.close();
     try {
       await fetch(`/api/spec-drafts/${draft.id}`, { method: 'DELETE' });
     } catch (_) {}
@@ -916,10 +990,24 @@ function renderDraftChat(draft) {
   }
 }
 
+// render markdown to HTML, sanitizing script tags
+function renderMarkdown(text) {
+  if (typeof marked !== 'undefined') {
+    return marked.parse(text, { breaks: true });
+  }
+  // fallback: escape HTML and preserve whitespace
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>');
+}
+
 function renderChatMsg(box, role, content) {
   const wrap = el('div', { className: `chat-msg chat-msg-${role}` });
   const label = el('div', { className: 'chat-msg-label' }, role === 'user' ? 'you' : 'ai');
-  const body = el('div', { className: 'chat-msg-body' }, content);
+  const body = el('div', { className: 'chat-msg-body' });
+  if (role === 'assistant') {
+    body.innerHTML = renderMarkdown(content);
+  } else {
+    body.textContent = content;
+  }
   wrap.append(label, body);
   box.append(wrap);
 }

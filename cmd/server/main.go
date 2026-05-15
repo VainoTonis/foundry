@@ -15,6 +15,7 @@ import (
 	"github.com/tonis2/foundry/internal/api"
 	"github.com/tonis2/foundry/internal/cerberus"
 	"github.com/tonis2/foundry/internal/config"
+	"github.com/tonis2/foundry/internal/hub"
 	"github.com/tonis2/foundry/internal/workflow"
 )
 
@@ -55,6 +56,9 @@ func main() {
 	// cerberus client — profile is resolved per-session by the runner; pass empty here
 	cerb := cerberus.New(cfg.CerberusBin, cfg.CerberusImage, cfg.CerberusModel, "")
 
+	// shared event hub for real-time streaming
+	eventHub := hub.New()
+
 	// workflow runner
 	runnerCfg := workflow.Config{
 		DefaultPhaseTimeoutSeconds: cfg.DefaultPhaseTimeoutSeconds,
@@ -62,13 +66,13 @@ func main() {
 		MaxConcurrentWorkflows:     cfg.MaxConcurrentWorkflows,
 		CerberusProfile:            cfg.CerberusProfile,
 	}
-	runner := workflow.NewRunner(pool, cerb, runnerCfg)
+	runner := workflow.NewRunner(pool, cerb, runnerCfg, eventHub)
 
 	// orphan draft recovery (non-blocking)
 	go api.RecoverOrphanDrafts(context.Background(), pool, cerb)
 
 	// API server
-	srv := api.NewServer(pool, runner, cerb, cfg.DefaultWorkflowBudgetUSD, cfg.GitRoot, cfgPath, cfg.CerberusProfile)
+	srv := api.NewServer(pool, runner, cerb, eventHub, cfg.DefaultWorkflowBudgetUSD, cfg.GitRoot, cfgPath, cfg.CerberusProfile, cfg.ServerPort)
 
 	// serve web static files
 	mux := http.NewServeMux()

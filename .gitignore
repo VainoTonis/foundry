@@ -15,3 +15,6 @@
 .vscode/
 *.swp
 *.swo
+
+# cerberus worktrees
+.cerberus/

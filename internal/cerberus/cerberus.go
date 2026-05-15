@@ -119,9 +119,9 @@ func DraftSessionName(draftID int64) string {
 }
 
 // Chat starts an interactive cerberus session (first turn). Blocking — run in a goroutine.
-// Returns the agent's response text from the first turn (prefix stripped).
-// extraMounts: optional list of "host:container" paths mounted read-only into the container.
-func (c *Client) Chat(ctx context.Context, session, prompt string) (string, error) {
+// When callbackURL is set, events are POSTed there and stdout is not parsed for message content.
+// When callbackURL is empty, falls back to stdout parsing (legacy).
+func (c *Client) Chat(ctx context.Context, session, prompt, callbackURL string) error {
 	args := []string{"chat", "--name", session, "--prompt", specBuilderSystemPrompt + "\n\n" + prompt}
 	if c.image != "" {
 		args = append(args, "--image", c.image)
@@ -132,62 +132,28 @@ func (c *Client) Chat(ctx context.Context, session, prompt string) (string, erro
 	if c.profile != "" {
 		args = append(args, "--profile-file", c.profile)
 	}
-	raw, err := c.output(ctx, args...)
-	if err != nil {
-		return "", err
+	if callbackURL != "" {
+		args = append(args, "--callback", callbackURL)
 	}
-	return stripCerberusOutput(session, raw), nil
+	return c.run(ctx, args...)
 }
 
 // specBuilderSystemPrompt replaces pi's default code-agent system prompt for spec builder sessions.
-// Tools are kept so the agent can read the project, but it must only write a spec, not code.
 const specBuilderSystemPrompt = `You are a spec writer. Your only job is to help the user write a Foundry spec — a markdown document that describes what should be built and how it breaks into phases.
 
-You have read access to the filesystem. Use it to read the project if the user points you at one — README, source files, structure — to understand context. Do NOT write or modify any files. Do NOT run build commands or tests.
+You have read access to the filesystem. The project code is mounted at /workspace — always read files from there, never from host paths. Do NOT write or modify any files. Do NOT run build commands or tests.
 
 Respond conversationally. Ask clarifying questions when needed. When you have enough information, produce the spec.`
 
-// stripCerberusOutput extracts the agent response from cerberus stdout.
-// cerberus prefixes each delta chunk with "[session] " but blank lines and
-// continuation lines within a response have no prefix. We find the span
-// between the first prefixed line and the last non-waiting prefixed line,
-// return everything in that span with the prefix stripped where present.
-func stripCerberusOutput(session, raw string) string {
-	prefix := "[" + session + "] "
-	waiting := prefix + "waiting"
-	allLines := strings.Split(raw, "\n")
-
-	// find first and last index of a prefixed non-waiting line
-	first, last := -1, -1
-	for i, line := range allLines {
-		if strings.HasPrefix(line, prefix) && !strings.HasPrefix(line, waiting) {
-			if first == -1 {
-				first = i
-			}
-			last = i
-		}
-	}
-	if first == -1 {
-		return ""
-	}
-
-	// collect lines in [first, last], stripping prefix where present
-	var out []string
-	for _, line := range allLines[first : last+1] {
-		out = append(out, strings.TrimPrefix(line, prefix))
-	}
-	return strings.TrimSpace(strings.Join(out, "\n"))
-}
-
 // Message sends a follow-up message in an existing interactive session.
-// Returns the agent response text with session prefix and status lines stripped.
+// When callbackURL is set, events are POSTed there and stdout is not parsed.
 // cerberus message --name <session> --message <msg>
-func (c *Client) Message(ctx context.Context, session, msg string) (string, error) {
-	raw, err := c.output(ctx, "message", "--name", session, "--message", msg)
-	if err != nil {
-		return "", err
+func (c *Client) Message(ctx context.Context, session, msg, callbackURL string) error {
+	args := []string{"message", "--name", session, "--message", msg}
+	if callbackURL != "" {
+		args = append(args, "--callback", callbackURL)
 	}
-	return stripCerberusOutput(session, raw), nil
+	return c.run(ctx, args...)
 }
 
 // Close commits any changes and cleans up an interactive session.

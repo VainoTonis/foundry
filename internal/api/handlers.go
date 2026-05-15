@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/tonis2/foundry/internal/cerberus"
 	"github.com/tonis2/foundry/internal/db"
 	"github.com/tonis2/foundry/internal/discover"
+	"github.com/tonis2/foundry/internal/hub"
 	"github.com/tonis2/foundry/internal/workflow"
 )
 
@@ -25,17 +27,23 @@ type Server struct {
 	runner          *workflow.Runner
 	cerb            *cerberus.Client
 	mux             *http.ServeMux
+	eventHub        *hub.EventHub
 	defaultBudget   float64
 	gitRoot         string
 	cfgPath         string
-	cerberusProfile string // name of the active cerberus profile (resolved from DB at session start)
+	serverPort      int
+	cerberusProfile string
 }
 
-func NewServer(pool *pgxpool.Pool, runner *workflow.Runner, cerb *cerberus.Client, defaultBudget float64, gitRoot string, cfgPath string, cerberusProfile string) *Server {
-	s := &Server{pool: pool, runner: runner, cerb: cerb, defaultBudget: defaultBudget, gitRoot: gitRoot, cfgPath: cfgPath, cerberusProfile: cerberusProfile}
+func NewServer(pool *pgxpool.Pool, runner *workflow.Runner, cerb *cerberus.Client, eventHub *hub.EventHub, defaultBudget float64, gitRoot string, cfgPath string, cerberusProfile string, serverPort int) *Server {
+	s := &Server{pool: pool, runner: runner, cerb: cerb, eventHub: eventHub, defaultBudget: defaultBudget, gitRoot: gitRoot, cfgPath: cfgPath, serverPort: serverPort, cerberusProfile: cerberusProfile}
 	s.mux = http.NewServeMux()
 	s.routes()
 	return s
+}
+
+func (s *Server) callbackURL() string {
+	return fmt.Sprintf("http://localhost:%d/api/cerberus/events", s.serverPort)
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -57,6 +65,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/api/settings", s.handleSettings)
 	s.mux.HandleFunc("/api/profiles", s.handleProfiles)
 	s.mux.HandleFunc("/api/profiles/", s.handleProfile)
+	s.mux.HandleFunc("/api/cerberus/events", s.handleCerberusCallback)
 	s.mux.HandleFunc("/api/spec-drafts", s.handleSpecDrafts)
 	s.mux.HandleFunc("/api/spec-drafts/", s.handleSpecDraft)
 }
@@ -346,7 +355,6 @@ func (s *Server) handleWorkflow(w http.ResponseWriter, r *http.Request) {
 		}
 		jsonOK(w, phases, http.StatusOK)
 	case suffix == "resume" && r.Method == http.MethodPost:
-		// reset failed phase and restart runner
 		phases, err := db.ListPhasesByWorkflow(r.Context(), s.pool, id)
 		if err != nil {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
@@ -367,6 +375,11 @@ func (s *Server) handleWorkflow(w http.ResponseWriter, r *http.Request) {
 		s.runner.Start(id)
 		wf, _ := db.GetWorkflow(r.Context(), s.pool, id)
 		jsonOK(w, wf, http.StatusOK)
+	case suffix == "stop" && r.Method == http.MethodPost:
+		s.runner.Stop(id)
+		jsonOK(w, map[string]string{"status": "stopping"}, http.StatusOK)
+	case suffix == "stream":
+		s.streamWorkflow(w, r, id)
 	default:
 		jsonErr(w, "not found", http.StatusNotFound)
 	}
@@ -532,6 +545,41 @@ func (s *Server) streamLogs(w http.ResponseWriter, r *http.Request, phaseID int6
 	}
 }
 
+func (s *Server) streamWorkflow(w http.ResponseWriter, r *http.Request, workflowID int64) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		jsonErr(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	key := fmt.Sprintf("wf:%d", workflowID)
+	ch := s.eventHub.Subscribe(key)
+	defer s.eventHub.Unsubscribe(key, ch)
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case data, ok := <-ch:
+			if !ok {
+				return
+			}
+			var evt struct {
+				Event string `json:"event"`
+			}
+			if json.Unmarshal(data, &evt) == nil && evt.Event != "" {
+				fmt.Fprintf(w, "event: %s\ndata: %s\n\n", evt.Event, data)
+			} else {
+				fmt.Fprintf(w, "data: %s\n\n", data)
+			}
+			flusher.Flush()
+		}
+	}
+}
+
 // helpers
 
 func jsonOK(w http.ResponseWriter, v any, code int) {
@@ -610,14 +658,14 @@ func (s *Server) handleSpecDrafts(w http.ResponseWriter, r *http.Request) {
 		jsonOK(w, list, http.StatusOK)
 	case http.MethodPost:
 		var body struct {
-			ProjectID *int64 `json:"project_id"`
-			Title     string `json:"title"`
+			ProjectID   *int64 `json:"project_id"`
+			Description string `json:"description"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			jsonErr(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		draft, err := db.CreateSpecDraft(r.Context(), s.pool, body.ProjectID, body.Title)
+		draft, err := db.CreateSpecDraft(r.Context(), s.pool, body.ProjectID, "(untitled)")
 		if err != nil {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -630,20 +678,19 @@ func (s *Server) handleSpecDrafts(w http.ResponseWriter, r *http.Request) {
 		draft.CerberusSession = session
 
 		initialPrompt := specBuilderPrompt
-		if body.Title != "" {
-			initialPrompt += "\n\nThe user wants to build: " + body.Title
+		if body.Description != "" {
+			initialPrompt += "\n\nThe user's request:\n" + body.Description
 		}
 		if body.ProjectID != nil {
 			if proj, err := db.GetProject(r.Context(), s.pool, *body.ProjectID); err == nil {
-				initialPrompt += "\n\nProject name: " + proj.Name + "\nRepo path: " + proj.RepoPath
+				initialPrompt += "\n\nProject name: " + proj.Name + "\nThe project code is mounted at /workspace inside your container."
 			}
 		}
 
-		// Start session in background — cerberus chat takes 60-120s.
-		// Client polls GET /api/spec-drafts/:id until messages is non-empty.
 		pool := s.pool
 		cerb := s.cerb
 		draftID := draft.ID
+		cbURL := s.callbackURL()
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 			defer cancel()
@@ -654,19 +701,12 @@ func (s *Server) handleSpecDrafts(w http.ResponseWriter, r *http.Request) {
 			if profilePath != "" {
 				cerb.SetProfile(profilePath)
 			}
-			// Chat runs the first turn; the agent's response IS the first message.
-			agentMsg, err := cerb.Chat(ctx, session, initialPrompt)
-			if err != nil {
+			if err := cerb.Chat(ctx, session, initialPrompt, cbURL); err != nil {
 				log.Printf("spec-builder chat start error: %v", err)
 				errStatus := "error"
 				db.UpdateSpecDraft(ctx, pool, draftID, db.UpdateSpecDraftParams{Status: &errStatus})
 				return
 			}
-			if agentMsg == "" {
-				agentMsg = "Ready. What would you like to build?"
-			}
-			msgs := appendMessage(nil, "assistant", agentMsg)
-			db.UpdateSpecDraft(ctx, pool, draftID, db.UpdateSpecDraftParams{Messages: msgs})
 		}()
 
 		jsonOK(w, draft, http.StatusCreated)
@@ -689,6 +729,10 @@ func (s *Server) handleSpecDraft(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch {
+	case suffix == "stream":
+		s.streamDraftEvents(w, r, id)
+		return
+
 	case suffix == "messages" && r.Method == http.MethodGet:
 		draft, err := db.GetSpecDraft(r.Context(), s.pool, id)
 		if errors.Is(err, db.ErrNotFound) {
@@ -732,22 +776,35 @@ func (s *Server) handleSpecDraft(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		msgs := appendMessage(draft.Messages, "user", body.Content)
-		ctx90, cancel := context.WithTimeout(r.Context(), 90*time.Second)
-		defer cancel()
-		agentResp, err := s.cerb.Message(ctx90, draft.CerberusSession, body.Content)
-		if err != nil {
-			jsonErr(w, "agent error: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		msgs = appendMessage(msgs, "assistant", agentResp)
 		draft, err = db.UpdateSpecDraft(r.Context(), s.pool, id, db.UpdateSpecDraftParams{Messages: msgs})
 		if err != nil {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		cbURL := s.callbackURL()
+		cerb := s.cerb
+		session := draft.CerberusSession
+		pool := s.pool
+		draftID := draft.ID
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+			defer cancel()
+			if err := cerb.Message(ctx, session, body.Content, cbURL); err != nil {
+				log.Printf("spec-builder message error: %v", err)
+				errStatus := "error"
+				db.UpdateSpecDraft(ctx, pool, draftID, db.UpdateSpecDraftParams{Status: &errStatus})
+			}
+		}()
 		jsonOK(w, draft, http.StatusOK)
 
 	case suffix == "save" && r.Method == http.MethodPost:
+		var saveBody struct {
+			Title string `json:"title"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&saveBody); err != nil {
+			jsonErr(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		draft, err := db.GetSpecDraft(r.Context(), s.pool, id)
 		if errors.Is(err, db.ErrNotFound) {
 			jsonErr(w, "not found", http.StatusNotFound)
@@ -759,19 +816,7 @@ func (s *Server) handleSpecDraft(w http.ResponseWriter, r *http.Request) {
 		}
 		specContent := extractFinalSpec(draft.Messages)
 		if specContent == "" {
-			ctx60, cancel := context.WithTimeout(r.Context(), 60*time.Second)
-			defer cancel()
-			agentResp, err := s.cerb.Message(ctx60, draft.CerberusSession, "Please output the final spec now. Write exactly the line 'FINAL SPEC:' followed by a markdown code block containing the complete spec.")
-			if err != nil {
-				jsonErr(w, "could not get final spec: "+err.Error(), http.StatusInternalServerError)
-				return
-			}
-			msgs := appendMessage(draft.Messages, "assistant", agentResp)
-			draft, _ = db.UpdateSpecDraft(r.Context(), s.pool, id, db.UpdateSpecDraftParams{Messages: msgs})
-			specContent = extractFinalSpec(draft.Messages)
-		}
-		if specContent == "" {
-			jsonErr(w, "could not extract spec from conversation", http.StatusUnprocessableEntity)
+			jsonErr(w, "could not extract spec from conversation — ask the agent to output 'FINAL SPEC:' first", http.StatusUnprocessableEntity)
 			return
 		}
 		if err := s.cerb.Close(r.Context(), draft.CerberusSession); err != nil {
@@ -780,18 +825,26 @@ func (s *Server) handleSpecDraft(w http.ResponseWriter, r *http.Request) {
 		if err := s.cerb.Clean(r.Context(), draft.CerberusSession); err != nil {
 			log.Printf("spec-builder clean error: %v", err)
 		}
+		db.DeleteCerberusEvents(r.Context(), s.pool, draft.CerberusSession)
 		removeProfileFile(draft.CerberusSession)
 		var projID int64
 		if draft.ProjectID != nil {
 			projID = *draft.ProjectID
 		}
-		sp, err := db.CreateSpec(r.Context(), s.pool, projID, draft.Title, specContent, []byte("[]"))
+		title := saveBody.Title
+		if title == "" {
+			title = extractSpecTitle(specContent)
+		}
+		if title == "" {
+			title = draft.Title
+		}
+		sp, err := db.CreateSpec(r.Context(), s.pool, projID, title, specContent, []byte("[]"))
 		if err != nil {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		saved := "saved"
-		db.UpdateSpecDraft(r.Context(), s.pool, id, db.UpdateSpecDraftParams{Status: &saved})
+		db.UpdateSpecDraft(r.Context(), s.pool, id, db.UpdateSpecDraftParams{Status: &saved, Title: &title})
 		jsonOK(w, map[string]int64{"spec_id": sp.ID}, http.StatusCreated)
 
 	case suffix == "" && r.Method == http.MethodDelete:
@@ -811,6 +864,7 @@ func (s *Server) handleSpecDraft(w http.ResponseWriter, r *http.Request) {
 			if err := s.cerb.Clean(r.Context(), draft.CerberusSession); err != nil {
 				log.Printf("spec-builder clean on delete: %v", err)
 			}
+			db.DeleteCerberusEvents(r.Context(), s.pool, draft.CerberusSession)
 			removeProfileFile(draft.CerberusSession)
 		}
 		if err := db.DeleteSpecDraft(r.Context(), s.pool, id); err != nil {
@@ -860,6 +914,16 @@ func extractFinalSpec(messages []byte) string {
 	return ""
 }
 
+func extractSpecTitle(specContent string) string {
+	for _, line := range strings.Split(specContent, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "# ") && !strings.HasPrefix(line, "## ") {
+			return strings.TrimSpace(line[2:])
+		}
+	}
+	return ""
+}
+
 func appendMessage(existing []byte, role, content string) []byte {
 	type msg struct {
 		Role    string `json:"role"`
@@ -873,6 +937,167 @@ func appendMessage(existing []byte, role, content string) []byte {
 	msgs = append(msgs, msg{Role: role, Content: content, Ts: time.Now().Format(time.RFC3339)})
 	b, _ := json.Marshal(msgs)
 	return b
+}
+
+// ---- cerberus callback ----
+
+func (s *Server) handleCerberusCallback(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var evt struct {
+		Type    string          `json:"type"`
+		Session string          `json:"session"`
+		Ts      string          `json:"ts"`
+		Raw     json.RawMessage `json:"-"`
+	}
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		jsonErr(w, "read body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := json.Unmarshal(raw, &evt); err != nil {
+		jsonErr(w, "invalid json: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if evt.Session == "" || evt.Type == "" {
+		jsonErr(w, "session and type required", http.StatusBadRequest)
+		return
+	}
+
+	dbEvt, err := db.InsertCerberusEvent(r.Context(), s.pool, evt.Session, evt.Type, raw)
+	if err != nil {
+		jsonErr(w, "store event: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	sseData, _ := json.Marshal(dbEvt)
+	s.eventHub.Publish(evt.Session, sseData)
+
+	if evt.Type == "turn_complete" {
+		s.assembleAndAppend(r.Context(), evt.Session, true)
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) assembleAndAppend(ctx context.Context, session string, isTurnComplete bool) {
+	if !isTurnComplete {
+		return
+	}
+
+	drafts, _ := db.ListSpecDrafts(ctx, s.pool)
+	var draft *db.SpecDraft
+	for _, d := range drafts {
+		if d.CerberusSession == session {
+			draft = &d
+			break
+		}
+	}
+	if draft == nil {
+		return
+	}
+
+	events, err := db.ListCerberusEvents(ctx, s.pool, session, 0)
+	if err != nil {
+		log.Printf("assemble messages: %v", err)
+		return
+	}
+
+	var buf strings.Builder
+	var assistantMsgs []string
+	for _, e := range events {
+		switch e.EventType {
+		case "text_delta":
+			var p struct {
+				Content string `json:"content"`
+			}
+			json.Unmarshal(e.Payload, &p)
+			buf.WriteString(p.Content)
+		case "message_end":
+			if buf.Len() > 0 {
+				assistantMsgs = append(assistantMsgs, buf.String())
+				buf.Reset()
+			}
+		}
+	}
+	if buf.Len() > 0 {
+		assistantMsgs = append(assistantMsgs, buf.String())
+	}
+
+	msgs := draft.Messages
+	for _, content := range assistantMsgs {
+		msgs = appendMessage(msgs, "assistant", content)
+	}
+	if len(assistantMsgs) > 0 {
+		db.UpdateSpecDraft(ctx, s.pool, draft.ID, db.UpdateSpecDraftParams{Messages: msgs})
+	}
+	db.DeleteCerberusEvents(ctx, s.pool, session)
+}
+
+func (s *Server) streamDraftEvents(w http.ResponseWriter, r *http.Request, draftID int64) {
+	draft, err := db.GetSpecDraft(r.Context(), s.pool, draftID)
+	if errors.Is(err, db.ErrNotFound) {
+		jsonErr(w, "not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		jsonErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if draft.CerberusSession == "" {
+		jsonErr(w, "no session", http.StatusConflict)
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		jsonErr(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	lastIDStr := r.URL.Query().Get("after")
+	var lastID int64
+	if lastIDStr != "" {
+		lastID, _ = strconv.ParseInt(lastIDStr, 10, 64)
+	}
+
+	catchUp, _ := db.ListCerberusEvents(r.Context(), s.pool, draft.CerberusSession, lastID)
+	for _, e := range catchUp {
+		writeSSEvent(w, e)
+		lastID = e.ID
+	}
+	flusher.Flush()
+
+	ch := s.eventHub.Subscribe(draft.CerberusSession)
+	defer s.eventHub.Unsubscribe(draft.CerberusSession, ch)
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case data, ok := <-ch:
+			if !ok {
+				return
+			}
+			var e db.CerberusEvent
+			if json.Unmarshal(data, &e) == nil {
+				writeSSEvent(w, e)
+			} else {
+				fmt.Fprintf(w, "data: %s\n\n", data)
+			}
+			flusher.Flush()
+		}
+	}
+}
+
+func writeSSEvent(w http.ResponseWriter, e db.CerberusEvent) {
+	fmt.Fprintf(w, "event: %s\n", e.EventType)
+	fmt.Fprintf(w, "data: %s\n\n", e.Payload)
 }
 
 // ---- settings ----

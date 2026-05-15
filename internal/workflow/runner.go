@@ -7,37 +7,63 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tonis2/foundry/internal/cerberus"
 	"github.com/tonis2/foundry/internal/db"
+	"github.com/tonis2/foundry/internal/hub"
 	"github.com/tonis2/foundry/internal/spec"
 )
 
-// Config holds runner configuration.
 type Config struct {
 	DefaultPhaseTimeoutSeconds int
 	DefaultWorkflowBudgetUSD   float64
 	MaxConcurrentWorkflows     int
-	CerberusProfile            string // name of the active cerberus profile (looked up from DB at run time)
+	CerberusProfile            string
 }
 
-// Runner owns the long-running workflow execution loop.
 type Runner struct {
-	pool *pgxpool.Pool
-	cerb *cerberus.Client
-	cfg  Config
+	pool    *pgxpool.Pool
+	cerb    *cerberus.Client
+	cfg     Config
+	hub     *hub.EventHub
+	mu      sync.Mutex
+	cancels map[int64]context.CancelFunc
 }
 
-func NewRunner(pool *pgxpool.Pool, cerb *cerberus.Client, cfg Config) *Runner {
-	return &Runner{pool: pool, cerb: cerb, cfg: cfg}
+func NewRunner(pool *pgxpool.Pool, cerb *cerberus.Client, cfg Config, eventHub *hub.EventHub) *Runner {
+	return &Runner{
+		pool:    pool,
+		cerb:    cerb,
+		cfg:     cfg,
+		hub:     eventHub,
+		cancels: make(map[int64]context.CancelFunc),
+	}
 }
 
-// Start launches the workflow for the given workflowID in a goroutine and returns immediately.
+func (r *Runner) Stop(workflowID int64) {
+	r.mu.Lock()
+	cancel, ok := r.cancels[workflowID]
+	r.mu.Unlock()
+	if ok {
+		cancel()
+	}
+}
+
 func (r *Runner) Start(workflowID int64) {
+	ctx, cancel := context.WithCancel(context.Background())
+	r.mu.Lock()
+	r.cancels[workflowID] = cancel
+	r.mu.Unlock()
 	go func() {
-		ctx := context.Background()
+		defer func() {
+			r.mu.Lock()
+			delete(r.cancels, workflowID)
+			r.mu.Unlock()
+			cancel()
+		}()
 		if err := r.run(ctx, workflowID); err != nil {
 			log.Printf("workflow %d error: %v", workflowID, err)
 		}
@@ -62,16 +88,18 @@ func (r *Runner) run(ctx context.Context, workflowID int64) error {
 	if len(parsed.Phases) == 0 {
 		log.Printf("workflow %d: spec has no phases, pausing", workflowID)
 		_ = db.UpdateWorkflowStatus(ctx, r.pool, workflowID, "paused")
+		r.publishWorkflowUpdate(workflowID, "paused")
 		failStatus := "paused"
 		_, _ = db.UpdateSpec(ctx, r.pool, sp.ID, db.UpdateSpecParams{Status: &failStatus})
 		return fmt.Errorf("spec %d has no ## Phase N: sections", sp.ID)
 	}
-	// ensure phase rows exist
-	for _, ph := range parsed.Phases {
-		timeout := r.cfg.DefaultPhaseTimeoutSeconds
-		if _, err := db.CreatePhase(ctx, r.pool, workflowID, ph.Position, ph.Name, ph.Goal, timeout); err != nil {
-			// ignore duplicate — phase may already exist on resume
-			log.Printf("createPhase pos=%d: %v", ph.Position, err)
+	existing, _ := db.ListPhasesByWorkflow(ctx, r.pool, workflowID)
+	if len(existing) == 0 {
+		for _, ph := range parsed.Phases {
+			timeout := r.cfg.DefaultPhaseTimeoutSeconds
+			if _, err := db.CreatePhase(ctx, r.pool, workflowID, ph.Position, ph.Name, ph.Goal, timeout); err != nil {
+				log.Printf("createPhase pos=%d: %v", ph.Position, err)
+			}
 		}
 	}
 
@@ -81,22 +109,25 @@ func (r *Runner) run(ctx context.Context, workflowID int64) error {
 	}
 
 	for {
-		// budget check
+		if ctx.Err() != nil {
+			r.finishWorkflow(workflowID, "paused")
+			return ctx.Err()
+		}
+
 		if wf.MaxCostUSD != nil {
 			total, err := db.WorkflowTotalCost(ctx, r.pool, workflowID)
 			if err == nil && total >= *wf.MaxCostUSD {
 				log.Printf("workflow %d budget exhausted (%.4f >= %.4f), pausing", workflowID, total, *wf.MaxCostUSD)
-				_ = db.UpdateWorkflowStatus(ctx, r.pool, workflowID, "paused")
+				r.finishWorkflow(workflowID, "paused")
 				return nil
 			}
 		}
 
 		phase, err := db.NextPendingPhase(ctx, r.pool, workflowID)
 		if err == db.ErrNotFound {
-			// all phases done
-			_ = db.UpdateWorkflowStatus(ctx, r.pool, workflowID, "done")
+			r.finishWorkflow(workflowID, "done")
 			specStatus := "done"
-			_, _ = db.UpdateSpec(ctx, r.pool, sp.ID, db.UpdateSpecParams{Status: &specStatus})
+			_, _ = db.UpdateSpec(context.Background(), r.pool, sp.ID, db.UpdateSpecParams{Status: &specStatus})
 			return nil
 		}
 		if err != nil {
@@ -105,7 +136,7 @@ func (r *Runner) run(ctx context.Context, workflowID int64) error {
 
 		if err := r.runPhase(ctx, wf, sp, proj, phase, parsed.GlobalContext, trackOverlay); err != nil {
 			log.Printf("phase %d failed: %v", phase.ID, err)
-			_ = db.UpdateWorkflowStatus(ctx, r.pool, workflowID, "paused")
+			r.finishWorkflow(workflowID, "paused")
 			return nil
 		}
 	}
@@ -137,7 +168,6 @@ func (r *Runner) execPhase(
 ) error {
 	sessionName := cerberus.SessionName(sp.ID, phase.Position)
 
-	// clean any leftover session from a previous attempt
 	if err := r.cerb.Clean(ctx, sessionName); err != nil {
 		log.Printf("pre-clean session %s: %v (ignored)", sessionName, err)
 	}
@@ -153,8 +183,8 @@ func (r *Runner) execPhase(
 	if err != nil {
 		return fmt.Errorf("update phase running: %w", err)
 	}
+	r.publishPhaseUpdate(wf.ID, phase.ID, "running")
 
-	// start cerberus with timeout
 	phaseCtx, cancel := context.WithTimeout(ctx, time.Duration(phase.TimeoutSeconds)*time.Second)
 	defer cancel()
 
@@ -166,13 +196,11 @@ func (r *Runner) execPhase(
 		r.cerb.SetProfile(profilePath)
 	}
 
-	// run cerberus blocking in goroutine, collect logs in parallel
 	cerberusDone := make(chan error, 1)
 	go func() {
 		cerberusDone <- r.cerb.Start(phaseCtx, sessionName, prompt)
 	}()
 
-	// poll logs every 2s
 	logTicker := time.NewTicker(2 * time.Second)
 	defer logTicker.Stop()
 
@@ -181,27 +209,38 @@ loop:
 	for {
 		select {
 		case <-logTicker.C:
-			r.collectLogs(ctx, phase.ID, sessionName, &lastLogLine)
+			r.collectLogs(ctx, wf.ID, phase.ID, sessionName, &lastLogLine)
 		case cerberusErr := <-cerberusDone:
-			r.collectLogs(ctx, phase.ID, sessionName, &lastLogLine)
+			r.collectLogs(ctx, wf.ID, phase.ID, sessionName, &lastLogLine)
 			if cerberusErr != nil {
 				failStatus := "failed"
 				now2 := time.Now()
-				_, _ = db.UpdatePhase(ctx, r.pool, phase.ID, db.UpdatePhaseParams{
+				_, _ = db.UpdatePhase(context.Background(), r.pool, phase.ID, db.UpdatePhaseParams{
 					Status:     &failStatus,
 					FinishedAt: &now2,
 				})
+				r.publishPhaseUpdate(wf.ID, phase.ID, "failed")
 				return fmt.Errorf("cerberus: %w", cerberusErr)
 			}
 			break loop
 		}
 	}
 
-	// awaiting review
+	if ctx.Err() != nil {
+		failStatus := "failed"
+		now2 := time.Now()
+		_, _ = db.UpdatePhase(context.Background(), r.pool, phase.ID, db.UpdatePhaseParams{
+			Status:     &failStatus,
+			FinishedAt: &now2,
+		})
+		r.publishPhaseUpdate(wf.ID, phase.ID, "failed")
+		return ctx.Err()
+	}
+
 	awaitStatus := "awaiting_review"
 	_, _ = db.UpdatePhase(ctx, r.pool, phase.ID, db.UpdatePhaseParams{Status: &awaitStatus})
+	r.publishPhaseUpdate(wf.ID, phase.ID, "awaiting_review")
 
-	// get diff from cerberus — non-empty diff = pass
 	diff, err := r.cerb.Diff(ctx, sessionName)
 	if err != nil {
 		diff = ""
@@ -215,7 +254,6 @@ loop:
 		notes = "cerberus exited 0 but produced no diff"
 	}
 
-	// extract files touched from review output (first line of cerberus review without --diff)
 	reviewOut, _ := r.cerb.Review(ctx, sessionName)
 	filesJSON := extractFilesJSON(reviewOut)
 
@@ -229,17 +267,17 @@ loop:
 	if verdict == "pass" {
 		doneStatus := "done"
 		_, _ = db.UpdatePhase(ctx, r.pool, phase.ID, db.UpdatePhaseParams{Status: &doneStatus})
+		r.publishPhaseUpdate(wf.ID, phase.ID, "done")
 		return nil
 	}
 
-	// fail path
 	if isRetry || phase.RetryCount >= 1 {
 		failStatus := "failed"
 		_, _ = db.UpdatePhase(ctx, r.pool, phase.ID, db.UpdatePhaseParams{Status: &failStatus})
+		r.publishPhaseUpdate(wf.ID, phase.ID, "failed")
 		return fmt.Errorf("phase %d failed after retry", phase.ID)
 	}
 
-	// retry once
 	adjusted := prompt + "\n\n[Previous attempt produced no changes. Try again.]"
 	newRetry := phase.RetryCount + 1
 	_, _ = db.UpdatePhase(ctx, r.pool, phase.ID, db.UpdatePhaseParams{
@@ -248,7 +286,6 @@ loop:
 		Status:         strPtr("pending"),
 	})
 
-	// reload phase for retry
 	phase2, err := db.GetPhase(ctx, r.pool, phase.ID)
 	if err != nil {
 		return fmt.Errorf("reload phase for retry: %w", err)
@@ -256,7 +293,7 @@ loop:
 	return r.execPhase(ctx, wf, sp, proj, phase2, adjusted, true)
 }
 
-func (r *Runner) collectLogs(ctx context.Context, phaseID int64, session string, lastLine *string) {
+func (r *Runner) collectLogs(ctx context.Context, workflowID, phaseID int64, session string, lastLine *string) {
 	logs, err := r.cerb.Logs(ctx, session)
 	if err != nil {
 		return
@@ -275,25 +312,61 @@ func (r *Runner) collectLogs(ctx context.Context, phaseID int64, session string,
 		}
 		_ = db.InsertPhaseLog(ctx, r.pool, phaseID, line)
 		*lastLine = line
+		r.publishLog(workflowID, phaseID, line)
 	}
+}
+
+func (r *Runner) finishWorkflow(workflowID int64, status string) {
+	_ = db.UpdateWorkflowStatus(context.Background(), r.pool, workflowID, status)
+	r.publishWorkflowUpdate(workflowID, status)
+}
+
+func (r *Runner) publishLog(workflowID, phaseID int64, line string) {
+	if r.hub == nil {
+		return
+	}
+	data, _ := json.Marshal(map[string]any{
+		"event":    "log",
+		"phase_id": phaseID,
+		"line":     line,
+		"ts":       time.Now().Format(time.RFC3339),
+	})
+	r.hub.Publish(fmt.Sprintf("wf:%d", workflowID), data)
+}
+
+func (r *Runner) publishPhaseUpdate(workflowID, phaseID int64, status string) {
+	if r.hub == nil {
+		return
+	}
+	data, _ := json.Marshal(map[string]any{
+		"event":    "phase_update",
+		"phase_id": phaseID,
+		"status":   status,
+	})
+	r.hub.Publish(fmt.Sprintf("wf:%d", workflowID), data)
+}
+
+func (r *Runner) publishWorkflowUpdate(workflowID int64, status string) {
+	if r.hub == nil {
+		return
+	}
+	data, _ := json.Marshal(map[string]any{
+		"event":  "workflow_update",
+		"status": status,
+	})
+	r.hub.Publish(fmt.Sprintf("wf:%d", workflowID), data)
 }
 
 func strPtr(s string) *string { return &s }
 
-// profileFilePath returns the fixed path for a session's profile file.
 func profileFilePath(session string) string {
 	return "/tmp/foundry-profile-" + session + ".json"
 }
 
-// removeProfileFile deletes the profile file for a session if it exists.
 func removeProfileFile(session string) {
 	os.Remove(profileFilePath(session))
 }
 
-// writeProfileFile looks up the named profile from the DB and writes its contents
-// to a fixed path derived from the session name. The file persists until
-// removeProfileFile is called at session cleanup.
-// Returns empty string (no error) if profileName is empty or the profile is not found.
 func (r *Runner) writeProfileFile(ctx context.Context, profileName, session string) (string, error) {
 	if profileName == "" {
 		return "", nil
@@ -332,8 +405,6 @@ func (r *Runner) writeProfileFile(ctx context.Context, profileName, session stri
 	return path, nil
 }
 
-// extractFilesJSON parses cerberus review output and returns a JSON array of filenames.
-// Output lines look like: "  hello_kitten.md" after the commit line.
 func extractFilesJSON(reviewOut string) []byte {
 	var files []string
 	for _, line := range strings.Split(reviewOut, "\n") {
