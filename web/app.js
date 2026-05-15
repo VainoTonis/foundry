@@ -285,10 +285,12 @@ async function renderWorkflow(id) {
       if (d.status === 'done' || d.status === 'paused' || d.status === 'failed') {
         es.close();
         _workflowSSE = null;
+        expandedPhases.clear();
+        phaseElements.clear();
       }
     });
 
-    es.onerror = () => { es.close(); _workflowSSE = null; };
+    es.onerror = () => { es.close(); _workflowSSE = null; expandedPhases.clear(); phaseElements.clear(); };
   }
 }
 
@@ -386,6 +388,7 @@ function appendLog(box, l) {
   const ts = el('span', { className: 'log-ts' }, fmtTime(l.ts));
   line.append(ts, document.createTextNode(l.line));
   box.append(line);
+  if (box.children.length > 1000) box.firstChild.remove();
 }
 
 function renderDiff(container, text) {
@@ -833,7 +836,7 @@ async function renderSpecBuilder(draftId) {
 
 function renderDraftChat(draft) {
   app.innerHTML = '';
-  app.append(el('span', { className: 'back', onclick: () => navigate('backlog') }, '← Backlog'));
+  app.append(el('span', { className: 'back', onclick: () => { if (es) { es.close(); es = null; } navigate('backlog'); } }, '← Backlog'));
 
   const hdr = el('div', { style: 'display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem' });
   hdr.append(
@@ -862,9 +865,9 @@ function renderDraftChat(draft) {
   // input row
   const inputRow = el('div', { className: 'chat-input-row' });
   const msgTA = el('textarea', { className: 'chat-textarea', placeholder: 'Type a message…', rows: 3 });
-  msgTA.addEventListener('keydown', e => {
+  msgTA.onkeydown = e => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); }
-  });
+  };
   const sendB = btn('Send', 'btn-primary', sendMsg);
   inputRow.append(msgTA, sendB);
   app.append(inputRow);
