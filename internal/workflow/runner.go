@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -168,8 +169,16 @@ func (r *Runner) execPhase(
 ) error {
 	sessionName := cerberus.SessionName(sp.ID, phase.Position)
 
+	r.cerb.SetRepoPath(proj.RepoPath)
+
 	if err := r.cerb.Clean(ctx, sessionName); err != nil {
 		log.Printf("pre-clean session %s: %v (ignored)", sessionName, err)
+		// cerberus state file may be gone but git branch/worktree can linger after a crash.
+		// Force-remove worktree then branch so the next Start can create them fresh.
+		_ = exec.CommandContext(ctx, "git", "-C", proj.RepoPath, "worktree", "remove", "--force",
+			".cerberus/sessions/"+sessionName+"/worktrees/solve").Run()
+		_ = exec.CommandContext(ctx, "git", "-C", proj.RepoPath, "worktree", "prune").Run()
+		_ = exec.CommandContext(ctx, "git", "-C", proj.RepoPath, "branch", "-D", "cerberus/"+sessionName).Run()
 	}
 
 	now := time.Now()
@@ -257,18 +266,47 @@ loop:
 	reviewOut, _ := r.cerb.Review(ctx, sessionName)
 	filesJSON := extractFilesJSON(reviewOut)
 
+	// get full commit hash from the cerberus branch directly
+	commitHash := ""
+	if hashOut, err := exec.CommandContext(ctx, "git", "-C", proj.RepoPath, "rev-parse", "cerberus/"+sessionName).Output(); err == nil {
+		commitHash = strings.TrimSpace(string(hashOut))
+	}
+
 	_, _ = db.UpdatePhase(ctx, r.pool, phase.ID, db.UpdatePhaseParams{
-		ReviewVerdict: &verdict,
-		ReviewNotes:   &notes,
-		FilesTouched:  filesJSON,
-		FinishedAt:    &now3,
+		ReviewVerdict:  &verdict,
+		ReviewNotes:    &notes,
+		FilesTouched:   filesJSON,
+		CerberusCommit: &commitHash,
+		FinishedAt:     &now3,
 	})
 
 	if verdict == "pass" {
-		doneStatus := "done"
-		_, _ = db.UpdatePhase(ctx, r.pool, phase.ID, db.UpdatePhaseParams{Status: &doneStatus})
-		r.publishPhaseUpdate(wf.ID, phase.ID, "done")
-		return nil
+		if commitHash == "" {
+			verdict = "fail"
+			notes = "cerberus produced diff but no commit hash found"
+			_, _ = db.UpdatePhase(ctx, r.pool, phase.ID, db.UpdatePhaseParams{
+				ReviewVerdict: &verdict,
+				ReviewNotes:   &notes,
+			})
+		} else {
+			cmd := exec.CommandContext(ctx, "git", "-C", proj.RepoPath, "cherry-pick", commitHash)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				// abort any partial cherry-pick so repo stays clean
+				_ = exec.CommandContext(ctx, "git", "-C", proj.RepoPath, "cherry-pick", "--abort").Run()
+				failStatus := "failed"
+				cherryErr := fmt.Sprintf("cherry-pick %s failed: %v — %s", commitHash, err, strings.TrimSpace(string(out)))
+				_, _ = db.UpdatePhase(ctx, r.pool, phase.ID, db.UpdatePhaseParams{
+					Status:      &failStatus,
+					ReviewNotes: &cherryErr,
+				})
+				r.publishPhaseUpdate(wf.ID, phase.ID, "failed")
+				return fmt.Errorf("phase %d cherry-pick: %w", phase.ID, err)
+			}
+			doneStatus := "done"
+			_, _ = db.UpdatePhase(ctx, r.pool, phase.ID, db.UpdatePhaseParams{Status: &doneStatus})
+			r.publishPhaseUpdate(wf.ID, phase.ID, "done")
+			return nil
+		}
 	}
 
 	if isRetry || phase.RetryCount >= 1 {

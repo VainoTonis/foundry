@@ -11,14 +11,20 @@ import (
 
 // Client wraps the cerberus binary.
 type Client struct {
-	bin     string // path to cerberus binary
-	image   string // optional: container image; empty = cerberus default
-	model   string // optional: model override; empty = cerberus default
-	profile string // optional: path to cerberus profile file; empty = no profile
+	bin      string // path to cerberus binary
+	image    string // optional: container image; empty = cerberus default
+	model    string // optional: model override; empty = cerberus default
+	profile  string // optional: path to cerberus profile file; empty = no profile
+	repoPath string // working directory for all cerberus commands (target project repo)
 }
 
 func New(bin, image, model, profile string) *Client {
 	return &Client{bin: bin, image: image, model: model, profile: profile}
+}
+
+// SetRepoPath sets the working directory for all cerberus commands.
+func (c *Client) SetRepoPath(path string) {
+	c.repoPath = path
 }
 
 // SetProfile overrides the profile file path for the next session start.
@@ -94,6 +100,7 @@ func SessionName(specID int64, position int) string {
 
 func (c *Client) run(ctx context.Context, args ...string) error {
 	cmd := exec.CommandContext(ctx, c.bin, args...)
+	cmd.Dir = c.repoPath
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -104,6 +111,7 @@ func (c *Client) run(ctx context.Context, args ...string) error {
 
 func (c *Client) output(ctx context.Context, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, c.bin, args...)
+	cmd.Dir = c.repoPath
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -142,6 +150,8 @@ func (c *Client) Chat(ctx context.Context, session, prompt, callbackURL string) 
 const specBuilderSystemPrompt = `You are a spec writer. Your only job is to help the user write a Foundry spec — a markdown document that describes what should be built and how it breaks into phases.
 
 You have read access to the filesystem. The project code is mounted at /workspace — always read files from there, never from host paths. Do NOT write or modify any files. Do NOT run build commands or tests.
+
+When writing specs, never reference the project by its host path (e.g. "personal/dummy", "work/myapp"). The agent that executes the spec works in /workspace, which is already the project root. All file paths in phase goals must be relative to that root (e.g. "src/main.go", "README.md"). Mentioning a host-style path causes the agent to create a phantom subdirectory instead of working at the root.
 
 Respond conversationally. Ask clarifying questions when needed. When you have enough information, produce the spec.`
 
