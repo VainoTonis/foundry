@@ -55,6 +55,8 @@ func (s *Server) handleCompactCerberusEvent(ctx context.Context, raw []byte) err
 				_ = s.storeAndPublishPhaseLog(ctx, ph.WorkflowID, ph.ID, "[turn complete]")
 			}
 			return nil
+		} else if !errors.Is(err, db.ErrNotFound) {
+			return err
 		}
 		if err := s.storeAndPublishCerberusEvent(ctx, evt.Session, evt.Type, json.RawMessage(`{}`)); err != nil {
 			return fmt.Errorf("store event: %w", err)
