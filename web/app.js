@@ -957,6 +957,20 @@ function renderDraftChat(draft) {
       enableInput();
     });
 
+    es.addEventListener('tool_use', e => {
+      const ev = JSON.parse(e.data);
+      if (ev.tool_name === 'update_spec') {
+        try {
+          const parsed = JSON.parse(ev.tool_input);
+          if (parsed.content) {
+            previewBody.innerHTML = renderMarkdown(parsed.content);
+          }
+        } catch (err) {
+          console.error('Failed to parse tool_input:', err);
+        }
+      }
+    });
+
     es.onerror = () => {
       if (streaming) {
         streaming.body.innerHTML = renderMarkdown(streaming.text);
