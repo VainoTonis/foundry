@@ -957,11 +957,15 @@ function renderDraftChat(draft) {
   let msgs = Array.isArray(draft.messages) ? draft.messages : [];
   let es = null;       // EventSource
   let specContent = '';
-  let streaming = null; // { wrap, body, text } — the bubble currently receiving deltas
+  let streaming = null; // { wrap, body, text, scheduled } — the bubble currently receiving deltas
   const debugEvents = [];
+  const DEBUG_EVENT_LIMIT = 150;
   let debugFilter = 'all';
+  let debugEnabled = false;
+  let debugRenderScheduled = false;
   let debugPanel = null;
   let debugLog = null;
+  let debugCount = null;
 
   if (draft.status === 'error') {
     chatBox.append(el('div', { className: 'empty' }, 'Session error — the AI session failed to start. Abandon and try again.'));
@@ -989,7 +993,9 @@ function renderDraftChat(draft) {
   const abandonB = btn('Abandon', 'btn-danger', abandonDraft);
   const debugB = btn('Debug', '', () => {
     debugPanel.hidden = !debugPanel.hidden;
+    debugEnabled = !debugPanel.hidden;
     debugB.textContent = debugPanel.hidden ? 'Debug' : 'Hide Debug';
+    if (debugEnabled) renderDebugLog();
   });
   actionRow.append(saveB, abandonB, debugB);
   leftCol.append(actionRow);
@@ -1002,9 +1008,14 @@ function renderDraftChat(draft) {
     debugFilterSelect.append(el('option', { value: type }, type));
   }
   const clearDebugB = btn('Clear', '', () => { debugEvents.length = 0; renderDebugLog(); });
-  debugControls.append(el('span', {}, 'SSE events'), debugFilterSelect, clearDebugB);
+  debugCount = el('span', { className: 'sse-debug-count' }, `0/${DEBUG_EVENT_LIMIT}`);
+  debugControls.append(el('span', {}, 'SSE events'), debugFilterSelect, debugCount, clearDebugB);
   debugLog = el('div', { className: 'sse-debug-log' });
-  debugPanel.append(debugControls, debugLog);
+  debugPanel.append(
+    debugControls,
+    el('div', { className: 'sse-debug-hint' }, 'Debug capture is opt-in and bounded. Rows show type, time, and a short preview only.'),
+    debugLog
+  );
   leftCol.append(debugPanel);
 
   // right column — spec preview
@@ -1021,43 +1032,83 @@ function renderDraftChat(draft) {
     previewBody.innerHTML = renderMarkdown(specContent);
   }
 
-  function compactPayload(data) {
+  function debugPreview(data) {
     let payload = data;
+    if (payload && typeof payload === 'object' && 'data' in payload) payload = payload.data;
     if (typeof payload === 'string') {
       try { payload = JSON.parse(payload); } catch (_) {}
     }
+    let preview = '';
     if (payload && typeof payload === 'object') {
-      payload = { ...payload };
-      for (const k of ['content', 'text', 'tool_input', 'result']) {
-        if (typeof payload[k] === 'string' && payload[k].length > 500) {
-          payload[k] = payload[k].slice(0, 500) + `… (${payload[k].length} chars)`;
-        }
-      }
+      const p = payload.payload && typeof payload.payload === 'object' ? payload.payload : payload;
+      const text = p.content || p.text || p.tool_name || p.event || p.error || p.status || '';
+      preview = text ? String(text) : Object.keys(p).slice(0, 6).join(', ');
+    } else {
+      preview = String(payload || '');
     }
-    return payload;
+    preview = preview.replace(/\s+/g, ' ').trim();
+    return preview.length > 140 ? preview.slice(0, 140) + `… (${preview.length} chars)` : preview;
   }
 
   function logDebugEvent(type, e) {
-    const payload = e && typeof e === 'object' && 'data' in e ? e.data : e;
-    debugEvents.push({ type, ts: new Date().toLocaleTimeString(), payload: compactPayload(payload) });
-    if (debugEvents.length > 200) debugEvents.shift();
-    renderDebugLog();
+    if (!debugEnabled) return;
+    debugEvents.push({ type, ts: new Date().toLocaleTimeString(), preview: debugPreview(e) });
+    while (debugEvents.length > DEBUG_EVENT_LIMIT) debugEvents.shift();
+    scheduleDebugLogRender();
+  }
+
+  function scheduleDebugLogRender() {
+    if (debugRenderScheduled) return;
+    debugRenderScheduled = true;
+    requestAnimationFrame(() => {
+      debugRenderScheduled = false;
+      renderDebugLog();
+    });
   }
 
   function renderDebugLog() {
     if (!debugLog) return;
+    if (debugCount) debugCount.textContent = `${debugEvents.length}/${DEBUG_EVENT_LIMIT}`;
+    if (debugPanel && debugPanel.hidden) return;
     debugLog.innerHTML = '';
+    const frag = document.createDocumentFragment();
     for (const item of debugEvents) {
       if (debugFilter !== 'all' && item.type !== debugFilter) continue;
       const row = el('div', { className: `sse-debug-row sse-debug-${item.type}` });
       row.append(
         el('span', { className: 'sse-debug-ts' }, item.ts),
         el('span', { className: 'sse-debug-type' }, item.type),
-        el('code', {}, JSON.stringify(item.payload))
+        el('span', { className: 'sse-debug-preview' }, item.preview)
       );
-      debugLog.append(row);
+      frag.append(row);
     }
+    debugLog.append(frag);
     debugLog.scrollTop = debugLog.scrollHeight;
+  }
+
+  function appendStreamingText(text) {
+    if (!streaming) streaming = startStreamingBubble(chatBox);
+    streaming.text += text;
+    if (streaming.scheduled) return;
+    streaming.scheduled = true;
+    requestAnimationFrame(() => flushStreamingText());
+  }
+
+  function flushStreamingText() {
+    if (!streaming) return;
+    streaming.scheduled = false;
+    streaming.body.textContent = streaming.text;
+    chatBox.scrollTop = chatBox.scrollHeight;
+  }
+
+  function finalizeStreamingMessage() {
+    if (!streaming) return;
+    flushStreamingText();
+    streaming.body.innerHTML = renderMarkdown(streaming.text);
+    streaming.body.classList.remove('chat-msg-streaming');
+    msgs.push({ role: 'assistant', content: streaming.text });
+    streaming = null;
+    updatePreview();
   }
 
   function connectSSE() {
@@ -1066,34 +1117,17 @@ function renderDraftChat(draft) {
     es.addEventListener('text_delta', e => {
       logDebugEvent('text_delta', e);
       const ev = JSON.parse(e.data);
-      if (!streaming) {
-        streaming = startStreamingBubble(chatBox);
-      }
-      streaming.text += ev.content;
-      streaming.body.textContent = streaming.text;
-      chatBox.scrollTop = chatBox.scrollHeight;
+      appendStreamingText(ev.content || '');
     });
 
     es.addEventListener('message_end', e => {
       logDebugEvent('message_end', e);
-      if (streaming) {
-        streaming.body.innerHTML = renderMarkdown(streaming.text);
-        streaming.body.classList.remove('chat-msg-streaming');
-        msgs.push({ role: 'assistant', content: streaming.text });
-        streaming = null;
-        updatePreview();
-      }
+      finalizeStreamingMessage();
     });
 
     es.addEventListener('turn_complete', e => {
       logDebugEvent('turn_complete', e);
-      if (streaming) {
-        streaming.body.innerHTML = renderMarkdown(streaming.text);
-        streaming.body.classList.remove('chat-msg-streaming');
-        msgs.push({ role: 'assistant', content: streaming.text });
-        streaming = null;
-        updatePreview();
-      }
+      finalizeStreamingMessage();
       enableInput();
     });
 
@@ -1119,11 +1153,7 @@ function renderDraftChat(draft) {
 
     es.onerror = () => {
       logDebugEvent('foundry', { event: 'eventsource_error', draft_id: draft.id });
-      if (streaming) {
-        streaming.body.innerHTML = renderMarkdown(streaming.text);
-        streaming.body.classList.remove('chat-msg-streaming');
-        streaming = null;
-      }
+      finalizeStreamingMessage();
       enableInput();
     };
   }
@@ -1151,7 +1181,7 @@ function renderDraftChat(draft) {
     const body = el('div', { className: 'chat-msg-body chat-msg-streaming' });
     wrap.append(label, body);
     box.append(wrap);
-    return { wrap, body, text: '' };
+    return { wrap, body, text: '', scheduled: false };
   }
 
   async function sendMsg() {

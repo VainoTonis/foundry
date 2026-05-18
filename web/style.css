@@ -210,13 +210,15 @@ button:hover, .btn:hover { background: var(--border); }
   background: var(--bg); border: 1px solid var(--border); color: var(--text);
   border-radius: 5px; padding: .3rem .5rem; font-size: .8rem;
 }
+.sse-debug-hint { color: var(--muted); font-size: .75rem; margin-bottom: .5rem; }
+.sse-debug-count { color: var(--muted); font-size: .75rem; }
 .sse-debug-log { max-height: 220px; overflow-y: auto; font-family: var(--mono); font-size: .75rem; }
 .sse-debug-row { display: flex; gap: .5rem; padding: .25rem 0; border-top: 1px solid rgba(255,255,255,.04); }
 .sse-debug-row:first-child { border-top: 0; }
 .sse-debug-ts { color: var(--muted); flex: 0 0 auto; }
 .sse-debug-type { color: var(--blue); flex: 0 0 auto; min-width: 7rem; }
 .sse-debug-foundry .sse-debug-type { color: var(--yellow); }
-.sse-debug-row code { color: #c0c0d0; white-space: pre-wrap; word-break: break-word; }
+.sse-debug-preview { color: #c0c0d0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* --- spec builder layout --- */
 .spec-builder-layout {
