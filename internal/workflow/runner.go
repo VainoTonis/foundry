@@ -126,9 +126,15 @@ func (r *Runner) run(ctx context.Context, workflowID int64) error {
 
 		phase, err := db.NextPendingPhase(ctx, r.pool, workflowID)
 		if err == db.ErrNotFound {
-			r.finishWorkflow(workflowID, "done")
-			specStatus := "done"
-			_, _ = db.UpdateSpec(context.Background(), r.pool, sp.ID, db.UpdateSpecParams{Status: &specStatus})
+			status, err := r.workflowStatusFromPhases(ctx, workflowID)
+			if err != nil {
+				return fmt.Errorf("list phases: %w", err)
+			}
+			r.finishWorkflow(workflowID, status)
+			if status == "done" || status == "failed" {
+				specStatus := status
+				_, _ = db.UpdateSpec(context.Background(), r.pool, sp.ID, db.UpdateSpecParams{Status: &specStatus})
+			}
 			return nil
 		}
 		if err != nil {
@@ -137,7 +143,9 @@ func (r *Runner) run(ctx context.Context, workflowID int64) error {
 
 		if err := r.runPhase(ctx, wf, sp, proj, phase, parsed.GlobalContext, trackOverlay); err != nil {
 			log.Printf("phase %d failed: %v", phase.ID, err)
-			r.finishWorkflow(workflowID, "paused")
+			r.finishWorkflow(workflowID, "failed")
+			specStatus := "failed"
+			_, _ = db.UpdateSpec(context.Background(), r.pool, sp.ID, db.UpdateSpecParams{Status: &specStatus})
 			return nil
 		}
 	}
@@ -354,6 +362,29 @@ func (r *Runner) collectLogs(ctx context.Context, workflowID, phaseID int64, ses
 		*lastLine = line
 		r.publishLog(workflowID, phaseID, line)
 	}
+}
+
+func (r *Runner) workflowStatusFromPhases(ctx context.Context, workflowID int64) (string, error) {
+	phases, err := db.ListPhasesByWorkflow(ctx, r.pool, workflowID)
+	if err != nil {
+		return "", err
+	}
+	for _, ph := range phases {
+		if ph.Status == "failed" {
+			return "failed", nil
+		}
+	}
+	for _, ph := range phases {
+		if ph.Status == "running" {
+			return "running", nil
+		}
+	}
+	for _, ph := range phases {
+		if ph.Status == "awaiting_review" {
+			return "paused", nil
+		}
+	}
+	return "done", nil
 }
 
 func (r *Runner) finishWorkflow(workflowID int64, status string) {
