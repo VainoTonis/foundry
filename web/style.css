@@ -198,3 +198,57 @@ button:hover, .btn:hover { background: var(--border); }
   resize: none; min-height: 60px;
 }
 .chat-textarea:focus { outline: none; border-color: var(--accent); }
+
+/* --- spec builder layout --- */
+.spec-builder-layout {
+  display: flex; gap: 1rem; align-items: flex-start;
+}
+.spec-builder-chat {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column;
+}
+.spec-preview-pane {
+  width: 380px; flex-shrink: 0;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  padding: 1rem; max-height: 80vh; overflow-y: auto;
+}
+.spec-preview-pane h3 {
+  font-size: .85rem; color: var(--muted); margin-bottom: .75rem;
+  letter-spacing: .05em; text-transform: uppercase;
+}
+
+/* markdown inside spec preview */
+.spec-preview-body p { margin: 0 0 .5em; }
+.spec-preview-body p:last-child { margin-bottom: 0; }
+.spec-preview-body code {
+  background: rgba(124,106,247,.15); padding: .1em .35em; border-radius: 3px;
+  font-family: var(--mono); font-size: .82em;
+}
+.spec-preview-body pre {
+  background: #090910; border: 1px solid var(--border); border-radius: 6px;
+  padding: .6rem .75rem; margin: .5em 0; overflow-x: auto;
+  font-family: var(--mono); font-size: .8rem; line-height: 1.5;
+}
+.spec-preview-body pre code {
+  background: none; padding: 0; border-radius: 0; font-size: inherit;
+}
+.spec-preview-body ul, .spec-preview-body ol {
+  margin: .4em 0; padding-left: 1.5em;
+}
+.spec-preview-body h1, .spec-preview-body h2,
+.spec-preview-body h3, .spec-preview-body h4 {
+  font-size: .9rem; margin: .6em 0 .3em; color: var(--text);
+}
+.spec-preview-body blockquote {
+  border-left: 3px solid var(--accent); padding-left: .75rem; color: var(--muted); margin: .5em 0;
+}
+
+/* mobile: stack layout */
+@media (max-width: 768px) {
+  .spec-builder-layout {
+    flex-direction: column; align-items: stretch;
+  }
+  .spec-preview-pane {
+    width: auto; max-height: 50vh;
+  }
+}

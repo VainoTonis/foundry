@@ -845,8 +845,16 @@ function renderDraftChat(draft) {
   );
   app.append(hdr);
 
+  // main layout container — two columns
+  const layoutContainer = el('div', { className: 'spec-builder-layout' });
+  app.append(layoutContainer);
+
+  // left column — chat
+  const leftCol = el('div', { className: 'spec-builder-chat' });
+  layoutContainer.append(leftCol);
+
   const chatBox = el('div', { className: 'chat-messages' });
-  app.append(chatBox);
+  leftCol.append(chatBox);
 
   let msgs = Array.isArray(draft.messages) ? draft.messages : [];
   let es = null;       // EventSource
@@ -854,7 +862,7 @@ function renderDraftChat(draft) {
 
   if (draft.status === 'error') {
     chatBox.append(el('div', { className: 'empty' }, 'Session error — the AI session failed to start. Abandon and try again.'));
-    app.append(el('div', { style: 'display:flex;gap:.5rem;margin-top:.75rem' }, btn('Abandon', 'btn-danger', abandonDraft)));
+    leftCol.append(el('div', { style: 'display:flex;gap:.5rem;margin-top:.75rem' }, btn('Abandon', 'btn-danger', abandonDraft)));
     return;
   }
 
@@ -870,17 +878,50 @@ function renderDraftChat(draft) {
   };
   const sendB = btn('Send', 'btn-primary', sendMsg);
   inputRow.append(msgTA, sendB);
-  app.append(inputRow);
+  leftCol.append(inputRow);
 
   // action row
   const actionRow = el('div', { style: 'display:flex;gap:.5rem;margin-top:.75rem' });
   const saveB = btn('Save as Draft Spec', 'btn-primary', saveSpec);
   const abandonB = btn('Abandon', 'btn-danger', abandonDraft);
   actionRow.append(saveB, abandonB);
-  app.append(actionRow);
+  leftCol.append(actionRow);
+
+  // right column — spec preview
+  const rightCol = el('div', { className: 'spec-preview-pane' });
+  layoutContainer.append(rightCol);
+  rightCol.append(el('h3', {}, 'Spec Preview'));
+  const previewBody = el('div', { className: 'spec-preview-body' });
+  rightCol.append(previewBody);
 
   function disableInput() { msgTA.disabled = true; sendB.disabled = true; }
   function enableInput() { msgTA.disabled = false; sendB.disabled = false; saveB.disabled = false; msgTA.focus(); }
+
+  // extract spec from messages: look for fenced markdown block (```md ... ```) or use full last assistant message
+  function extractSpec() {
+    // find last assistant message
+    let lastAssistantContent = null;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].role === 'assistant') {
+        lastAssistantContent = msgs[i].content;
+        break;
+      }
+    }
+    if (!lastAssistantContent) return '';
+
+    // try to find fenced markdown block
+    const mdFenceRegex = /```(?:md|markdown)?\n([\s\S]*?)\n```/;
+    const match = lastAssistantContent.match(mdFenceRegex);
+    if (match) return match[1];
+
+    // fallback: return full last assistant message
+    return lastAssistantContent;
+  }
+
+  function updatePreview() {
+    const spec = extractSpec();
+    previewBody.innerHTML = renderMarkdown(spec);
+  }
 
   function connectSSE() {
     es = new EventSource(`/api/spec-drafts/${draft.id}/stream`);
@@ -901,6 +942,7 @@ function renderDraftChat(draft) {
         streaming.body.classList.remove('chat-msg-streaming');
         msgs.push({ role: 'assistant', content: streaming.text });
         streaming = null;
+        updatePreview();
       }
     });
 
@@ -910,6 +952,7 @@ function renderDraftChat(draft) {
         streaming.body.classList.remove('chat-msg-streaming');
         msgs.push({ role: 'assistant', content: streaming.text });
         streaming = null;
+        updatePreview();
       }
       enableInput();
     });
@@ -928,7 +971,9 @@ function renderDraftChat(draft) {
   if (draft.status === 'active') {
     connectSSE();
     if (msgs.length === 0) disableInput(); // waiting for first response
-    else enableInput();
+    else { enableInput(); updatePreview(); }
+  } else {
+    updatePreview();
   }
 
   function startStreamingBubble(box) {
