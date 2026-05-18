@@ -79,7 +79,7 @@ button:hover, .btn:hover { background: var(--border); }
 .field { margin-bottom: 1rem; }
 .field label { display: block; font-size: .82rem; color: var(--muted); margin-bottom: .3rem; }
 .field input, .field select, .field textarea {
-  width: 100%; padding: .45rem .6rem; background: var(--bg); border: 1px solid var(--border);
+  width: 80%; padding: .45rem .6rem; background: var(--bg); border: 1px solid var(--border);
   border-radius: 5px; color: var(--text); font-family: var(--font); font-size: .9rem;
 }
 .field textarea { font-family: var(--mono); font-size: .82rem; min-height: 260px; resize: vertical; }

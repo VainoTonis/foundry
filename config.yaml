@@ -11,4 +11,4 @@ review_api_key: ""
 review_model: "claude-haiku-4-5"
 git_root: "~/git"
 
-cerberus_profile: "ollama"
+cerberus_profile: ""
