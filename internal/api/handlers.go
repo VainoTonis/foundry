@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -33,10 +34,12 @@ type Server struct {
 	cfgPath         string
 	serverPort      int
 	cerberusProfile string
+	cerbEventsMu    sync.Mutex
+	cerbBuffers     map[string]*cerberusTextBuffer
 }
 
 func NewServer(pool *pgxpool.Pool, runner *workflow.Runner, cerb *cerberus.Client, eventHub *hub.EventHub, defaultBudget float64, gitRoot string, cfgPath string, cerberusProfile string, serverPort int) *Server {
-	s := &Server{pool: pool, runner: runner, cerb: cerb, eventHub: eventHub, defaultBudget: defaultBudget, gitRoot: gitRoot, cfgPath: cfgPath, serverPort: serverPort, cerberusProfile: cerberusProfile}
+	s := &Server{pool: pool, runner: runner, cerb: cerb, eventHub: eventHub, defaultBudget: defaultBudget, gitRoot: gitRoot, cfgPath: cfgPath, serverPort: serverPort, cerberusProfile: cerberusProfile, cerbBuffers: make(map[string]*cerberusTextBuffer)}
 	s.mux = http.NewServeMux()
 	s.routes()
 	return s
@@ -569,10 +572,30 @@ func (s *Server) streamWorkflow(w http.ResponseWriter, r *http.Request, workflow
 	ch := s.eventHub.Subscribe(key)
 	defer s.eventHub.Unsubscribe(key, ch)
 
+	// Send a database-backed snapshot first. If the browser reconnects after
+	// dropped high-volume live events, this catches it up to durable state.
+	if wf, err := db.GetWorkflow(r.Context(), s.pool, workflowID); err == nil {
+		data, _ := json.Marshal(map[string]any{"event": "workflow_update", "status": wf.Status})
+		fmt.Fprintf(w, "event: workflow_update\ndata: %s\n\n", data)
+	}
+	if phases, err := db.ListPhasesByWorkflow(r.Context(), s.pool, workflowID); err == nil {
+		for _, ph := range phases {
+			data, _ := json.Marshal(map[string]any{"event": "phase_update", "phase_id": ph.ID, "status": ph.Status})
+			fmt.Fprintf(w, "event: phase_update\ndata: %s\n\n", data)
+		}
+	}
+	flusher.Flush()
+
+	heartbeat := time.NewTicker(15 * time.Second)
+	defer heartbeat.Stop()
+
 	for {
 		select {
 		case <-r.Context().Done():
 			return
+		case <-heartbeat.C:
+			fmt.Fprintf(w, ": keepalive\n\n")
+			flusher.Flush()
 		case data, ok := <-ch:
 			if !ok {
 				return
@@ -965,37 +988,18 @@ func (s *Server) handleCerberusCallback(w http.ResponseWriter, r *http.Request) 
 		jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	var evt struct {
-		Type    string          `json:"type"`
-		Session string          `json:"session"`
-		Ts      string          `json:"ts"`
-		Raw     json.RawMessage `json:"-"`
-	}
 	raw, err := io.ReadAll(r.Body)
 	if err != nil {
 		jsonErr(w, "read body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := json.Unmarshal(raw, &evt); err != nil {
-		jsonErr(w, "invalid json: "+err.Error(), http.StatusBadRequest)
+	if err := s.handleCompactCerberusEvent(r.Context(), raw); err != nil {
+		code := http.StatusInternalServerError
+		if strings.HasPrefix(err.Error(), "invalid json") || strings.Contains(err.Error(), "session and type required") {
+			code = http.StatusBadRequest
+		}
+		jsonErr(w, err.Error(), code)
 		return
-	}
-	if evt.Session == "" || evt.Type == "" {
-		jsonErr(w, "session and type required", http.StatusBadRequest)
-		return
-	}
-
-	dbEvt, err := db.InsertCerberusEvent(r.Context(), s.pool, evt.Session, evt.Type, raw)
-	if err != nil {
-		jsonErr(w, "store event: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	sseData, _ := json.Marshal(dbEvt)
-	s.eventHub.Publish(evt.Session, sseData)
-
-	if evt.Type == "turn_complete" {
-		s.assembleAndAppend(r.Context(), evt.Session, true)
 	}
 
 	w.WriteHeader(http.StatusNoContent)
@@ -1094,6 +1098,9 @@ func (s *Server) streamDraftEvents(w http.ResponseWriter, r *http.Request, draft
 	w.Header().Set("Connection", "keep-alive")
 
 	lastIDStr := r.URL.Query().Get("after")
+	if lastIDStr == "" {
+		lastIDStr = r.Header.Get("Last-Event-ID")
+	}
 	var lastID int64
 	if lastIDStr != "" {
 		lastID, _ = strconv.ParseInt(lastIDStr, 10, 64)
@@ -1129,6 +1136,7 @@ func (s *Server) streamDraftEvents(w http.ResponseWriter, r *http.Request, draft
 }
 
 func writeSSEvent(w http.ResponseWriter, e db.CerberusEvent) {
+	fmt.Fprintf(w, "id: %d\n", e.ID)
 	fmt.Fprintf(w, "event: %s\n", e.EventType)
 	fmt.Fprintf(w, "data: %s\n\n", e.Payload)
 }

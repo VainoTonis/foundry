@@ -318,7 +318,14 @@ async function renderWorkflow(id) {
       }
     });
 
-    es.onerror = () => { es.close(); _workflowSSE = null; expandedPhases.clear(); phaseElements.clear(); };
+    es.onerror = () => {
+      es.close();
+      _workflowSSE = null;
+      expandedPhases.clear();
+      phaseElements.clear();
+      // Re-render/reconnect from database state instead of leaving the page stale.
+      setTimeout(() => { if (!_workflowSSE) renderWorkflow(id); }, 1000);
+    };
   }
 }
 
