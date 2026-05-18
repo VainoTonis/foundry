@@ -816,7 +816,7 @@ func (s *Server) handleSpecDraft(w http.ResponseWriter, r *http.Request) {
 		}
 		specContent := extractFinalSpec(draft.Messages)
 		if specContent == "" {
-			jsonErr(w, "could not extract spec from conversation — ask the agent to output 'FINAL SPEC:' first", http.StatusUnprocessableEntity)
+			jsonErr(w, "could not extract spec from conversation — ask the agent to update the spec with full spec content", http.StatusUnprocessableEntity)
 			return
 		}
 		if err := s.cerb.Close(r.Context(), draft.CerberusSession); err != nil {
@@ -886,6 +886,15 @@ func extractFinalSpec(messages []byte) string {
 	var msgs []msg
 	if err := json.Unmarshal(messages, &msgs); err != nil {
 		return ""
+	}
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role != "assistant" {
+			continue
+		}
+		content := strings.TrimSpace(msgs[i].Content)
+		if strings.HasPrefix(content, "# ") && strings.Contains(content, "\n## Phase 1:") {
+			return content
+		}
 	}
 	for i := len(msgs) - 1; i >= 0; i-- {
 		if msgs[i].Role != "assistant" {
