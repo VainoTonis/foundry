@@ -645,7 +645,7 @@ Add POST /api/login to internal/api/handlers.go. Accept {email, password} JSON. 
 ## Phase 3: Auth middleware
 Add AuthMiddleware(next http.Handler) http.Handler in internal/api/middleware.go. Reads Authorization: Bearer <token>, validates JWT, sets user_id in context.
 
-When ready to output the final spec, put it in a markdown code block preceded by the exact line: FINAL SPEC:`
+Whenever you produce or update the spec, call the update_spec tool with the full markdown content. Do not write the spec in plain text or in code blocks — always use the update_spec tool. Call it after every meaningful change to the spec, not just at the end.`
 
 func (s *Server) handleSpecDrafts(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
