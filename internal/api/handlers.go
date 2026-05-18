@@ -1020,6 +1020,15 @@ func (s *Server) assembleAndAppend(ctx context.Context, session string, isTurnCo
 				assistantMsgs = append(assistantMsgs, buf.String())
 				buf.Reset()
 			}
+		case "tool_result":
+			var p struct {
+				ToolName string `json:"tool_name"`
+				Content  string `json:"content"`
+			}
+			json.Unmarshal(e.Payload, &p)
+			if p.ToolName == "emit_artifact" {
+				assistantMsgs = append(assistantMsgs, "[artifact]\n"+p.Content)
+			}
 		}
 	}
 	if buf.Len() > 0 {
