@@ -858,6 +858,7 @@ function renderDraftChat(draft) {
 
   let msgs = Array.isArray(draft.messages) ? draft.messages : [];
   let es = null;       // EventSource
+  let specContent = '';
   let streaming = null; // { wrap, body, text } — the bubble currently receiving deltas
 
   if (draft.status === 'error') {
@@ -897,30 +898,8 @@ function renderDraftChat(draft) {
   function disableInput() { msgTA.disabled = true; sendB.disabled = true; }
   function enableInput() { msgTA.disabled = false; sendB.disabled = false; saveB.disabled = false; msgTA.focus(); }
 
-  // extract spec from messages: look for fenced markdown block (```md ... ```) or use full last assistant message
-  function extractSpec() {
-    // find last assistant message
-    let lastAssistantContent = null;
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      if (msgs[i].role === 'assistant') {
-        lastAssistantContent = msgs[i].content;
-        break;
-      }
-    }
-    if (!lastAssistantContent) return '';
-
-    // try to find fenced markdown block
-    const mdFenceRegex = /```(?:md|markdown)?\n([\s\S]*?)\n```/;
-    const match = lastAssistantContent.match(mdFenceRegex);
-    if (match) return match[1];
-
-    // fallback: return full last assistant message
-    return lastAssistantContent;
-  }
-
   function updatePreview() {
-    const spec = extractSpec();
-    previewBody.innerHTML = renderMarkdown(spec);
+    previewBody.innerHTML = renderMarkdown(specContent);
   }
 
   function connectSSE() {
@@ -963,7 +942,8 @@ function renderDraftChat(draft) {
         try {
           const parsed = JSON.parse(ev.tool_input);
           if (parsed.content) {
-            previewBody.innerHTML = renderMarkdown(parsed.content);
+            specContent = parsed.content;
+            updatePreview();
           }
         } catch (err) {
           console.error('Failed to parse tool_input:', err);
@@ -979,6 +959,14 @@ function renderDraftChat(draft) {
       }
       enableInput();
     };
+  }
+
+  // restore latest spec content from update_spec tool message
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i].role === 'assistant' && msgs[i].content && msgs[i].content.startsWith('#')) {
+      specContent = msgs[i].content;
+      break;
+    }
   }
 
   // start SSE if session is active
