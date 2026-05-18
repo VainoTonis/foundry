@@ -224,9 +224,11 @@ loop:
 			if cerberusErr != nil {
 				failStatus := "failed"
 				now2 := time.Now()
+				notes := fmt.Sprintf("cerberus start failed:\n%v", cerberusErr)
 				_, _ = db.UpdatePhase(context.Background(), r.pool, phase.ID, db.UpdatePhaseParams{
-					Status:     &failStatus,
-					FinishedAt: &now2,
+					Status:      &failStatus,
+					FinishedAt:  &now2,
+					ReviewNotes: &notes,
 				})
 				r.publishPhaseUpdate(wf.ID, phase.ID, "failed")
 				return fmt.Errorf("cerberus: %w", cerberusErr)

@@ -101,10 +101,11 @@ func SessionName(specID int64, position int) string {
 func (c *Client) run(ctx context.Context, args ...string) error {
 	cmd := exec.CommandContext(ctx, c.bin, args...)
 	cmd.Dir = c.repoPath
-	var stderr bytes.Buffer
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("cerberus %s: %w — %s", strings.Join(args, " "), err, stderr.String())
+		return fmt.Errorf("cerberus %s: %w%s", strings.Join(args, " "), err, formatCommandOutput(stdout.String(), stderr.String()))
 	}
 	return nil
 }
@@ -116,9 +117,27 @@ func (c *Client) output(ctx context.Context, args ...string) (string, error) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("cerberus %s: %w — %s", strings.Join(args, " "), err, stderr.String())
+		return "", fmt.Errorf("cerberus %s: %w%s", strings.Join(args, " "), err, formatCommandOutput(stdout.String(), stderr.String()))
 	}
 	return stdout.String(), nil
+}
+
+func formatCommandOutput(stdout, stderr string) string {
+	stdout = strings.TrimSpace(stdout)
+	stderr = strings.TrimSpace(stderr)
+	if stdout == "" && stderr == "" {
+		return ""
+	}
+	var b strings.Builder
+	if stderr != "" {
+		b.WriteString("\nstderr:\n")
+		b.WriteString(stderr)
+	}
+	if stdout != "" {
+		b.WriteString("\nstdout:\n")
+		b.WriteString(stdout)
+	}
+	return b.String()
 }
 
 // DraftSessionName builds the canonical session name for a spec draft.
