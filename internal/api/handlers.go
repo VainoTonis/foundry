@@ -279,7 +279,7 @@ func (s *Server) handleSpec(w http.ResponseWriter, r *http.Request) {
 		}
 		jsonOK(w, sp, http.StatusOK)
 	case suffix == "" && r.Method == http.MethodDelete:
-		sp, err := db.GetSpec(r.Context(), s.pool, id)
+		_, err := db.GetSpec(r.Context(), s.pool, id)
 		if errors.Is(err, db.ErrNotFound) {
 			jsonErr(w, "not found", http.StatusNotFound)
 			return
