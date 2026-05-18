@@ -650,6 +650,11 @@ func DeleteSpecDraft(ctx context.Context, pool *pgxpool.Pool, id int64) error {
 	return err
 }
 
+func DeleteSpec(ctx context.Context, pool *pgxpool.Pool, id int64) error {
+	_, err := pool.Exec(ctx, `DELETE FROM specs WHERE id = $1`, id)
+	return err
+}
+
 // --- Cerberus Events ---
 
 type CerberusEvent struct {
