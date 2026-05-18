@@ -900,7 +900,7 @@ function renderDraftChat(draft) {
   debugPanel.hidden = true;
   const debugControls = el('div', { className: 'sse-debug-controls' });
   const debugFilterSelect = el('select', { onchange: e => { debugFilter = e.target.value; renderDebugLog(); } });
-  for (const type of ['all', 'text_delta', 'tool_use', 'tool_result', 'message_end', 'turn_complete']) {
+  for (const type of ['all', 'foundry', 'text_delta', 'tool_use', 'tool_result', 'message_end', 'turn_complete']) {
     debugFilterSelect.append(el('option', { value: type }, type));
   }
   const clearDebugB = btn('Clear', '', () => { debugEvents.length = 0; renderDebugLog(); });
@@ -938,7 +938,8 @@ function renderDraftChat(draft) {
   }
 
   function logDebugEvent(type, e) {
-    debugEvents.push({ type, ts: new Date().toLocaleTimeString(), payload: compactPayload(e && e.data ? e.data : '') });
+    const payload = e && Object.prototype.hasOwnProperty.call(e, 'data') ? e.data : e;
+    debugEvents.push({ type, ts: new Date().toLocaleTimeString(), payload: compactPayload(payload || {}) });
     if (debugEvents.length > 200) debugEvents.shift();
     renderDebugLog();
   }
@@ -1017,6 +1018,7 @@ function renderDraftChat(draft) {
     });
 
     es.onerror = () => {
+      logDebugEvent('foundry', { event: 'eventsource_error', draft_id: draft.id });
       if (streaming) {
         streaming.body.innerHTML = renderMarkdown(streaming.text);
         streaming.body.classList.remove('chat-msg-streaming');
@@ -1064,15 +1066,19 @@ function renderDraftChat(draft) {
 
     try {
       // POST sends the message to cerberus — response arrives via SSE
+      logDebugEvent('foundry', { event: 'message_post_start', draft_id: draft.id, content });
       await api.post(`/api/spec-drafts/${draft.id}/message`, { content });
+      logDebugEvent('foundry', { event: 'message_post_success', draft_id: draft.id });
       msgs.push({ role: 'user', content });
     } catch (e) {
+      logDebugEvent('foundry', { event: 'message_post_error', draft_id: draft.id, error: e.message });
       renderChatMsg(chatBox, 'assistant', 'Error: ' + e.message);
       enableInput();
     }
   }
 
   async function saveSpec() {
+    logDebugEvent('foundry', { event: 'save_modal_open', draft_id: draft.id });
     const titleInput = input('text', draft.title || '');
     titleInput.placeholder = 'Spec title';
     modal('Save as Spec', [
@@ -1083,10 +1089,13 @@ function renderDraftChat(draft) {
       saveB.disabled = true;
       saveB.textContent = 'Saving…';
       try {
+        logDebugEvent('foundry', { event: 'save_start', draft_id: draft.id, title });
         const result = await api.post(`/api/spec-drafts/${draft.id}/save`, { title });
+        logDebugEvent('foundry', { event: 'save_success', draft_id: draft.id, spec_id: result.spec_id });
         if (es) es.close();
         navigate('spec', { id: result.spec_id });
       } catch (e) {
+        logDebugEvent('foundry', { event: 'save_error', draft_id: draft.id, error: e.message });
         saveB.disabled = false;
         saveB.textContent = 'Save as Draft Spec';
         alert(e.message);
@@ -1097,10 +1106,15 @@ function renderDraftChat(draft) {
 
   async function abandonDraft() {
     if (!confirm('Abandon this spec draft and close the AI session?')) return;
+    logDebugEvent('foundry', { event: 'abandon_start', draft_id: draft.id });
     if (es) es.close();
     try {
-      await fetch(`/api/spec-drafts/${draft.id}`, { method: 'DELETE' });
-    } catch (_) {}
+      const r = await fetch(`/api/spec-drafts/${draft.id}`, { method: 'DELETE' });
+      if (!r.ok) throw new Error(r.statusText || `HTTP ${r.status}`);
+      logDebugEvent('foundry', { event: 'abandon_success', draft_id: draft.id });
+    } catch (e) {
+      logDebugEvent('foundry', { event: 'abandon_error', draft_id: draft.id, error: e.message });
+    }
     navigate('backlog');
   }
 }

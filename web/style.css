@@ -215,6 +215,7 @@ button:hover, .btn:hover { background: var(--border); }
 .sse-debug-row:first-child { border-top: 0; }
 .sse-debug-ts { color: var(--muted); flex: 0 0 auto; }
 .sse-debug-type { color: var(--blue); flex: 0 0 auto; min-width: 7rem; }
+.sse-debug-foundry .sse-debug-type { color: var(--yellow); }
 .sse-debug-row code { color: #c0c0d0; white-space: pre-wrap; word-break: break-word; }
 
 /* --- spec builder layout --- */
