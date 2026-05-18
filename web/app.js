@@ -953,7 +953,9 @@ function renderDraftChat(draft) {
 
   function compactPayload(data) {
     let payload = data;
-    try { payload = JSON.parse(data); } catch (_) {}
+    if (typeof payload === 'string') {
+      try { payload = JSON.parse(payload); } catch (_) {}
+    }
     if (payload && typeof payload === 'object') {
       payload = { ...payload };
       for (const k of ['content', 'text', 'tool_input', 'result']) {
@@ -966,8 +968,8 @@ function renderDraftChat(draft) {
   }
 
   function logDebugEvent(type, e) {
-    const payload = e && Object.prototype.hasOwnProperty.call(e, 'data') ? e.data : e;
-    debugEvents.push({ type, ts: new Date().toLocaleTimeString(), payload: compactPayload(payload || {}) });
+    const payload = e && typeof e === 'object' && 'data' in e ? e.data : e;
+    debugEvents.push({ type, ts: new Date().toLocaleTimeString(), payload: compactPayload(payload) });
     if (debugEvents.length > 200) debugEvents.shift();
     renderDebugLog();
   }
