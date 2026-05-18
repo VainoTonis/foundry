@@ -860,6 +860,10 @@ function renderDraftChat(draft) {
   let es = null;       // EventSource
   let specContent = '';
   let streaming = null; // { wrap, body, text } — the bubble currently receiving deltas
+  const debugEvents = [];
+  let debugFilter = 'all';
+  let debugPanel = null;
+  let debugLog = null;
 
   if (draft.status === 'error') {
     chatBox.append(el('div', { className: 'empty' }, 'Session error — the AI session failed to start. Abandon and try again.'));
@@ -882,11 +886,28 @@ function renderDraftChat(draft) {
   leftCol.append(inputRow);
 
   // action row
-  const actionRow = el('div', { style: 'display:flex;gap:.5rem;margin-top:.75rem' });
+  const actionRow = el('div', { style: 'display:flex;gap:.5rem;margin-top:.75rem;flex-wrap:wrap' });
   const saveB = btn('Save as Draft Spec', 'btn-primary', saveSpec);
   const abandonB = btn('Abandon', 'btn-danger', abandonDraft);
-  actionRow.append(saveB, abandonB);
+  const debugB = btn('Debug', '', () => {
+    debugPanel.hidden = !debugPanel.hidden;
+    debugB.textContent = debugPanel.hidden ? 'Debug' : 'Hide Debug';
+  });
+  actionRow.append(saveB, abandonB, debugB);
   leftCol.append(actionRow);
+
+  debugPanel = el('div', { className: 'sse-debug-panel' });
+  debugPanel.hidden = true;
+  const debugControls = el('div', { className: 'sse-debug-controls' });
+  const debugFilterSelect = el('select', { onchange: e => { debugFilter = e.target.value; renderDebugLog(); } });
+  for (const type of ['all', 'text_delta', 'tool_use', 'tool_result', 'message_end', 'turn_complete']) {
+    debugFilterSelect.append(el('option', { value: type }, type));
+  }
+  const clearDebugB = btn('Clear', '', () => { debugEvents.length = 0; renderDebugLog(); });
+  debugControls.append(el('span', {}, 'SSE events'), debugFilterSelect, clearDebugB);
+  debugLog = el('div', { className: 'sse-debug-log' });
+  debugPanel.append(debugControls, debugLog);
+  leftCol.append(debugPanel);
 
   // right column — spec preview
   const rightCol = el('div', { className: 'spec-preview-pane' });
@@ -902,10 +923,47 @@ function renderDraftChat(draft) {
     previewBody.innerHTML = renderMarkdown(specContent);
   }
 
+  function compactPayload(data) {
+    let payload = data;
+    try { payload = JSON.parse(data); } catch (_) {}
+    if (payload && typeof payload === 'object') {
+      payload = { ...payload };
+      for (const k of ['content', 'text', 'tool_input', 'result']) {
+        if (typeof payload[k] === 'string' && payload[k].length > 500) {
+          payload[k] = payload[k].slice(0, 500) + `… (${payload[k].length} chars)`;
+        }
+      }
+    }
+    return payload;
+  }
+
+  function logDebugEvent(type, e) {
+    debugEvents.push({ type, ts: new Date().toLocaleTimeString(), payload: compactPayload(e && e.data ? e.data : '') });
+    if (debugEvents.length > 200) debugEvents.shift();
+    renderDebugLog();
+  }
+
+  function renderDebugLog() {
+    if (!debugLog) return;
+    debugLog.innerHTML = '';
+    for (const item of debugEvents) {
+      if (debugFilter !== 'all' && item.type !== debugFilter) continue;
+      const row = el('div', { className: `sse-debug-row sse-debug-${item.type}` });
+      row.append(
+        el('span', { className: 'sse-debug-ts' }, item.ts),
+        el('span', { className: 'sse-debug-type' }, item.type),
+        el('code', {}, JSON.stringify(item.payload))
+      );
+      debugLog.append(row);
+    }
+    debugLog.scrollTop = debugLog.scrollHeight;
+  }
+
   function connectSSE() {
     es = new EventSource(`/api/spec-drafts/${draft.id}/stream`);
 
     es.addEventListener('text_delta', e => {
+      logDebugEvent('text_delta', e);
       const ev = JSON.parse(e.data);
       if (!streaming) {
         streaming = startStreamingBubble(chatBox);
@@ -915,7 +973,8 @@ function renderDraftChat(draft) {
       chatBox.scrollTop = chatBox.scrollHeight;
     });
 
-    es.addEventListener('message_end', () => {
+    es.addEventListener('message_end', e => {
+      logDebugEvent('message_end', e);
       if (streaming) {
         streaming.body.innerHTML = renderMarkdown(streaming.text);
         streaming.body.classList.remove('chat-msg-streaming');
@@ -925,7 +984,8 @@ function renderDraftChat(draft) {
       }
     });
 
-    es.addEventListener('turn_complete', () => {
+    es.addEventListener('turn_complete', e => {
+      logDebugEvent('turn_complete', e);
       if (streaming) {
         streaming.body.innerHTML = renderMarkdown(streaming.text);
         streaming.body.classList.remove('chat-msg-streaming');
@@ -937,6 +997,7 @@ function renderDraftChat(draft) {
     });
 
     es.addEventListener('tool_use', e => {
+      logDebugEvent('tool_use', e);
       const ev = JSON.parse(e.data);
       if (ev.tool_name === 'update_spec') {
         try {
@@ -949,6 +1010,10 @@ function renderDraftChat(draft) {
           console.error('Failed to parse tool_input:', err);
         }
       }
+    });
+
+    es.addEventListener('tool_result', e => {
+      logDebugEvent('tool_result', e);
     });
 
     es.onerror = () => {
