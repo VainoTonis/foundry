@@ -278,6 +278,22 @@ func (s *Server) handleSpec(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		jsonOK(w, sp, http.StatusOK)
+	case suffix == "" && r.Method == http.MethodDelete:
+		sp, err := db.GetSpec(r.Context(), s.pool, id)
+		if errors.Is(err, db.ErrNotFound) {
+			jsonErr(w, "not found", http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		err = db.DeleteSpec(r.Context(), s.pool, id)
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	default:
 		jsonErr(w, "not found", http.StatusNotFound)
 	}
