@@ -347,6 +347,16 @@ func (s *Server) handleWorkflow(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		jsonOK(w, wf, http.StatusOK)
+	case suffix == "" && r.Method == http.MethodDelete:
+		s.runner.Stop(id)
+		if err := db.DeleteWorkflow(r.Context(), s.pool, id); errors.Is(err, db.ErrNotFound) {
+			jsonErr(w, "not found", http.StatusNotFound)
+			return
+		} else if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	case suffix == "phases" && r.Method == http.MethodGet:
 		phases, err := db.ListPhasesByWorkflow(r.Context(), s.pool, id)
 		if err != nil {

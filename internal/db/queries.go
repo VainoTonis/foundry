@@ -275,6 +275,17 @@ func UpdateWorkflowStatus(ctx context.Context, pool *pgxpool.Pool, id int64, sta
 	return err
 }
 
+func DeleteWorkflow(ctx context.Context, pool *pgxpool.Pool, id int64) error {
+	tag, err := pool.Exec(ctx, `DELETE FROM workflows WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func WorkflowTotalCost(ctx context.Context, pool *pgxpool.Pool, workflowID int64) (float64, error) {
 	var total float64
 	err := pool.QueryRow(ctx,

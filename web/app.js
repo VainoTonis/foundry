@@ -17,6 +17,10 @@ const api = {
     if (!r.ok) throw new Error((await r.json()).error || r.statusText);
     return r.json();
   },
+  async delete(path) {
+    const r = await fetch(path, { method: 'DELETE' });
+    if (!r.ok) throw new Error((await r.json()).error || r.statusText);
+  },
 };
 
 // ---- router ----
@@ -176,7 +180,12 @@ async function renderSpec(id) {
       const hd = el('div', { className: 'card-header' });
       hd.append(el('span', { className: 'card-title' }, `Workflow #${wf.id}`), chip(wf.track), chip(wf.status));
       const meta = el('div', { className: 'card-meta' }, fmtDate(wf.created_at) + (wf.finished_at ? ' → ' + fmtDate(wf.finished_at) : ' (running)'));
-      row.append(hd, meta);
+      const actions = el('div', { className: 'card-actions' });
+      actions.append(btn('Delete', 'btn-danger', async e => {
+        e.stopPropagation();
+        await deleteWorkflow(wf.id, () => row.remove());
+      }));
+      row.append(hd, meta, actions);
       wfList.append(row);
     }
   }).catch(() => { wfList.innerHTML = '<div class="empty">Could not load workflows.</div>'; });
@@ -184,6 +193,18 @@ async function renderSpec(id) {
 
 // ---- Workflow detail ----
 let _workflowSSE = null;
+
+async function deleteWorkflow(id, onDeleted) {
+  if (!confirm(`Delete workflow #${id}? This cannot be undone.`)) return false;
+  try {
+    await api.delete(`/api/workflows/${id}`);
+    if (onDeleted) onDeleted();
+    return true;
+  } catch(e) {
+    alert(e.message);
+    return false;
+  }
+}
 
 async function renderWorkflow(id) {
   // close any previous workflow SSE
@@ -218,6 +239,13 @@ async function renderWorkflow(id) {
         catch(e) { alert(e.message); }
       }));
     }
+    actionBar.append(btn('Delete', 'btn-danger', async () => {
+      const deleted = await deleteWorkflow(id, () => {
+        if (_workflowSSE) { _workflowSSE.close(); _workflowSSE = null; }
+        navigate('spec', { id: wf.spec_id });
+      });
+      return deleted;
+    }));
   }
   updateActionBar(wf.status);
 
