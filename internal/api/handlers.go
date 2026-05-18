@@ -1020,14 +1020,19 @@ func (s *Server) assembleAndAppend(ctx context.Context, session string, isTurnCo
 				assistantMsgs = append(assistantMsgs, buf.String())
 				buf.Reset()
 			}
-		case "tool_result":
+		case "tool_use":
 			var p struct {
-				ToolName string `json:"tool_name"`
-				Content  string `json:"content"`
+				ToolName  string `json:"tool_name"`
+				ToolInput string `json:"tool_input"`
 			}
 			json.Unmarshal(e.Payload, &p)
-			if p.ToolName == "emit_artifact" {
-				assistantMsgs = append(assistantMsgs, "[artifact]\n"+p.Content)
+			if p.ToolName == "update_spec" {
+				var toolInput struct {
+					Content string `json:"content"`
+				}
+				if err := json.Unmarshal([]byte(p.ToolInput), &toolInput); err == nil {
+					assistantMsgs = append(assistantMsgs, toolInput.Content)
+				}
 			}
 		}
 	}
