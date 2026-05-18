@@ -561,10 +561,12 @@ func (s *Server) streamLogs(w http.ResponseWriter, r *http.Request, phaseID int6
 func (s *Server) writeWorkflowSnapshot(ctx context.Context, w io.Writer, workflowID int64) bool {
 	wf, err := db.GetWorkflow(ctx, s.pool, workflowID)
 	if err != nil {
+		log.Printf("workflow snapshot: get workflow %d: %v", workflowID, err)
 		return false
 	}
 	phases, err := db.ListPhasesByWorkflow(ctx, s.pool, workflowID)
 	if err != nil {
+		log.Printf("workflow snapshot: list phases for workflow %d: %v", workflowID, err)
 		return false
 	}
 	data, _ := json.Marshal(map[string]any{
