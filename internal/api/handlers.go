@@ -582,6 +582,11 @@ func (s *Server) streamWorkflow(w http.ResponseWriter, r *http.Request, workflow
 		for _, ph := range phases {
 			data, _ := json.Marshal(map[string]any{"event": "phase_update", "phase_id": ph.ID, "status": ph.Status})
 			fmt.Fprintf(w, "event: phase_update\ndata: %s\n\n", data)
+			logs, _ := db.ListRecentPhaseLogs(r.Context(), s.pool, ph.ID, 200)
+			for _, l := range logs {
+				logData, _ := json.Marshal(map[string]any{"event": "log", "phase_id": ph.ID, "line": l.Line, "ts": l.Ts.Format(time.RFC3339)})
+				fmt.Fprintf(w, "event: log\ndata: %s\n\n", logData)
+			}
 		}
 	}
 	flusher.Flush()

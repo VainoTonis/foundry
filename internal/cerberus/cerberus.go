@@ -33,8 +33,9 @@ func (c *Client) SetProfile(path string) {
 }
 
 // Start launches a cerberus session with the given prompt. Blocking — run in a goroutine.
-// cerberus start --name <session> --prompt-file <f> [--image <image>]
-func (c *Client) Start(ctx context.Context, session, prompt string) error {
+// When callbackURL is set, cerberus POSTs incremental JSONL events there.
+// cerberus start --name <session> --prompt-file <f> [--image <image>] [--callback <url> --output jsonl]
+func (c *Client) Start(ctx context.Context, session, prompt, callbackURL string) error {
 	f, err := os.CreateTemp("", "foundry-prompt-*.txt")
 	if err != nil {
 		return fmt.Errorf("create prompt file: %w", err)
@@ -55,6 +56,9 @@ func (c *Client) Start(ctx context.Context, session, prompt string) error {
 	}
 	if c.profile != "" {
 		args = append(args, "--profile-file", c.profile)
+	}
+	if callbackURL != "" {
+		args = append(args, "--callback", callbackURL, "--output", "jsonl")
 	}
 	return c.run(ctx, args...)
 }

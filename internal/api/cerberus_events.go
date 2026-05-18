@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/tonis2/foundry/internal/db"
@@ -48,6 +49,12 @@ func (s *Server) handleCompactCerberusEvent(ctx context.Context, raw []byte) err
 	case "message_end", "turn_complete":
 		if err := s.flushCerberusText(ctx, evt.Session); err != nil {
 			return fmt.Errorf("store event: %w", err)
+		}
+		if ph, err := db.GetPhaseByCerberusSession(ctx, s.pool, evt.Session); err == nil {
+			if evt.Type == "turn_complete" {
+				_ = s.storeAndPublishPhaseLog(ctx, ph.WorkflowID, ph.ID, "[turn complete]")
+			}
+			return nil
 		}
 		if err := s.storeAndPublishCerberusEvent(ctx, evt.Session, evt.Type, json.RawMessage(`{}`)); err != nil {
 			return fmt.Errorf("store event: %w", err)
@@ -119,8 +126,30 @@ func (s *Server) flushCerberusText(ctx context.Context, session string) error {
 	delete(s.cerbBuffers, session)
 	s.cerbEventsMu.Unlock()
 
+	if ph, err := db.GetPhaseByCerberusSession(ctx, s.pool, session); err == nil {
+		line := strings.TrimSpace(content)
+		if line == "" {
+			return nil
+		}
+		return s.storeAndPublishPhaseLog(ctx, ph.WorkflowID, ph.ID, line)
+	}
+
 	payload, _ := json.Marshal(map[string]string{"content": content})
 	return s.storeAndPublishCerberusEvent(ctx, session, "text_delta", payload)
+}
+
+func (s *Server) storeAndPublishPhaseLog(ctx context.Context, workflowID, phaseID int64, line string) error {
+	if err := db.InsertPhaseLog(ctx, s.pool, phaseID, line); err != nil {
+		return err
+	}
+	data, _ := json.Marshal(map[string]any{
+		"event":    "log",
+		"phase_id": phaseID,
+		"line":     line,
+		"ts":       time.Now().Format(time.RFC3339),
+	})
+	s.eventHub.Publish(fmt.Sprintf("wf:%d", workflowID), data)
+	return nil
 }
 
 func (s *Server) storeAndPublishCerberusEvent(ctx context.Context, session, eventType string, payload json.RawMessage) error {

@@ -23,6 +23,7 @@ type Config struct {
 	DefaultWorkflowBudgetUSD   float64
 	MaxConcurrentWorkflows     int
 	CerberusProfile            string
+	CerberusCallbackURL        string
 }
 
 type Runner struct {
@@ -214,21 +215,28 @@ func (r *Runner) execPhase(
 	}
 
 	cerberusDone := make(chan error, 1)
+	callbackURL := r.cfg.CerberusCallbackURL
 	go func() {
-		cerberusDone <- r.cerb.Start(phaseCtx, sessionName, prompt)
+		cerberusDone <- r.cerb.Start(phaseCtx, sessionName, prompt, callbackURL)
 	}()
 
-	logTicker := time.NewTicker(2 * time.Second)
-	defer logTicker.Stop()
+	var logTicker *time.Ticker
+	if callbackURL == "" {
+		// Legacy fallback: only poll full logs when callback delivery is unavailable.
+		logTicker = time.NewTicker(2 * time.Second)
+		defer logTicker.Stop()
+	}
 
 	var lastLogLine string
 loop:
 	for {
 		select {
-		case <-logTicker.C:
+		case <-tickerC(logTicker):
 			r.collectLogs(ctx, wf.ID, phase.ID, sessionName, &lastLogLine)
 		case cerberusErr := <-cerberusDone:
-			r.collectLogs(ctx, wf.ID, phase.ID, sessionName, &lastLogLine)
+			if callbackURL == "" {
+				r.collectLogs(ctx, wf.ID, phase.ID, sessionName, &lastLogLine)
+			}
 			if cerberusErr != nil {
 				failStatus := "failed"
 				now2 := time.Now()
@@ -429,6 +437,13 @@ func (r *Runner) publishWorkflowUpdate(workflowID int64, status string) {
 }
 
 func strPtr(s string) *string { return &s }
+
+func tickerC(t *time.Ticker) <-chan time.Time {
+	if t == nil {
+		return nil
+	}
+	return t.C
+}
 
 func profileFilePath(session string) string {
 	return "/tmp/foundry-profile-" + session + ".json"

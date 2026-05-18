@@ -65,6 +65,7 @@ func main() {
 		DefaultWorkflowBudgetUSD:   cfg.DefaultWorkflowBudgetUSD,
 		MaxConcurrentWorkflows:     cfg.MaxConcurrentWorkflows,
 		CerberusProfile:            cfg.CerberusProfile,
+		CerberusCallbackURL:        fmt.Sprintf("http://localhost:%d/api/cerberus/events", cfg.ServerPort),
 	}
 	runner := workflow.NewRunner(pool, cerb, runnerCfg, eventHub)
 

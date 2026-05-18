@@ -325,6 +325,21 @@ func GetPhase(ctx context.Context, pool *pgxpool.Pool, id int64) (Phase, error) 
 	return ph, err
 }
 
+func GetPhaseByCerberusSession(ctx context.Context, pool *pgxpool.Pool, session string) (Phase, error) {
+	var ph Phase
+	err := pool.QueryRow(ctx,
+		`SELECT id, workflow_id, position, name, goal, prompt_sent, status, retry_count,
+		        timeout_seconds, cerberus_session, cerberus_commit, cost_usd,
+		        started_at, finished_at, review_verdict, review_notes,
+		        adjusted_prompt, decision_summary, decision_rationale, files_touched
+		 FROM phases WHERE cerberus_session = $1 ORDER BY id DESC LIMIT 1`, session,
+	).Scan(phaseScans(&ph)...)
+	if err == pgx.ErrNoRows {
+		return ph, ErrNotFound
+	}
+	return ph, err
+}
+
 func ListPhasesByWorkflow(ctx context.Context, pool *pgxpool.Pool, workflowID int64) ([]Phase, error) {
 	rows, err := pool.Query(ctx,
 		`SELECT id, workflow_id, position, name, goal, prompt_sent, status, retry_count,
@@ -453,6 +468,30 @@ func InsertPhaseLog(ctx context.Context, pool *pgxpool.Pool, phaseID int64, line
 func ListPhaseLogs(ctx context.Context, pool *pgxpool.Pool, phaseID int64) ([]PhaseLog, error) {
 	rows, err := pool.Query(ctx,
 		`SELECT id, phase_id, line, ts FROM phase_logs WHERE phase_id = $1 ORDER BY id`, phaseID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PhaseLog
+	for rows.Next() {
+		var l PhaseLog
+		if err := rows.Scan(&l.ID, &l.PhaseID, &l.Line, &l.Ts); err != nil {
+			return nil, err
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
+func ListRecentPhaseLogs(ctx context.Context, pool *pgxpool.Pool, phaseID int64, limit int) ([]PhaseLog, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	rows, err := pool.Query(ctx,
+		`SELECT id, phase_id, line, ts FROM (
+			SELECT id, phase_id, line, ts FROM phase_logs WHERE phase_id = $1 ORDER BY id DESC LIMIT $2
+		) recent ORDER BY id`, phaseID, limit,
 	)
 	if err != nil {
 		return nil, err
