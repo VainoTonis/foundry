@@ -382,6 +382,8 @@ func (r *Runner) workflowStatusFromPhases(ctx context.Context, workflowID int64)
 			return "failed", nil
 		}
 	}
+	// Prefer running over review waits: a workflow may have an active phase
+	// while earlier phases are still awaiting review.
 	for _, ph := range phases {
 		if ph.Status == "running" {
 			return "running", nil
