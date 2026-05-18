@@ -558,6 +558,24 @@ func (s *Server) streamLogs(w http.ResponseWriter, r *http.Request, phaseID int6
 	}
 }
 
+func (s *Server) writeWorkflowSnapshot(ctx context.Context, w io.Writer, workflowID int64) bool {
+	wf, err := db.GetWorkflow(ctx, s.pool, workflowID)
+	if err != nil {
+		return false
+	}
+	phases, err := db.ListPhasesByWorkflow(ctx, s.pool, workflowID)
+	if err != nil {
+		return false
+	}
+	data, _ := json.Marshal(map[string]any{
+		"event":    "snapshot",
+		"workflow": wf,
+		"phases":   phases,
+	})
+	fmt.Fprintf(w, "event: snapshot\ndata: %s\n\n", data)
+	return true
+}
+
 func (s *Server) streamWorkflow(w http.ResponseWriter, r *http.Request, workflowID int64) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -574,20 +592,8 @@ func (s *Server) streamWorkflow(w http.ResponseWriter, r *http.Request, workflow
 
 	// Send a database-backed snapshot first. If the browser reconnects after
 	// dropped high-volume live events, this catches it up to durable state.
-	if wf, err := db.GetWorkflow(r.Context(), s.pool, workflowID); err == nil {
-		data, _ := json.Marshal(map[string]any{"event": "workflow_update", "status": wf.Status})
-		fmt.Fprintf(w, "event: workflow_update\ndata: %s\n\n", data)
-	}
-	if phases, err := db.ListPhasesByWorkflow(r.Context(), s.pool, workflowID); err == nil {
-		for _, ph := range phases {
-			data, _ := json.Marshal(map[string]any{"event": "phase_update", "phase_id": ph.ID, "status": ph.Status})
-			fmt.Fprintf(w, "event: phase_update\ndata: %s\n\n", data)
-			logs, _ := db.ListRecentPhaseLogs(r.Context(), s.pool, ph.ID, 200)
-			for _, l := range logs {
-				logData, _ := json.Marshal(map[string]any{"event": "log", "phase_id": ph.ID, "line": l.Line, "ts": l.Ts.Format(time.RFC3339)})
-				fmt.Fprintf(w, "event: log\ndata: %s\n\n", logData)
-			}
-		}
+	if !s.writeWorkflowSnapshot(r.Context(), w, workflowID) {
+		return
 	}
 	flusher.Flush()
 
@@ -599,7 +605,7 @@ func (s *Server) streamWorkflow(w http.ResponseWriter, r *http.Request, workflow
 		case <-r.Context().Done():
 			return
 		case <-heartbeat.C:
-			fmt.Fprintf(w, ": keepalive\n\n")
+			fmt.Fprintf(w, "event: heartbeat\ndata: {}\n\n")
 			flusher.Flush()
 		case data, ok := <-ch:
 			if !ok {

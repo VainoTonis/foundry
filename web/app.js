@@ -218,7 +218,7 @@ async function renderWorkflow(id) {
 
   // header with updatable status chip
   const hdr = el('div', { style: 'display:flex;align-items:center;gap:.6rem;margin-bottom:1rem' });
-  const statusChip = chip(wf.status);
+  let statusChip = chip(wf.status);
   hdr.append(el('h2', { style: 'flex:1' }, `Workflow #${wf.id}`), chip(wf.track), statusChip);
   app.append(hdr);
 
@@ -276,57 +276,101 @@ async function renderWorkflow(id) {
     app.append(el('div', { className: 'empty' }, msg));
   }
 
-  // SSE for live updates
-  if (wf.status === 'running') {
+  function applyWorkflowStatus(status) {
+    const newChip = chip(status);
+    statusChip.replaceWith(newChip);
+    statusChip = newChip;
+    wf.status = status;
+    updateActionBar(status);
+  }
+
+  function applyPhaseStatus(phaseID, status) {
+    const pe = phaseElements.get(phaseID);
+    if (!pe) return;
+    const newChip = chip(status);
+    pe.chipEl.replaceWith(newChip);
+    pe.chipEl = newChip;
+    pe.ph.status = status;
+    if (status === 'running' && !pe.row._expanded) pe.row.click();
+  }
+
+  function reconcileSnapshot(snap) {
+    if (snap.workflow && snap.workflow.status) applyWorkflowStatus(snap.workflow.status);
+    for (const ph of (snap.phases || [])) {
+      const pe = phaseElements.get(ph.id);
+      if (pe) Object.assign(pe.ph, ph);
+      applyPhaseStatus(ph.id, ph.status);
+    }
+    // On reconnect, refresh any open log panes from durable DB state so logs
+    // missed while the SSE connection was down are visible again.
+    for (const [phaseID, ep] of expandedPhases) {
+      const pe = phaseElements.get(phaseID);
+      if (pe) loadLogs(pe.ph, ep.logBox);
+    }
+  }
+
+  async function reconcileFromDB() {
+    const freshWf = await api.get(`/api/workflows/${id}`).catch(() => null);
+    const freshPhases = await api.get(`/api/workflows/${id}/phases`).catch(() => []);
+    reconcileSnapshot({ workflow: freshWf, phases: freshPhases });
+  }
+
+  function closeWorkflowStream() {
+    if (_workflowSSE) {
+      _workflowSSE.close();
+      _workflowSSE = null;
+    }
+  }
+
+  function isTerminal(status) { return status === 'done' || status === 'paused' || status === 'failed'; }
+
+  function startWorkflowStream() {
+    closeWorkflowStream();
     const es = new EventSource(`/api/workflows/${id}/stream`);
     _workflowSSE = es;
+
+    es.addEventListener('snapshot', e => {
+      const snap = JSON.parse(e.data);
+      reconcileSnapshot(snap);
+      if (snap.workflow && isTerminal(snap.workflow.status)) {
+        reconcileFromDB().finally(closeWorkflowStream);
+      }
+    });
+
+    es.addEventListener('heartbeat', () => {});
 
     es.addEventListener('log', e => {
       const d = JSON.parse(e.data);
       const ep = expandedPhases.get(d.phase_id);
-      if (ep) {
-        appendLog(ep.logBox, { line: d.line, ts: d.ts });
-        ep.logBox.scrollTop = ep.logBox.scrollHeight;
-      }
+      if (ep) queueLog(ep.logBox, { line: d.line, ts: d.ts });
     });
 
     es.addEventListener('phase_update', e => {
       const d = JSON.parse(e.data);
-      const pe = phaseElements.get(d.phase_id);
-      if (pe) {
-        const newChip = chip(d.status);
-        pe.chipEl.replaceWith(newChip);
-        pe.chipEl = newChip;
-        pe.ph.status = d.status;
-        // auto-expand running phase
-        if (d.status === 'running' && !pe.row._expanded) {
-          pe.row.click();
-        }
-      }
+      applyPhaseStatus(d.phase_id, d.status);
     });
 
     es.addEventListener('workflow_update', e => {
       const d = JSON.parse(e.data);
-      const newChip = chip(d.status);
-      statusChip.replaceWith(newChip);
-      updateActionBar(d.status);
-      if (d.status === 'done' || d.status === 'paused' || d.status === 'failed') {
-        es.close();
-        _workflowSSE = null;
-        expandedPhases.clear();
-        phaseElements.clear();
+      applyWorkflowStatus(d.status);
+      if (isTerminal(d.status)) {
+        reconcileFromDB().finally(closeWorkflowStream);
       }
     });
 
     es.onerror = () => {
-      es.close();
-      _workflowSSE = null;
-      expandedPhases.clear();
-      phaseElements.clear();
-      // Re-render/reconnect from database state instead of leaving the page stale.
-      setTimeout(() => { if (!_workflowSSE) renderWorkflow(id); }, 1000);
+      // Do not close here: EventSource will reconnect automatically and the
+      // backend sends a durable snapshot on every new connection. If the browser
+      // transitions to CLOSED, recreate it with a small backoff.
+      if (es.readyState === EventSource.CLOSED && _workflowSSE === es && !isTerminal(wf.status)) {
+        _workflowSSE = null;
+        setTimeout(() => { if (!_workflowSSE && !isTerminal(wf.status)) startWorkflowStream(); }, 1000);
+      }
     };
   }
+
+  // SSE for live updates
+  if (wf.status === 'running') startWorkflowStream();
 }
 
 function togglePhaseDetail(ph, row, workflowId, expandedPhases) {
@@ -412,10 +456,29 @@ function togglePhaseDetail(ph, row, workflowId, expandedPhases) {
 async function loadLogs(ph, box) {
   const logs = await api.get(`/api/phases/${ph.id}/logs`).catch(() => []);
   box.innerHTML = '';
-  for (const l of (logs || [])) {
-    appendLog(box, l);
-  }
+  for (const l of (logs || []).slice(-500)) appendLog(box, l);
   box.scrollTop = box.scrollHeight;
+}
+
+const LOG_RENDER_LIMIT = 500;
+const _logQueues = new WeakMap();
+
+function queueLog(box, l) {
+  let state = _logQueues.get(box);
+  if (!state) {
+    state = { items: [], scheduled: false };
+    _logQueues.set(box, state);
+  }
+  state.items.push(l);
+  if (state.items.length > LOG_RENDER_LIMIT) state.items.splice(0, state.items.length - LOG_RENDER_LIMIT);
+  if (state.scheduled) return;
+  state.scheduled = true;
+  requestAnimationFrame(() => {
+    state.scheduled = false;
+    const items = state.items.splice(0, state.items.length);
+    for (const item of items) appendLog(box, item);
+    box.scrollTop = box.scrollHeight;
+  });
 }
 
 function appendLog(box, l) {
@@ -423,7 +486,7 @@ function appendLog(box, l) {
   const ts = el('span', { className: 'log-ts' }, fmtTime(l.ts));
   line.append(ts, document.createTextNode(l.line));
   box.append(line);
-  if (box.children.length > 1000) box.firstChild.remove();
+  while (box.children.length > LOG_RENDER_LIMIT) box.firstChild.remove();
 }
 
 function renderDiff(container, text) {
