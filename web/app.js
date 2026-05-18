@@ -91,6 +91,16 @@ async function renderBacklog() {
         });
         actions.append(run);
       }
+      if (s.status !== 'running') {
+        const deleteBtn = btn('Delete', 'btn-danger', async () => {
+          if (!confirm(`Delete spec "${s.title}"?`)) return;
+          try {
+            await fetch(`/api/specs/${s.id}`, { method: 'DELETE' });
+            navigate('backlog');
+          } catch(e) { alert(e.message); }
+        });
+        actions.append(deleteBtn);
+      }
       card.append(hdr, meta, actions);
       app.append(card);
     }
