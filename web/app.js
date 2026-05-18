@@ -322,7 +322,7 @@ async function renderWorkflow(id) {
     }
   }
 
-  function isTerminal(status) { return status === 'done' || status === 'paused' || status === 'failed'; }
+  function isWorkflowDone(status) { return status === 'done'; }
 
   function startWorkflowStream() {
     closeWorkflowStream();
@@ -332,7 +332,7 @@ async function renderWorkflow(id) {
     es.addEventListener('snapshot', e => {
       const snap = JSON.parse(e.data);
       reconcileSnapshot(snap);
-      if (snap.workflow && isTerminal(snap.workflow.status)) {
+      if (snap.workflow && isWorkflowDone(snap.workflow.status)) {
         reconcileFromDB().finally(closeWorkflowStream);
       }
     });
@@ -353,7 +353,7 @@ async function renderWorkflow(id) {
     es.addEventListener('workflow_update', e => {
       const d = JSON.parse(e.data);
       applyWorkflowStatus(d.status);
-      if (isTerminal(d.status)) {
+      if (isWorkflowDone(d.status)) {
         reconcileFromDB().finally(closeWorkflowStream);
       }
     });
@@ -362,15 +362,15 @@ async function renderWorkflow(id) {
       // Do not close here: EventSource will reconnect automatically and the
       // backend sends a durable snapshot on every new connection. If the browser
       // transitions to CLOSED, recreate it with a small backoff.
-      if (es.readyState === EventSource.CLOSED && _workflowSSE === es && !isTerminal(wf.status)) {
+      if (es.readyState === EventSource.CLOSED && _workflowSSE === es && !isWorkflowDone(wf.status)) {
         _workflowSSE = null;
-        setTimeout(() => { if (!_workflowSSE && !isTerminal(wf.status)) startWorkflowStream(); }, 1000);
+        setTimeout(() => { if (!_workflowSSE && !isWorkflowDone(wf.status)) startWorkflowStream(); }, 1000);
       }
     };
   }
 
   // SSE for live updates
-  if (wf.status === 'running') startWorkflowStream();
+  if (!isWorkflowDone(wf.status)) startWorkflowStream();
 }
 
 function togglePhaseDetail(ph, row, workflowId, expandedPhases) {
