@@ -2,7 +2,11 @@
 
 A spec-driven, self-running development loop.
 
+Here is intent. Here is agent work. Here is evidence. Here is decision.
+
 Foundry is where ideas get turned into code. You write a spec, define phases, and Foundry runs them overnight via [cerberus](https://github.com/VainoTonis/cerberus) — automatically reviewing output, applying commits, and recording every decision made along the way.
+
+The durable project memory lives in the [intent wiki](./intent/README.md), which is plain Markdown and Obsidian-friendly.
 
 ## What it does
 
