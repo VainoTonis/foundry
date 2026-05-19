@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html/template"
 	"io"
 	"log"
 	"net/http"
@@ -54,6 +55,20 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) routes() {
+	s.mux.HandleFunc("/", s.handleUIShell)
+	s.mux.HandleFunc("/backlog", s.handleUIBacklogPage)
+	s.mux.HandleFunc("/backlog/fragment", s.handleUIBacklogFragment)
+	s.mux.HandleFunc("/projects", s.handleUIProjectsPage)
+	s.mux.HandleFunc("/projects/fragment", s.handleUIProjectsFragment)
+	s.mux.HandleFunc("/settings", s.handleUISettingsPage)
+	s.mux.HandleFunc("/settings/fragment", s.handleUISettingsFragment)
+	s.mux.HandleFunc("/specs/", s.handleUISpec)
+	s.mux.HandleFunc("/workflows/", s.handleUIWorkflow)
+	s.mux.HandleFunc("/phases/", s.handleUIPhase)
+	s.mux.HandleFunc("/spec-builder", s.handleUISpecBuilderPage)
+	s.mux.HandleFunc("/spec-builder/fragment", s.handleUISpecBuilderStartFragment)
+	s.mux.HandleFunc("/spec-builder/", s.handleUISpecBuilder)
+
 	s.mux.HandleFunc("/api/projects", s.handleProjects)
 	s.mux.HandleFunc("/api/projects/discover", s.handleDiscover)
 	s.mux.HandleFunc("/api/projects/", s.handleProject)
@@ -71,6 +86,502 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/api/cerberus/events", s.handleCerberusCallback)
 	s.mux.HandleFunc("/api/spec-drafts", s.handleSpecDrafts)
 	s.mux.HandleFunc("/api/spec-drafts/", s.handleSpecDraft)
+}
+
+// ---- server-rendered UI ----
+
+var uiTemplates = template.Must(template.New("ui").Funcs(template.FuncMap{
+	"date":     func(t time.Time) string { return t.Format("2006-01-02") },
+	"datetime": func(t time.Time) string { return t.Format("2006-01-02 15:04:05") },
+	"ptime": func(t *time.Time) string {
+		if t == nil {
+			return "—"
+		}
+		return t.Format("2006-01-02 15:04:05")
+	},
+	"money": func(f *float64) string {
+		if f == nil {
+			return "—"
+		}
+		return fmt.Sprintf("$%.4f", *f)
+	},
+	"strptr": func(s *string) string {
+		if s == nil {
+			return ""
+		}
+		return *s
+	},
+}).Parse(`
+{{define "shell"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Foundry</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <script defer src="/app.js"></script>
+</head>
+<body data-page="{{.Page}}">
+  <header>
+    <h1><a href="/" hx-get="/backlog/fragment" hx-target="#app" hx-push-url="/" class="brand">Foundry</a></h1>
+    <nav>
+      <a href="/backlog" data-nav="backlog" hx-get="/backlog/fragment" hx-target="#app" hx-push-url="/backlog">Backlog</a>
+      <a href="/projects" data-nav="projects" hx-get="/projects/fragment" hx-target="#app" hx-push-url="/projects">Projects</a>
+      <a href="/spec-builder" data-nav="builder" hx-get="/spec-builder/fragment" hx-target="#app" hx-push-url="/spec-builder">Spec Builder</a>
+      <a href="/settings" data-nav="settings" hx-get="/settings/fragment" hx-target="#app" hx-push-url="/settings">Settings</a>
+    </nav>
+  </header>
+  <main id="app" hx-get="{{.Fragment}}" hx-trigger="load" hx-swap="innerHTML"></main>
+</body>
+</html>
+{{end}}
+
+{{define "backlog"}}
+<div data-page="backlog">
+  <div class="page-header">
+    <h2>Backlog</h2>
+    <div class="card-actions">
+      <a class="btn btn-primary" href="/spec-builder" hx-get="/spec-builder/fragment" hx-target="#app" hx-push-url="/spec-builder">Build with AI</a>
+      <button class="btn btn-primary" popovertarget="new-spec">+ Spec</button>
+      <button class="btn" popovertarget="new-project">+ Project</button>
+    </div>
+  </div>
+  <div id="new-project" class="popover-card" popover>
+    <h3>New Project</h3>
+    <form data-json method="post" action="/api/projects" data-refresh="/backlog/fragment" data-target="#app">
+      <div class="field"><label>Name</label><input name="name" required></div>
+      <div class="field"><label>Repo path</label><input name="repo_path" required></div>
+      <button class="btn btn-primary">Create</button>
+    </form>
+  </div>
+  <div id="new-spec" class="popover-card" popover>
+    <h3>New Spec</h3>
+    <form data-json method="post" action="/api/specs" data-refresh="/backlog/fragment" data-target="#app">
+      <div class="field"><label>Title</label><input name="title" required></div>
+      <div class="field"><label>Project</label><select name="project_id" required>{{range .Projects}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select></div>
+      <div class="field"><label>Content</label><textarea name="content" required># Feature title
+
+Global context here.
+
+## Phase 1: Bootstrap
+
+What this phase does.</textarea></div>
+      <button class="btn btn-primary">Create</button>
+    </form>
+  </div>
+  {{if .SpecsByStatus}}
+    {{range .Statuses}}
+      {{$items := index $.SpecsByStatus .}}
+      {{if $items}}
+        <div class="group-label">{{.}}</div>
+        {{range $items}}
+          <article class="card">
+            <div class="card-header"><a class="card-title" href="/specs/{{.ID}}" hx-get="/specs/{{.ID}}/fragment" hx-target="#app" hx-push-url="/specs/{{.ID}}">{{.Title}}</a><span class="chip chip-{{.Track}}">{{.Track}}</span><span class="chip chip-{{.Status}}">{{.Status}}</span></div>
+            <div class="card-meta">Project #{{.ProjectID}} · {{date .CreatedAt}}</div>
+            <div class="card-actions"><button class="btn btn-primary" data-json-post="/api/workflows" data-body='{"spec_id":{{.ID}}}' data-redirect-template="/workflows/{id}">Run Workflow</button></div>
+          </article>
+        {{end}}
+      {{end}}
+    {{end}}
+  {{else}}<div class="empty">No specs yet. Create one to get started.</div>{{end}}
+  {{if .Drafts}}
+    <div class="group-label">spec builder drafts</div>
+    {{range .Drafts}}<article class="card"><div class="card-header"><a class="card-title" href="/spec-builder/{{.ID}}" hx-get="/spec-builder/{{.ID}}/fragment" hx-target="#app" hx-push-url="/spec-builder/{{.ID}}">{{.Title}}</a><span class="chip chip-running">{{.Status}}</span></div><div class="card-meta">{{date .CreatedAt}}</div></article>{{end}}
+  {{end}}
+</div>
+{{end}}
+
+{{define "projects"}}
+<div data-page="projects">
+  <div class="page-header"><h2>Projects</h2><button class="btn btn-primary" hx-get="/projects/fragment?discover=1" hx-target="#app" hx-push-url="/projects">Discover repos</button></div>
+  {{if .Projects}}<div class="group-label">Registered projects</div>{{range .Projects}}<article class="card"><div class="card-header"><span class="card-title">{{.Name}}</span></div><div class="card-meta">{{.RepoPath}}</div></article>{{end}}{{else}}<div class="empty">No projects yet. Click Discover repos to scan configured git root.</div>{{end}}
+  {{if .DiscoverErr}}<div class="empty">{{.DiscoverErr}}</div>{{end}}
+  {{if .Repos}}<div class="group-label">Discovered repos</div>{{range .Repos}}<article class="card"><div class="card-header"><span class="card-title">{{.Name}}</span>{{if .Imported}}<span class="chip chip-done">imported</span>{{end}}</div><div class="card-meta">{{.Path}}</div>{{if not .Imported}}<div class="card-actions"><button class="btn btn-primary" data-json-post="/api/projects" data-body='{"name":{{printf "%q" .Name}},"repo_path":{{printf "%q" .Path}}}' data-refresh="/projects/fragment" data-target="#app">Import</button></div>{{end}}</article>{{end}}{{end}}
+</div>
+{{end}}
+
+{{define "specDetail"}}
+<div data-page="backlog">
+  <a class="back" href="/backlog" hx-get="/backlog/fragment" hx-target="#app" hx-push-url="/backlog">← Backlog</a>
+  <div class="page-header"><div><h2>{{.Spec.Title}}</h2><div class="card-meta">Spec #{{.Spec.ID}} · Project #{{.Spec.ProjectID}} · {{date .Spec.CreatedAt}}</div></div><div class="card-actions"><span class="chip chip-{{.Spec.Track}}">{{.Spec.Track}}</span><span class="chip chip-{{.Spec.Status}}">{{.Spec.Status}}</span></div></div>
+  <div class="card-actions"><button class="btn btn-primary" data-json-post="/api/workflows" data-body='{"spec_id":{{.Spec.ID}}}' data-redirect-template="/workflows/{id}">Run Workflow</button>{{if eq .Spec.Track "poc"}}<button class="btn" data-json-post="/api/specs/{{.Spec.ID}}/promote" data-refresh="/specs/{{.Spec.ID}}/fragment" data-target="#app">Promote to polish</button>{{end}}</div>
+  <div class="section"><h3>Content</h3><pre class="doc-box">{{.Spec.Content}}</pre></div>
+  <div class="section"><h3>Workflows</h3>{{if .Workflows}}{{range .Workflows}}<article class="card"><div class="card-header"><a class="card-title" href="/workflows/{{.ID}}" hx-get="/workflows/{{.ID}}/fragment" hx-target="#app" hx-push-url="/workflows/{{.ID}}">Workflow #{{.ID}}</a><span class="chip chip-{{.Status}}">{{.Status}}</span></div><div class="card-meta">{{.Track}} · budget {{money .MaxCostUSD}} · {{date .CreatedAt}}</div></article>{{end}}{{else}}<div class="empty">No workflows yet.</div>{{end}}</div>
+</div>
+{{end}}
+
+{{define "workflowDetail"}}
+<div data-page="backlog" data-workflow-stream="/api/workflows/{{.Workflow.ID}}/stream" data-refresh="/workflows/{{.Workflow.ID}}/fragment">
+  <a class="back" href="/specs/{{.Spec.ID}}" hx-get="/specs/{{.Spec.ID}}/fragment" hx-target="#app" hx-push-url="/specs/{{.Spec.ID}}">← {{.Spec.Title}}</a>
+  <div class="page-header"><div><h2>Workflow #{{.Workflow.ID}}</h2><div class="card-meta">Spec #{{.Spec.ID}} · {{.Workflow.Track}} · created {{datetime .Workflow.CreatedAt}}</div></div><span class="chip chip-{{.Workflow.Status}}">{{.Workflow.Status}}</span></div>
+  <div class="card-actions"><button class="btn" data-json-post="/api/workflows/{{.Workflow.ID}}/resume" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app">Resume</button><button class="btn btn-danger" data-json-post="/api/workflows/{{.Workflow.ID}}/stop" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app">Stop</button></div>
+  <div class="section"><h3>Phases</h3>{{range .Phases}}<article class="phase-row" id="phase-{{.ID}}"><div class="phase-pos">{{.Position}}</div><div class="phase-body"><div class="card-header"><span class="phase-name">{{.Name}}</span><span class="chip chip-{{.Status}}">{{.Status}}</span>{{if .ReviewVerdict}}<span class="chip chip-{{strptr .ReviewVerdict}}">{{strptr .ReviewVerdict}}</span>{{end}}</div><div class="phase-goal">{{.Goal}}</div><div class="card-meta">cost {{money .CostUSD}} · started {{ptime .StartedAt}} · finished {{ptime .FinishedAt}}</div><div class="card-actions"><button class="btn" hx-get="/phases/{{.ID}}/logs/fragment" hx-target="#phase-panel" hx-swap="innerHTML">Logs</button><button class="btn" hx-get="/phases/{{.ID}}/diff/fragment" hx-target="#phase-panel" hx-swap="innerHTML">Diff</button><button class="btn btn-primary" data-json-post="/api/phases/{{.ID}}/approve" data-refresh="/workflows/{{$.Workflow.ID}}/fragment" data-target="#app">Approve</button><button class="btn btn-danger" data-json-post="/api/phases/{{.ID}}/reject" data-refresh="/workflows/{{$.Workflow.ID}}/fragment" data-target="#app">Reject</button><button class="btn" data-json-post="/api/phases/{{.ID}}/clean" data-refresh="/workflows/{{$.Workflow.ID}}/fragment" data-target="#app">Clean</button></div></div></article>{{end}}</div>
+  <div id="phase-panel" class="section"><div class="empty">Select logs or diff for a phase.</div></div>
+</div>
+{{end}}
+
+{{define "phaseLogs"}}
+<div><h3>Logs · Phase #{{.Phase.ID}} {{.Phase.Name}}</h3><div class="log-box" data-log-stream="/api/phases/{{.Phase.ID}}/logs/stream">{{range .Logs}}<div class="log-line"><span class="log-ts">{{datetime .Ts}}</span>{{.Line}}</div>{{end}}</div></div>
+{{end}}
+
+{{define "phaseDiff"}}
+<div><h3>Diff · Phase #{{.Phase.ID}} {{.Phase.Name}}</h3>{{if .Error}}<div class="empty">{{.Error}}</div>{{else}}<pre class="diff-box">{{.Diff}}</pre>{{end}}</div>
+{{end}}
+
+{{define "builderStart"}}
+<div data-page="builder">
+  <div class="page-header"><h2>Spec Builder</h2></div>
+  <form data-json method="post" action="/api/spec-drafts" data-redirect-template="/spec-builder/{id}">
+    <div class="field"><label>Project</label><select name="project_id"><option value="">No project</option>{{range .Projects}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select></div>
+    <div class="field"><label>What should be built?</label><textarea name="description" required placeholder="Describe the feature, constraints, and expected phases."></textarea></div>
+    <button class="btn btn-primary">Start builder</button>
+  </form>
+  {{if .Drafts}}<div class="group-label">Resume active drafts</div>{{range .Drafts}}<article class="card"><div class="card-header"><a class="card-title" href="/spec-builder/{{.ID}}" hx-get="/spec-builder/{{.ID}}/fragment" hx-target="#app" hx-push-url="/spec-builder/{{.ID}}">{{.Title}}</a><span class="chip chip-running">{{.Status}}</span></div><div class="card-meta">{{datetime .UpdatedAt}}</div></article>{{end}}{{end}}
+</div>
+{{end}}
+
+{{define "draftMessages"}}{{range .Messages}}<div class="chat-msg chat-msg-{{.Role}}"><div class="chat-msg-label">{{.Role}}</div><div class="chat-msg-body">{{.Content}}</div></div>{{end}}{{end}}
+
+{{define "builderDetail"}}
+<div data-page="builder" data-draft-stream="/api/spec-drafts/{{.Draft.ID}}/stream" data-draft-id="{{.Draft.ID}}">
+  <a class="back" href="/spec-builder" hx-get="/spec-builder/fragment" hx-target="#app" hx-push-url="/spec-builder">← Spec Builder</a>
+  <div class="page-header"><div><h2>{{.Draft.Title}}</h2><div class="card-meta">Draft #{{.Draft.ID}} · {{.Draft.Status}} · {{datetime .Draft.UpdatedAt}}</div></div><div class="card-actions"><button class="btn btn-primary" data-json-post="/api/spec-drafts/{{.Draft.ID}}/save" data-body='{"title":""}' data-redirect-template="/specs/{spec_id}">Save as spec</button><button class="btn btn-danger" data-json-delete="/api/spec-drafts/{{.Draft.ID}}" data-redirect="/backlog">Abandon</button></div></div>
+  <div class="spec-builder-layout"><div class="spec-builder-chat"><div id="draft-messages" class="chat-messages">{{template "draftMessages" .}}</div><div id="draft-stream" class="chat-msg-streaming"></div><form data-json data-draft-message method="post" action="/api/spec-drafts/{{.Draft.ID}}/message"><div class="chat-input-row"><textarea class="chat-textarea" name="content" required placeholder="Reply to the spec builder…"></textarea><button class="btn btn-primary">Send</button></div></form></div><aside class="spec-preview-pane"><h3>Latest spec preview</h3><pre id="draft-preview" class="doc-box">{{if .Preview}}{{.Preview}}{{else}}Ask the builder to call update_spec with the full markdown spec.{{end}}</pre></aside></div>
+</div>
+{{end}}
+
+{{define "settings"}}
+<div data-page="settings">
+  <h2 style="margin-bottom:1.25rem">Settings</h2>
+  <form data-settings action="/api/settings" data-refresh="/settings/fragment" data-target="#app">
+    {{range .Settings}}<div class="field"><label>{{.Key}}</label><input name="{{.Key}}" value="{{.Value}}"></div>{{end}}
+    <p class="hint">Changes are written to config.yaml. Restart the server for most changes to take effect.</p>
+    <button class="btn btn-primary">Save</button>
+  </form>
+  <h3 style="margin-top:2rem;margin-bottom:1rem">Profiles</h3>
+  {{if .Profiles}}{{range .Profiles}}<article class="card"><div class="card-header"><span class="card-title">{{.Name}}</span></div><div class="card-meta">model: {{.DefaultModel}} · image: {{.DefaultImage}} · region: {{.AWSRegion}}</div></article>{{end}}{{else}}<div class="empty">No profiles saved.</div>{{end}}
+</div>
+{{end}}
+`))
+
+type shellData struct{ Page, Fragment string }
+
+func (s *Server) renderShell(w http.ResponseWriter, page, fragment string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := uiTemplates.ExecuteTemplate(w, "shell", shellData{Page: page, Fragment: fragment}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) handleUIShell(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+	s.renderShell(w, "backlog", "/backlog/fragment")
+}
+func (s *Server) handleUIBacklogPage(w http.ResponseWriter, r *http.Request) {
+	s.renderShell(w, "backlog", "/backlog/fragment")
+}
+func (s *Server) handleUIProjectsPage(w http.ResponseWriter, r *http.Request) {
+	s.renderShell(w, "projects", "/projects/fragment")
+}
+func (s *Server) handleUISettingsPage(w http.ResponseWriter, r *http.Request) {
+	s.renderShell(w, "settings", "/settings/fragment")
+}
+
+func (s *Server) handleUIBacklogFragment(w http.ResponseWriter, r *http.Request) {
+	projects, _ := db.ListProjects(r.Context(), s.pool)
+	specs, err := db.ListSpecs(r.Context(), s.pool, db.ListSpecsFilter{})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	drafts, _ := db.ListSpecDrafts(r.Context(), s.pool)
+	activeDrafts := make([]db.SpecDraft, 0)
+	for _, d := range drafts {
+		if d.Status == "active" {
+			activeDrafts = append(activeDrafts, d)
+		}
+	}
+	byStatus := map[string][]db.Spec{}
+	for _, sp := range specs {
+		byStatus[sp.Status] = append(byStatus[sp.Status], sp)
+	}
+	data := struct {
+		Projects      []db.Project
+		SpecsByStatus map[string][]db.Spec
+		Statuses      []string
+		Drafts        []db.SpecDraft
+	}{projects, byStatus, []string{"running", "queued", "paused", "done", "failed", "dumpster"}, activeDrafts}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := uiTemplates.ExecuteTemplate(w, "backlog", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+type uiRepoItem struct {
+	discover.Repo
+	Imported bool
+}
+
+func (s *Server) handleUIProjectsFragment(w http.ResponseWriter, r *http.Request) {
+	projects, err := db.ListProjects(r.Context(), s.pool)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	var repos []uiRepoItem
+	var discoverErr string
+	if r.URL.Query().Get("discover") == "1" {
+		if s.gitRoot == "" {
+			discoverErr = "git_root not configured"
+		} else if found, err := discover.FindRepos(s.gitRoot); err != nil {
+			discoverErr = err.Error()
+		} else {
+			byPath := map[string]bool{}
+			for _, p := range projects {
+				byPath[p.RepoPath] = true
+			}
+			for _, repo := range found {
+				repos = append(repos, uiRepoItem{Repo: repo, Imported: byPath[repo.Path]})
+			}
+		}
+	}
+	data := struct {
+		Projects    []db.Project
+		Repos       []uiRepoItem
+		DiscoverErr string
+	}{projects, repos, discoverErr}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := uiTemplates.ExecuteTemplate(w, "projects", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) handleUISpec(w http.ResponseWriter, r *http.Request) {
+	id, frag, ok := parseUIID(r.URL.Path, "/specs/")
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	if frag {
+		s.handleUISpecFragment(w, r, id)
+		return
+	}
+	s.renderShell(w, "backlog", fmt.Sprintf("/specs/%d/fragment", id))
+}
+
+func (s *Server) handleUISpecFragment(w http.ResponseWriter, r *http.Request, id int64) {
+	sp, err := db.GetSpec(r.Context(), s.pool, id)
+	if errors.Is(err, db.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	wfs, _ := db.ListWorkflowsBySpec(r.Context(), s.pool, id)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := uiTemplates.ExecuteTemplate(w, "specDetail", struct {
+		Spec      db.Spec
+		Workflows []db.Workflow
+	}{sp, wfs}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) handleUIWorkflow(w http.ResponseWriter, r *http.Request) {
+	id, suffix, ok := parseUIIDSuffix(r.URL.Path, "/workflows/")
+	if !ok || (suffix != "" && suffix != "fragment") {
+		http.NotFound(w, r)
+		return
+	}
+	if suffix == "fragment" {
+		s.handleUIWorkflowFragment(w, r, id)
+		return
+	}
+	s.renderShell(w, "backlog", fmt.Sprintf("/workflows/%d/fragment", id))
+}
+
+func (s *Server) handleUIWorkflowFragment(w http.ResponseWriter, r *http.Request, id int64) {
+	wf, err := db.GetWorkflow(r.Context(), s.pool, id)
+	if errors.Is(err, db.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	sp, _ := db.GetSpec(r.Context(), s.pool, wf.SpecID)
+	phases, err := db.ListPhasesByWorkflow(r.Context(), s.pool, id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := uiTemplates.ExecuteTemplate(w, "workflowDetail", struct {
+		Workflow db.Workflow
+		Spec     db.Spec
+		Phases   []db.Phase
+	}{wf, sp, phases}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) handleUIPhase(w http.ResponseWriter, r *http.Request) {
+	id, suffix, ok := parseUIIDSuffix(r.URL.Path, "/phases/")
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	switch suffix {
+	case "logs/fragment":
+		s.handleUIPhaseLogsFragment(w, r, id)
+	case "diff/fragment":
+		s.handleUIPhaseDiffFragment(w, r, id)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func (s *Server) handleUIPhaseLogsFragment(w http.ResponseWriter, r *http.Request, id int64) {
+	ph, err := db.GetPhase(r.Context(), s.pool, id)
+	if errors.Is(err, db.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	logs, _ := db.ListRecentPhaseLogs(r.Context(), s.pool, id, 300)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := uiTemplates.ExecuteTemplate(w, "phaseLogs", struct {
+		Phase db.Phase
+		Logs  []db.PhaseLog
+	}{ph, logs}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) handleUIPhaseDiffFragment(w http.ResponseWriter, r *http.Request, id int64) {
+	ph, err := db.GetPhase(r.Context(), s.pool, id)
+	if errors.Is(err, db.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	var diff, msg string
+	if ph.CerberusSession == nil {
+		msg = "No Cerberus session for this phase yet."
+	} else if d, err := s.cerb.Diff(r.Context(), *ph.CerberusSession); err != nil {
+		msg = err.Error()
+	} else {
+		diff = d
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := uiTemplates.ExecuteTemplate(w, "phaseDiff", struct {
+		Phase       db.Phase
+		Diff, Error string
+	}{ph, diff, msg}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) handleUISpecBuilderPage(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/spec-builder" {
+		http.NotFound(w, r)
+		return
+	}
+	s.renderShell(w, "builder", "/spec-builder/fragment")
+}
+
+func (s *Server) handleUISpecBuilderStartFragment(w http.ResponseWriter, r *http.Request) {
+	projects, _ := db.ListProjects(r.Context(), s.pool)
+	drafts, _ := db.ListSpecDrafts(r.Context(), s.pool)
+	active := []db.SpecDraft{}
+	for _, d := range drafts {
+		if d.Status == "active" {
+			active = append(active, d)
+		}
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := uiTemplates.ExecuteTemplate(w, "builderStart", struct {
+		Projects []db.Project
+		Drafts   []db.SpecDraft
+	}{projects, active}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) handleUISpecBuilder(w http.ResponseWriter, r *http.Request) {
+	id, suffix, ok := parseUIIDSuffix(r.URL.Path, "/spec-builder/")
+	if !ok || (suffix != "" && suffix != "fragment") {
+		http.NotFound(w, r)
+		return
+	}
+	if suffix == "fragment" {
+		s.handleUISpecBuilderDetailFragment(w, r, id)
+		return
+	}
+	s.renderShell(w, "builder", fmt.Sprintf("/spec-builder/%d/fragment", id))
+}
+
+type uiChatMessage struct{ Role, Content string }
+
+func (s *Server) handleUISpecBuilderDetailFragment(w http.ResponseWriter, r *http.Request, id int64) {
+	draft, err := db.GetSpecDraft(r.Context(), s.pool, id)
+	if errors.Is(err, db.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	var msgs []uiChatMessage
+	_ = json.Unmarshal(draft.Messages, &msgs)
+	preview := extractFinalSpec(draft.Messages)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := uiTemplates.ExecuteTemplate(w, "builderDetail", struct {
+		Draft    db.SpecDraft
+		Messages []uiChatMessage
+		Preview  string
+	}{draft, msgs, preview}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) handleUISettingsFragment(w http.ResponseWriter, r *http.Request) {
+	data, err := os.ReadFile(s.cfgPath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	profiles, _ := db.ListProfiles(r.Context(), s.pool)
+	type setting struct{ Key, Value string }
+	var settings []setting
+	for _, line := range strings.Split(string(data), "\n") {
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) == 2 && strings.TrimSpace(parts[0]) != "" {
+			settings = append(settings, setting{Key: strings.TrimSpace(parts[0]), Value: strings.Trim(strings.TrimSpace(parts[1]), "\"")})
+		}
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := uiTemplates.ExecuteTemplate(w, "settings", struct {
+		Settings []setting
+		Profiles []db.Profile
+	}{settings, profiles}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }
 
 // ---- projects ----
@@ -662,17 +1173,61 @@ func pathID(path, prefix string) (int64, error) {
 	return strconv.ParseInt(s, 10, 64)
 }
 
+func parseUIID(path, prefix string) (id int64, fragment bool, ok bool) {
+	id, suffix, ok := parseUIIDSuffix(path, prefix)
+	return id, suffix == "fragment", ok && (suffix == "" || suffix == "fragment")
+}
+
+func parseUIIDSuffix(path, prefix string) (int64, string, bool) {
+	if !strings.HasPrefix(path, prefix) {
+		return 0, "", false
+	}
+	rest := strings.Trim(strings.TrimPrefix(path, prefix), "/")
+	if rest == "" {
+		return 0, "", false
+	}
+	parts := strings.SplitN(rest, "/", 2)
+	id, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return 0, "", false
+	}
+	if len(parts) == 1 {
+		return id, "", true
+	}
+	return id, parts[1], true
+}
+
 // ---- spec-drafts ----
 
 const specBuilderPrompt = `You are a spec writer for Foundry, a spec-driven development loop that runs AI agents.
 
 Your job: help the user write a Foundry spec — a markdown document that defines what should be built and how it should be broken into phases for an AI agent to execute.
 
+## Intent context
+
+Before drafting or materially updating a spec, read the key intent files in the project repository when they exist. Use file path references only; do not inline wiki contents into the prompt or generated spec.
+
+Default intent files to inspect:
+- intent/README.md
+- intent/Product Model.md
+- intent/Principles.md
+- intent/Constraints.md
+- intent/Open Questions.md
+- relevant linked pages under intent/ when the request or those files point to them
+
+Generated specs should link back to durable intent using Obsidian-style links where relevant, for example:
+
+Related intent: [[Product Model]], [[Principles]], [[Constraints]]
+
+Choose only relevant intent links. Do not invent pages unless the spec truly introduces a durable concept that belongs in intent. If intent files are missing, continue without failing and do not paste placeholder wiki content.
+
 ## Spec format
 
 A spec is markdown with this structure:
 
 # Feature title
+
+Related intent: [[Product Model]], [[Principles]], [[Constraints]]
 
 Global context — background, constraints, anything the agent needs to know.
 This is prepended to every phase prompt automatically.

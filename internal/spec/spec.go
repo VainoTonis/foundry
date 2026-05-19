@@ -72,13 +72,16 @@ func Parse(content string) Parsed {
 }
 
 // BuildPrompt composes the prompt sent to cerberus for a phase:
-// global context (if any) prepended, then the phase goal, then the track overlay.
+// global context (if any) prepended, then default intent references,
+// then the phase goal, then the track overlay.
 func BuildPrompt(globalContext, goal, trackOverlay string) string {
 	var b strings.Builder
 	if globalContext != "" {
 		b.WriteString(globalContext)
 		b.WriteString("\n\n---\n\n")
 	}
+	b.WriteString(DefaultIntentReferences)
+	b.WriteString("\n\n---\n\n")
 	b.WriteString(goal)
 	if trackOverlay != "" {
 		b.WriteString("\n\n---\n\n")
@@ -86,6 +89,18 @@ func BuildPrompt(globalContext, goal, trackOverlay string) string {
 	}
 	return b.String()
 }
+
+const DefaultIntentReferences = `## Intent References
+
+Before making changes, read these files:
+
+- intent/Agent Workflow.md
+- intent/Product Model.md
+- intent/Principles.md
+- intent/Constraints.md
+- intent/Open Questions.md
+
+Use intent as guidance. Implement only the phase goal.`
 
 const OverlayPoC = "Make it work. Prove the concept. Structure and tests are secondary."
 const OverlayPolish = "Write this properly. Clean structure, explicit error handling, proper tests. This goes long-term into the codebase."

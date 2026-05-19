@@ -61,7 +61,7 @@ func (s *Server) handleCompactCerberusEvent(ctx context.Context, raw []byte) err
 		if err := s.storeAndPublishCerberusEvent(ctx, evt.Session, evt.Type, json.RawMessage(`{}`)); err != nil {
 			return fmt.Errorf("store event: %w", err)
 		}
-		if evt.Type == "turn_complete" {
+		if evt.Type == "message_end" || evt.Type == "turn_complete" {
 			s.assembleAndAppend(ctx, evt.Session, true)
 		}
 		return nil

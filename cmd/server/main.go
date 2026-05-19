@@ -75,10 +75,12 @@ func main() {
 	// API server
 	srv := api.NewServer(pool, runner, cerb, eventHub, cfg.DefaultWorkflowBudgetUSD, cfg.GitRoot, cfgPath, cfg.CerberusProfile, cfg.ServerPort)
 
-	// serve web static files
+	// serve API, server-rendered UI, and static assets
 	mux := http.NewServeMux()
 	mux.Handle("/api/", srv)
-	mux.Handle("/", noCacheMiddleware(http.FileServer(http.Dir("web"))))
+	mux.Handle("/style.css", noCacheMiddleware(http.FileServer(http.Dir("web"))))
+	mux.Handle("/app.js", noCacheMiddleware(http.FileServer(http.Dir("web"))))
+	mux.Handle("/", srv)
 
 	addr := fmt.Sprintf(":%d", cfg.ServerPort)
 	log.Printf("foundry listening on %s", addr)
