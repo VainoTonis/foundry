@@ -16,6 +16,7 @@ Foundry motto: [[Intent]], [[Agent Work]], [[Evidence]], [[Decision]].
 - [[Constraints]] records limits that should shape generated specs.
 - [[Glossary]] keeps vocabulary consistent.
 - [[Open Questions]] tracks unresolved product and design questions.
+- [[Foundry 1.0 Plan]] records current 1.0 product shape and memory workflow.
 - [[Decisions]] records accepted tradeoffs and outcomes.
 - [[Maintenance]] defines how agents should update this wiki.
 - [[Agent Workflow]] defines how agents use this wiki before specs, during work, and after decisions.
