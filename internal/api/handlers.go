@@ -153,6 +153,7 @@ var uiTemplates = template.Must(template.New("ui").Funcs(template.FuncMap{
     <form data-json method="post" action="/api/projects" data-refresh="/backlog/fragment" data-target="#app">
       <div class="field"><label>Name</label><input name="name" required></div>
       <div class="field"><label>Repo path</label><input name="repo_path" required></div>
+      <div class="field"><label>Memory repo path</label><input name="memory_repo_path" placeholder="Private memory repo path"></div>
       <button class="btn btn-primary">Create</button>
     </form>
   </div>
@@ -196,9 +197,9 @@ What this phase does.</textarea></div>
 {{define "projects"}}
 <div data-page="projects">
   <div class="page-header"><h2>Projects</h2><button class="btn btn-primary" hx-get="/projects/fragment?discover=1" hx-target="#app" hx-push-url="/projects">Discover repos</button></div>
-  {{if .Projects}}<div class="group-label">Registered projects</div>{{range .Projects}}<article class="card"><div class="card-header"><span class="card-title">{{.Name}}</span></div><div class="card-meta">{{.RepoPath}}</div></article>{{end}}{{else}}<div class="empty">No projects yet. Click Discover repos to scan configured git root.</div>{{end}}
+  {{if .Projects}}<div class="group-label">Registered projects</div>{{range .Projects}}<article class="card"><div class="card-header"><span class="card-title">{{.Name}}</span></div><div class="card-meta">repo: {{.RepoPath}} · memory: {{if .MemoryRepoPath}}{{.MemoryRepoPath}}{{else}}—{{end}}</div></article>{{end}}{{else}}<div class="empty">No projects yet. Click Discover repos to scan configured git root.</div>{{end}}
   {{if .DiscoverErr}}<div class="empty">{{.DiscoverErr}}</div>{{end}}
-  {{if .Repos}}<div class="group-label">Discovered repos</div>{{range .Repos}}<article class="card"><div class="card-header"><span class="card-title">{{.Name}}</span>{{if .Imported}}<span class="chip chip-done">imported</span>{{end}}</div><div class="card-meta">{{.Path}}</div>{{if not .Imported}}<div class="card-actions"><button class="btn btn-primary" data-json-post="/api/projects" data-body='{"name":{{printf "%q" .Name}},"repo_path":{{printf "%q" .Path}}}' data-refresh="/projects/fragment" data-target="#app">Import</button></div>{{end}}</article>{{end}}{{end}}
+  {{if .Repos}}<div class="group-label">Discovered repos</div>{{range .Repos}}<article class="card"><div class="card-header"><span class="card-title">{{.Name}}</span>{{if .Imported}}<span class="chip chip-done">imported</span>{{end}}</div><div class="card-meta">repo: {{.Path}}{{if .Imported}} · memory: {{if .MemoryRepoPath}}{{.MemoryRepoPath}}{{else}}—{{end}}{{end}}</div>{{if not .Imported}}<div class="card-actions"><button class="btn btn-primary" data-json-post="/api/projects" data-body='{"name":{{printf "%q" .Name}},"repo_path":{{printf "%q" .Path}},"memory_repo_path":""}' data-refresh="/projects/fragment" data-target="#app">Import</button></div>{{end}}</article>{{end}}{{end}}
 </div>
 {{end}}
 
@@ -324,7 +325,8 @@ func (s *Server) handleUIBacklogFragment(w http.ResponseWriter, r *http.Request)
 
 type uiRepoItem struct {
 	discover.Repo
-	Imported bool
+	Imported       bool
+	MemoryRepoPath string
 }
 
 func (s *Server) handleUIProjectsFragment(w http.ResponseWriter, r *http.Request) {
@@ -341,12 +343,13 @@ func (s *Server) handleUIProjectsFragment(w http.ResponseWriter, r *http.Request
 		} else if found, err := discover.FindRepos(s.gitRoot); err != nil {
 			discoverErr = err.Error()
 		} else {
-			byPath := map[string]bool{}
+			byPath := map[string]db.Project{}
 			for _, p := range projects {
-				byPath[p.RepoPath] = true
+				byPath[p.RepoPath] = p
 			}
 			for _, repo := range found {
-				repos = append(repos, uiRepoItem{Repo: repo, Imported: byPath[repo.Path]})
+				p, imported := byPath[repo.Path]
+				repos = append(repos, uiRepoItem{Repo: repo, Imported: imported, MemoryRepoPath: p.MemoryRepoPath})
 			}
 		}
 	}
@@ -590,14 +593,15 @@ func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
 		var body struct {
-			Name     string `json:"name"`
-			RepoPath string `json:"repo_path"`
+			Name           string `json:"name"`
+			RepoPath       string `json:"repo_path"`
+			MemoryRepoPath string `json:"memory_repo_path"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			jsonErr(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		p, err := db.CreateProject(r.Context(), s.pool, body.Name, body.RepoPath)
+		p, err := db.CreateProject(r.Context(), s.pool, body.Name, body.RepoPath, body.MemoryRepoPath)
 		if err != nil {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -631,17 +635,19 @@ func (s *Server) handleDiscover(w http.ResponseWriter, r *http.Request) {
 	}
 	// cross-reference with already-registered projects so UI can mark which are imported
 	existing, _ := db.ListProjects(r.Context(), s.pool)
-	byPath := make(map[string]bool, len(existing))
+	byPath := make(map[string]db.Project, len(existing))
 	for _, p := range existing {
-		byPath[p.RepoPath] = true
+		byPath[p.RepoPath] = p
 	}
 	type repoItem struct {
 		discover.Repo
-		Imported bool `json:"imported"`
+		Imported       bool   `json:"imported"`
+		MemoryRepoPath string `json:"memory_repo_path"`
 	}
 	out := make([]repoItem, 0, len(repos))
 	for _, repo := range repos {
-		out = append(out, repoItem{Repo: repo, Imported: byPath[repo.Path]})
+		p, imported := byPath[repo.Path]
+		out = append(out, repoItem{Repo: repo, Imported: imported, MemoryRepoPath: p.MemoryRepoPath})
 	}
 	jsonOK(w, out, http.StatusOK)
 }
