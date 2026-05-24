@@ -4,7 +4,6 @@ CREATE TABLE projects (
     id         BIGSERIAL PRIMARY KEY,
     name       TEXT        NOT NULL,
     repo_path        TEXT        NOT NULL,
-    memory_repo_path TEXT        NOT NULL DEFAULT '',
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

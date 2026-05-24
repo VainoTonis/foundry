@@ -15,6 +15,7 @@ import (
 	"github.com/tonis2/foundry/internal/cerberus"
 	"github.com/tonis2/foundry/internal/db"
 	"github.com/tonis2/foundry/internal/hub"
+	"github.com/tonis2/foundry/internal/memory"
 	"github.com/tonis2/foundry/internal/spec"
 )
 
@@ -24,6 +25,7 @@ type Config struct {
 	MaxConcurrentWorkflows     int
 	CerberusProfile            string
 	CerberusCallbackURL        string
+	MemoryRepoPath             string
 }
 
 type Runner struct {
@@ -162,6 +164,11 @@ func (r *Runner) runPhase(
 	prompt := spec.BuildPrompt(globalCtx, phase.Goal, trackOverlay)
 	if phase.AdjustedPrompt != nil && *phase.AdjustedPrompt != "" {
 		prompt = *phase.AdjustedPrompt
+	}
+	if mem, err := memory.LoadApproved(r.cfg.MemoryRepoPath, proj.MemoryNamespace); err == nil {
+		prompt = memory.Prepend(mem.Markdown, prompt)
+	} else {
+		log.Printf("phase %d: load memory: %v", phase.ID, err)
 	}
 	prompt = prependRepoRootContext(proj.RepoPath, prompt)
 	return r.execPhase(ctx, wf, proj, phase, prompt, false)

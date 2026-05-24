@@ -20,6 +20,7 @@ import (
 	"github.com/tonis2/foundry/internal/db"
 	"github.com/tonis2/foundry/internal/discover"
 	"github.com/tonis2/foundry/internal/hub"
+	"github.com/tonis2/foundry/internal/memory"
 	"github.com/tonis2/foundry/internal/workflow"
 )
 
@@ -229,6 +230,7 @@ What this phase does.</textarea></div>
     <div class="field"><label>Memory namespace</label><input name="memory_namespace" value="{{.Project.MemoryNamespace}}" placeholder="Defaults to project name"><p class="hint">On create, blank defaults to the project name.</p></div>
     <button class="btn btn-primary">Save changes</button>
   </form>
+  <div class="section"><h3>Approved memory</h3>{{if .MemoryError}}<div class="empty">{{.MemoryError}}</div>{{else if .Memory.Markdown}}<div class="card-meta">{{len .Memory.Files}} file(s) from {{.Memory.Root}}</div><pre class="doc-box">{{.Memory.Markdown}}</pre>{{else}}<div class="empty">No approved markdown memory found for this namespace.</div>{{end}}</div>
 </div>
 {{end}}
 
@@ -247,6 +249,7 @@ What this phase does.</textarea></div>
   <a class="back" href="/specs/{{.Spec.ID}}" hx-get="/specs/{{.Spec.ID}}/fragment" hx-target="#app" hx-push-url="/specs/{{.Spec.ID}}">← {{.Spec.Title}}</a>
   <div class="page-header"><div><h2>Workflow #{{.Workflow.ID}}</h2><div class="card-meta">Spec #{{.Spec.ID}} · {{.Workflow.Track}} · created {{datetime .Workflow.CreatedAt}}</div></div><span class="chip chip-{{.Workflow.Status}}">{{.Workflow.Status}}</span></div>
   <div class="card-actions"><button class="btn" data-json-post="/api/workflows/{{.Workflow.ID}}/resume" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app">Resume</button><button class="btn btn-danger" data-json-post="/api/workflows/{{.Workflow.ID}}/stop" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app">Stop</button></div>
+  <div class="section"><h3>Approved memory used</h3>{{if .MemoryError}}<div class="empty">{{.MemoryError}}</div>{{else if .Memory.Markdown}}<div class="card-meta">{{len .Memory.Files}} file(s) from {{.Memory.Root}}</div><pre class="doc-box">{{.Memory.Markdown}}</pre>{{else}}<div class="empty">No approved markdown memory found for this workflow's project namespace.</div>{{end}}</div>
   <div class="section"><h3>Phases</h3>{{range .Phases}}<article class="phase-row" id="phase-{{.ID}}"><div class="phase-pos">{{.Position}}</div><div class="phase-body"><div class="card-header"><span class="phase-name">{{.Name}}</span>{{if eq .Status "failed"}}<span class="chip chip-{{.Status}}">{{.Status}}</span>{{else if .ReviewVerdict}}<span class="chip chip-{{strptr .ReviewVerdict}}">{{strptr .ReviewVerdict}}</span>{{else}}<span class="chip chip-{{.Status}}">{{.Status}}</span>{{end}}</div><div class="phase-goal">{{.Goal}}</div><div class="card-meta">cost {{money .CostUSD}} · started {{ptime .StartedAt}} · finished {{ptime .FinishedAt}}</div><div class="card-actions"><button class="btn" data-phase-detail="logs" data-phase-id="{{.ID}}" hx-get="/phases/{{.ID}}/logs/fragment" hx-target="#phase-detail-{{.ID}}" hx-swap="innerHTML">Logs</button><button class="btn" data-phase-detail="diff" data-phase-id="{{.ID}}" hx-get="/phases/{{.ID}}/diff/fragment" hx-target="#phase-detail-{{.ID}}" hx-swap="innerHTML">Diff</button><button class="btn btn-primary" data-json-post="/api/phases/{{.ID}}/approve" data-refresh="/workflows/{{$.Workflow.ID}}/fragment" data-target="#app">Approve</button><button class="btn btn-danger" data-json-post="/api/phases/{{.ID}}/reject" data-refresh="/workflows/{{$.Workflow.ID}}/fragment" data-target="#app">Reject</button><button class="btn" data-json-post="/api/phases/{{.ID}}/clean" data-refresh="/workflows/{{$.Workflow.ID}}/fragment" data-target="#app">Clean</button></div><div id="phase-detail-{{.ID}}" class="phase-detail" data-phase-detail-panel="{{.ID}}"></div></div></article>{{end}}</div>
 </div>
 {{end}}
@@ -277,6 +280,7 @@ What this phase does.</textarea></div>
 <div data-page="builder" data-draft-stream="/api/spec-drafts/{{.Draft.ID}}/stream" data-draft-id="{{.Draft.ID}}">
   <a class="back" href="/spec-builder" hx-get="/spec-builder/fragment" hx-target="#app" hx-push-url="/spec-builder">← Spec Builder</a>
   <div class="page-header"><div><h2>{{.Draft.Title}}</h2><div class="card-meta">Draft #{{.Draft.ID}} · {{.Draft.Status}} · {{datetime .Draft.UpdatedAt}}</div></div><div class="card-actions"><button class="btn btn-primary" data-json-post="/api/spec-drafts/{{.Draft.ID}}/save" data-body='{"title":""}' data-redirect-template="/specs/{spec_id}">Save as spec</button><button class="btn btn-danger" data-json-delete="/api/spec-drafts/{{.Draft.ID}}" data-redirect="/backlog">Abandon</button></div></div>
+  <div class="section"><h3>Approved memory used</h3>{{if .MemoryError}}<div class="empty">{{.MemoryError}}</div>{{else if .Memory.Markdown}}<div class="card-meta">{{len .Memory.Files}} file(s) from {{.Memory.Root}}</div><pre class="doc-box">{{.Memory.Markdown}}</pre>{{else}}<div class="empty">No project memory loaded for this draft.</div>{{end}}</div>
   <div class="spec-builder-layout"><div class="spec-builder-chat"><div id="draft-messages" class="chat-messages">{{template "draftMessages" .}}</div><div id="draft-stream" class="chat-msg-streaming"></div><form data-json data-draft-message method="post" action="/api/spec-drafts/{{.Draft.ID}}/message"><div class="chat-input-row"><textarea class="chat-textarea" name="content" required placeholder="Reply to the spec builder…"></textarea><button class="btn btn-primary">Send</button></div></form></div><aside class="spec-preview-pane"><h3>Latest spec preview</h3><pre id="draft-preview" class="doc-box">{{if .Preview}}{{.Preview}}{{else}}Ask the builder to call update_spec with the full markdown spec.{{end}}</pre></aside></div>
 </div>
 {{end}}
@@ -425,8 +429,17 @@ func (s *Server) handleUIProjectFragment(w http.ResponseWriter, r *http.Request,
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	mem, memErr := memory.LoadApproved(s.memoryRepoPath, p.MemoryNamespace)
+	memErrMsg := ""
+	if memErr != nil {
+		memErrMsg = memErr.Error()
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := uiTemplates.ExecuteTemplate(w, "projectDetail", struct{ Project db.Project }{p}); err != nil {
+	if err := uiTemplates.ExecuteTemplate(w, "projectDetail", struct {
+		Project     db.Project
+		Memory      memory.Slice
+		MemoryError string
+	}{p, mem, memErrMsg}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -488,6 +501,12 @@ func (s *Server) handleUIWorkflowFragment(w http.ResponseWriter, r *http.Request
 		return
 	}
 	sp, _ := db.GetSpec(r.Context(), s.pool, wf.SpecID)
+	proj, _ := db.GetProject(r.Context(), s.pool, sp.ProjectID)
+	mem, memErr := memory.LoadApproved(s.memoryRepoPath, proj.MemoryNamespace)
+	memErrMsg := ""
+	if memErr != nil {
+		memErrMsg = memErr.Error()
+	}
 	phases, err := db.ListPhasesByWorkflow(r.Context(), s.pool, id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -495,10 +514,12 @@ func (s *Server) handleUIWorkflowFragment(w http.ResponseWriter, r *http.Request
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := uiTemplates.ExecuteTemplate(w, "workflowDetail", struct {
-		Workflow db.Workflow
-		Spec     db.Spec
-		Phases   []db.Phase
-	}{wf, sp, phases}); err != nil {
+		Workflow    db.Workflow
+		Spec        db.Spec
+		Phases      []db.Phase
+		Memory      memory.Slice
+		MemoryError string
+	}{wf, sp, phases, mem, memErrMsg}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -625,12 +646,25 @@ func (s *Server) handleUISpecBuilderDetailFragment(w http.ResponseWriter, r *htt
 	var msgs []uiChatMessage
 	_ = json.Unmarshal(draft.Messages, &msgs)
 	preview := extractFinalSpec(draft.Messages)
+	var mem memory.Slice
+	var memErrMsg string
+	if draft.ProjectID != nil {
+		if proj, err := db.GetProject(r.Context(), s.pool, *draft.ProjectID); err == nil {
+			if loaded, err := memory.LoadApproved(s.memoryRepoPath, proj.MemoryNamespace); err == nil {
+				mem = loaded
+			} else {
+				memErrMsg = err.Error()
+			}
+		}
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := uiTemplates.ExecuteTemplate(w, "builderDetail", struct {
-		Draft    db.SpecDraft
-		Messages []uiChatMessage
-		Preview  string
-	}{draft, msgs, preview}); err != nil {
+		Draft       db.SpecDraft
+		Messages    []uiChatMessage
+		Preview     string
+		Memory      memory.Slice
+		MemoryError string
+	}{draft, msgs, preview, mem, memErrMsg}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -1423,6 +1457,11 @@ func (s *Server) handleSpecDrafts(w http.ResponseWriter, r *http.Request) {
 		if body.ProjectID != nil {
 			if proj, err := db.GetProject(r.Context(), s.pool, *body.ProjectID); err == nil {
 				initialPrompt += "\n\nProject name: " + proj.Name + "\nThe project code is mounted at /workspace inside your container."
+				if mem, err := memory.LoadApproved(s.memoryRepoPath, proj.MemoryNamespace); err == nil {
+					initialPrompt = memory.Prepend(mem.Markdown, initialPrompt)
+				} else {
+					log.Printf("spec-builder draft %d: load memory: %v", draft.ID, err)
+				}
 			}
 		}
 

@@ -1,4 +1,4 @@
 -- 005_project_memory_repo_path.sql
-
-ALTER TABLE projects
-    ADD COLUMN IF NOT EXISTS memory_repo_path TEXT NOT NULL DEFAULT '';
+-- Deprecated in V0.1 schema alignment: memory_repo_path is configured globally,
+-- not stored per project. Kept as a no-op for fresh databases so migration
+-- numbering remains stable.
