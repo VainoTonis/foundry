@@ -142,7 +142,7 @@ func (r *Runner) run(ctx context.Context, workflowID int64) error {
 			return fmt.Errorf("next phase: %w", err)
 		}
 
-		if err := r.runPhase(ctx, wf, sp, proj, phase, parsed.GlobalContext, trackOverlay); err != nil {
+		if err := r.runPhase(ctx, wf, proj, phase, parsed.GlobalContext, trackOverlay); err != nil {
 			log.Printf("phase %d failed: %v", phase.ID, err)
 			r.finishWorkflow(workflowID, "failed")
 			specStatus := "failed"
@@ -155,7 +155,6 @@ func (r *Runner) run(ctx context.Context, workflowID int64) error {
 func (r *Runner) runPhase(
 	ctx context.Context,
 	wf db.Workflow,
-	sp db.Spec,
 	proj db.Project,
 	phase db.Phase,
 	globalCtx, trackOverlay string,
@@ -164,19 +163,19 @@ func (r *Runner) runPhase(
 	if phase.AdjustedPrompt != nil && *phase.AdjustedPrompt != "" {
 		prompt = *phase.AdjustedPrompt
 	}
-	return r.execPhase(ctx, wf, sp, proj, phase, prompt, false)
+	prompt = prependRepoRootContext(proj.RepoPath, prompt)
+	return r.execPhase(ctx, wf, proj, phase, prompt, false)
 }
 
 func (r *Runner) execPhase(
 	ctx context.Context,
 	wf db.Workflow,
-	sp db.Spec,
 	proj db.Project,
 	phase db.Phase,
 	prompt string,
 	isRetry bool,
 ) error {
-	sessionName := cerberus.SessionName(sp.ID, phase.Position)
+	sessionName := cerberus.SessionName(wf.ID, phase.ID)
 
 	r.cerb.SetRepoPath(proj.RepoPath)
 
@@ -348,7 +347,7 @@ loop:
 	if err != nil {
 		return fmt.Errorf("reload phase for retry: %w", err)
 	}
-	return r.execPhase(ctx, wf, sp, proj, phase2, adjusted, true)
+	return r.execPhase(ctx, wf, proj, phase2, adjusted, true)
 }
 
 func (r *Runner) collectLogs(ctx context.Context, workflowID, phaseID int64, session string, lastLine *string) {
@@ -441,6 +440,22 @@ func (r *Runner) publishWorkflowUpdate(workflowID int64, status string) {
 }
 
 func strPtr(s string) *string { return &s }
+
+const repoRootPromptHeader = `## Target Repository Root
+
+You are running in the configured target repository root: %s
+Treat the current working directory as the workspace root. All file paths in the spec are relative to this root. If the spec mentions the repository directory name, do not create a nested copy of that directory; modify files in this root.
+
+---
+
+`
+
+func prependRepoRootContext(repoPath, prompt string) string {
+	if strings.HasPrefix(prompt, "## Target Repository Root\n") {
+		return prompt
+	}
+	return fmt.Sprintf(repoRootPromptHeader, repoPath) + prompt
+}
 
 func tickerC(t *time.Ticker) <-chan time.Time {
 	if t == nil {

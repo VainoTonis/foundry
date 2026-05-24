@@ -97,9 +97,9 @@ func (c *Client) Clean(ctx context.Context, session string) error {
 	return c.run(ctx, "clean", "--name", session)
 }
 
-// SessionName builds the canonical session name for a phase.
-func SessionName(specID int64, position int) string {
-	return fmt.Sprintf("foundry-%d-p%d", specID, position)
+// SessionName builds the canonical session name for a workflow phase.
+func SessionName(workflowID, phaseID int64) string {
+	return fmt.Sprintf("foundry-w%d-p%d", workflowID, phaseID)
 }
 
 func (c *Client) run(ctx context.Context, args ...string) error {
