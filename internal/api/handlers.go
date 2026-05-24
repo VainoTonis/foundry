@@ -252,7 +252,7 @@ What this phase does.</textarea></div>
 {{end}}
 
 {{define "phaseLogs"}}
-<div><h3>Logs · Phase #{{.Phase.ID}} {{.Phase.Name}}</h3><div class="log-box" data-log-stream="/api/phases/{{.Phase.ID}}/logs/stream">{{range .Logs}}<div class="log-line"><span class="log-ts">{{datetime .Ts}}</span>{{.Line}}</div>{{end}}</div></div>
+<div><h3>Logs · Phase #{{.Phase.ID}} {{.Phase.Name}}</h3><div class="log-box" data-log-stream="/api/phases/{{.Phase.ID}}/logs/stream?after_id={{.LastLogID}}">{{range .Logs}}<div class="log-line"><span class="log-ts">{{datetime .Ts}}</span>{{.Line}}</div>{{end}}</div></div>
 {{end}}
 
 {{define "phaseDiff"}}
@@ -530,11 +530,16 @@ func (s *Server) handleUIPhaseLogsFragment(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	logs, _ := db.ListRecentPhaseLogs(r.Context(), s.pool, id, 300)
+	var lastLogID int64
+	if len(logs) > 0 {
+		lastLogID = logs[len(logs)-1].ID
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := uiTemplates.ExecuteTemplate(w, "phaseLogs", struct {
-		Phase db.Phase
-		Logs  []db.PhaseLog
-	}{ph, logs}); err != nil {
+		Phase     db.Phase
+		Logs      []db.PhaseLog
+		LastLogID int64
+	}{ph, logs, lastLogID}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -1166,6 +1171,11 @@ func (s *Server) streamLogs(w http.ResponseWriter, r *http.Request, phaseID int6
 	w.Header().Set("Connection", "keep-alive")
 
 	var lastID int64
+	if raw := r.URL.Query().Get("after_id"); raw != "" {
+		if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil && parsed > 0 {
+			lastID = parsed
+		}
+	}
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	for {

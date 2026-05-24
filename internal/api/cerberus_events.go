@@ -11,14 +11,10 @@ import (
 	"github.com/tonis2/foundry/internal/db"
 )
 
-const (
-	cerberusTextFlushAfter = 150 * time.Millisecond
-	cerberusTextFlushBytes = 3 * 1024
-)
+const cerberusTextFlushBytes = 3 * 1024
 
 type cerberusTextBuffer struct {
 	content string
-	timer   *time.Timer
 }
 
 type compactCerberusEvent struct {
@@ -96,17 +92,6 @@ func (s *Server) bufferCerberusText(session, content string) {
 	buf.content += content
 	if len(buf.content) >= cerberusTextFlushBytes {
 		shouldFlush = true
-		if buf.timer != nil {
-			buf.timer.Stop()
-			buf.timer = nil
-		}
-	} else if buf.timer == nil {
-		buf.timer = time.AfterFunc(cerberusTextFlushAfter, func() {
-			if err := s.flushCerberusText(context.Background(), session); err != nil {
-				// Best effort; later boundary flushes will retry remaining text.
-				fmt.Printf("flush cerberus text: %v\n", err)
-			}
-		})
 	}
 	s.cerbEventsMu.Unlock()
 	if shouldFlush {
@@ -122,9 +107,6 @@ func (s *Server) flushCerberusText(ctx context.Context, session string) error {
 		return nil
 	}
 	content := buf.content
-	if buf.timer != nil {
-		buf.timer.Stop()
-	}
 	delete(s.cerbBuffers, session)
 	s.cerbEventsMu.Unlock()
 
