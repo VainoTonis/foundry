@@ -1863,8 +1863,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			jsonErr(w, "cannot write config: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", "application/x-yaml")
-		w.Write([]byte(updated))
+		jsonOK(w, map[string]bool{"success": true}, http.StatusOK)
 	default:
 		jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
