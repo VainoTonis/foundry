@@ -60,6 +60,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/backlog/fragment", s.handleUIBacklogFragment)
 	s.mux.HandleFunc("/projects", s.handleUIProjectsPage)
 	s.mux.HandleFunc("/projects/fragment", s.handleUIProjectsFragment)
+	s.mux.HandleFunc("/projects/", s.handleUIProject)
 	s.mux.HandleFunc("/settings", s.handleUISettingsPage)
 	s.mux.HandleFunc("/settings/fragment", s.handleUISettingsFragment)
 	s.mux.HandleFunc("/specs/", s.handleUISpec)
@@ -110,6 +111,10 @@ var uiTemplates = template.Must(template.New("ui").Funcs(template.FuncMap{
 			return ""
 		}
 		return *s
+	},
+	"json": func(v any) string {
+		b, _ := json.MarshalIndent(v, "", "  ")
+		return string(b)
 	},
 }).Parse(`
 {{define "shell"}}
@@ -196,10 +201,32 @@ What this phase does.</textarea></div>
 
 {{define "projects"}}
 <div data-page="projects">
-  <div class="page-header"><h2>Projects</h2><button class="btn btn-primary" hx-get="/projects/fragment?discover=1" hx-target="#app" hx-push-url="/projects">Discover repos</button></div>
-  {{if .Projects}}<div class="group-label">Registered projects</div>{{range .Projects}}<article class="card"><div class="card-header"><span class="card-title">{{.Name}}</span></div><div class="card-meta">repo: {{.RepoPath}} · memory: {{if .MemoryRepoPath}}{{.MemoryRepoPath}}{{else}}—{{end}}</div></article>{{end}}{{else}}<div class="empty">No projects yet. Click Discover repos to scan configured git root.</div>{{end}}
+  <div class="page-header"><h2>Projects</h2><div class="card-actions"><button class="btn" popovertarget="new-project-page">+ Project</button><button class="btn btn-primary" hx-get="/projects/fragment?discover=1" hx-target="#app" hx-push-url="/projects">Discover repos</button></div></div>
+  <div id="new-project-page" class="popover-card" popover>
+    <h3>New Project</h3>
+    <form data-json data-include-empty method="post" action="/api/projects" data-refresh="/projects/fragment" data-target="#app">
+      <div class="field"><label>Name</label><input name="name" required></div>
+      <div class="field"><label>Target repo path</label><input name="repo_path" required></div>
+      <div class="field"><label>Memory repo path</label><input name="memory_repo_path" placeholder="Private memory repo path"></div>
+      <button class="btn btn-primary">Create</button>
+    </form>
+  </div>
+  {{if .Projects}}<div class="group-label">Registered projects</div>{{range .Projects}}<article class="card"><div class="card-header"><a class="card-title" href="/projects/{{.ID}}" hx-get="/projects/{{.ID}}/fragment" hx-target="#app" hx-push-url="/projects/{{.ID}}">{{.Name}}</a></div><div class="card-meta">target: {{.RepoPath}} · memory: {{if .MemoryRepoPath}}{{.MemoryRepoPath}}{{else}}—{{end}}</div><div class="card-actions"><a class="btn" href="/projects/{{.ID}}" hx-get="/projects/{{.ID}}/fragment" hx-target="#app" hx-push-url="/projects/{{.ID}}">View / edit</a></div></article>{{end}}{{else}}<div class="empty">No projects yet. Create one or click Discover repos to scan configured git root.</div>{{end}}
   {{if .DiscoverErr}}<div class="empty">{{.DiscoverErr}}</div>{{end}}
-  {{if .Repos}}<div class="group-label">Discovered repos</div>{{range .Repos}}<article class="card"><div class="card-header"><span class="card-title">{{.Name}}</span>{{if .Imported}}<span class="chip chip-done">imported</span>{{end}}</div><div class="card-meta">repo: {{.Path}}{{if .Imported}} · memory: {{if .MemoryRepoPath}}{{.MemoryRepoPath}}{{else}}—{{end}}{{end}}</div>{{if not .Imported}}<div class="card-actions"><button class="btn btn-primary" data-json-post="/api/projects" data-body='{"name":{{printf "%q" .Name}},"repo_path":{{printf "%q" .Path}},"memory_repo_path":""}' data-refresh="/projects/fragment" data-target="#app">Import</button></div>{{end}}</article>{{end}}{{end}}
+  {{if .Repos}}<div class="group-label">Discovered repos</div>{{range .Repos}}<article class="card"><div class="card-header"><span class="card-title">{{.Name}}</span>{{if .Imported}}<span class="chip chip-done">imported</span>{{end}}</div><div class="card-meta">target: {{.Path}}{{if .Imported}} · memory: {{if .MemoryRepoPath}}{{.MemoryRepoPath}}{{else}}—{{end}}{{end}}</div>{{if not .Imported}}<div class="card-actions"><button class="btn btn-primary" data-json-post="/api/projects" data-body='{"name":{{printf "%q" .Name}},"repo_path":{{printf "%q" .Path}},"memory_repo_path":""}' data-refresh="/projects/fragment" data-target="#app">Import</button></div>{{end}}</article>{{end}}{{end}}
+</div>
+{{end}}
+
+{{define "projectDetail"}}
+<div data-page="projects">
+  <a class="back" href="/projects" hx-get="/projects/fragment" hx-target="#app" hx-push-url="/projects">← Projects</a>
+  <div class="page-header"><div><h2>{{.Project.Name}}</h2><div class="card-meta">Project #{{.Project.ID}} · created {{date .Project.CreatedAt}}</div></div><button class="btn btn-danger" data-json-delete="/api/projects/{{.Project.ID}}" data-redirect="/projects" data-confirm="Delete this project and its specs/workflows?">Delete</button></div>
+  <form data-json data-include-empty data-method="PATCH" method="post" action="/api/projects/{{.Project.ID}}" data-refresh="/projects/{{.Project.ID}}/fragment" data-target="#app">
+    <div class="field"><label>Name</label><input name="name" value="{{.Project.Name}}" required></div>
+    <div class="field"><label>Target repo path</label><input name="repo_path" value="{{.Project.RepoPath}}" required></div>
+    <div class="field"><label>Memory repo path</label><input name="memory_repo_path" value="{{.Project.MemoryRepoPath}}" placeholder="Private memory repo path"></div>
+    <button class="btn btn-primary">Save changes</button>
+  </form>
 </div>
 {{end}}
 
@@ -262,7 +289,16 @@ What this phase does.</textarea></div>
     <button class="btn btn-primary">Save</button>
   </form>
   <h3 style="margin-top:2rem;margin-bottom:1rem">Profiles</h3>
-  {{if .Profiles}}{{range .Profiles}}<article class="card"><div class="card-header"><span class="card-title">{{.Name}}</span></div><div class="card-meta">model: {{.DefaultModel}} · image: {{.DefaultImage}} · region: {{.AWSRegion}}</div></article>{{end}}{{else}}<div class="empty">No profiles saved.</div>{{end}}
+  <form data-json method="post" action="/api/profiles" data-refresh="/settings/fragment" data-target="#app">
+    <div class="field"><label>Name</label><input name="name" required></div>
+    <div class="field"><label>Default model</label><input name="default_model"></div>
+    <div class="field"><label>Default image</label><input name="default_image"></div>
+    <div class="field"><label>AWS profile</label><input name="aws_profile"></div>
+    <div class="field"><label>AWS region</label><input name="aws_region"></div>
+    <div class="field"><label>Extra env (JSON)</label><textarea name="extra_env" placeholder='{"KEY":"value"}'></textarea></div>
+    <button class="btn btn-primary">Create profile</button>
+  </form>
+  {{if .Profiles}}{{range .Profiles}}<article class="card"><form data-json data-include-empty data-method="PATCH" action="/api/profiles/{{.ID}}" data-refresh="/settings/fragment" data-target="#app"><div class="card-header"><span class="card-title">{{.Name}}</span></div><div class="field"><label>Name</label><input name="name" value="{{.Name}}" required></div><div class="field"><label>Default model</label><input name="default_model" value="{{.DefaultModel}}"></div><div class="field"><label>Default image</label><input name="default_image" value="{{.DefaultImage}}"></div><div class="field"><label>AWS profile</label><input name="aws_profile" value="{{.AWSProfile}}"></div><div class="field"><label>AWS region</label><input name="aws_region" value="{{.AWSRegion}}"></div><div class="field"><label>Extra env (JSON)</label><textarea name="extra_env">{{json .ExtraEnv}}</textarea></div><div class="card-actions"><button class="btn btn-primary">Save profile</button><button class="btn btn-danger" type="button" data-json-delete="/api/profiles/{{.ID}}" data-refresh="/settings/fragment" data-target="#app">Delete</button></div></form></article>{{end}}{{else}}<div class="empty">No profiles saved.</div>{{end}}
 </div>
 {{end}}
 `))
@@ -360,6 +396,35 @@ func (s *Server) handleUIProjectsFragment(w http.ResponseWriter, r *http.Request
 	}{projects, repos, discoverErr}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := uiTemplates.ExecuteTemplate(w, "projects", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) handleUIProject(w http.ResponseWriter, r *http.Request) {
+	id, frag, ok := parseUIID(r.URL.Path, "/projects/")
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	if frag {
+		s.handleUIProjectFragment(w, r, id)
+		return
+	}
+	s.renderShell(w, "projects", fmt.Sprintf("/projects/%d/fragment", id))
+}
+
+func (s *Server) handleUIProjectFragment(w http.ResponseWriter, r *http.Request, id int64) {
+	p, err := db.GetProject(r.Context(), s.pool, id)
+	if errors.Is(err, db.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := uiTemplates.ExecuteTemplate(w, "projectDetail", struct{ Project db.Project }{p}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -658,20 +723,55 @@ func (s *Server) handleProject(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	if r.Method != http.MethodGet {
+
+	switch r.Method {
+	case http.MethodGet:
+		p, err := db.GetProject(r.Context(), s.pool, id)
+		if errors.Is(err, db.ErrNotFound) {
+			jsonErr(w, "not found", http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonOK(w, p, http.StatusOK)
+	case http.MethodPatch:
+		var body struct {
+			Name           *string `json:"name"`
+			RepoPath       *string `json:"repo_path"`
+			MemoryRepoPath *string `json:"memory_repo_path"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			jsonErr(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		p, err := db.UpdateProject(r.Context(), s.pool, id, db.UpdateProjectParams{
+			Name:           body.Name,
+			RepoPath:       body.RepoPath,
+			MemoryRepoPath: body.MemoryRepoPath,
+		})
+		if errors.Is(err, db.ErrNotFound) {
+			jsonErr(w, "not found", http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonOK(w, p, http.StatusOK)
+	case http.MethodDelete:
+		if err := db.DeleteProject(r.Context(), s.pool, id); errors.Is(err, db.ErrNotFound) {
+			jsonErr(w, "not found", http.StatusNotFound)
+			return
+		} else if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
 		jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
 	}
-	p, err := db.GetProject(r.Context(), s.pool, id)
-	if errors.Is(err, db.ErrNotFound) {
-		jsonErr(w, "not found", http.StatusNotFound)
-		return
-	}
-	if err != nil {
-		jsonErr(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	jsonOK(w, p, http.StatusOK)
 }
 
 // ---- specs ----
@@ -1867,7 +1967,7 @@ func (s *Server) handleProfiles(w http.ResponseWriter, r *http.Request) {
 		if profiles == nil {
 			profiles = []db.Profile{}
 		}
-		json.NewEncoder(w).Encode(profiles)
+		jsonOK(w, profiles, http.StatusOK)
 
 	case http.MethodPost:
 		var body struct {
@@ -1886,13 +1986,15 @@ func (s *Server) handleProfiles(w http.ResponseWriter, r *http.Request) {
 			jsonErr(w, "name is required", http.StatusBadRequest)
 			return
 		}
+		if body.ExtraEnv == nil {
+			body.ExtraEnv = map[string]string{}
+		}
 		p, err := db.CreateProfile(r.Context(), s.pool, body.Name, body.DefaultModel, body.DefaultImage, body.AWSProfile, body.AWSRegion, body.ExtraEnv)
 		if err != nil {
 			jsonErr(w, "create profile: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(p)
+		jsonOK(w, p, http.StatusCreated)
 
 	default:
 		jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -1900,21 +2002,66 @@ func (s *Server) handleProfiles(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleProfile(w http.ResponseWriter, r *http.Request) {
-	idStr := strings.TrimPrefix(r.URL.Path, "/api/profiles/")
+	idStr := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/profiles/"), "/")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
 		jsonErr(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	if r.Method != http.MethodDelete {
+	switch r.Method {
+	case http.MethodGet:
+		p, err := db.GetProfile(r.Context(), s.pool, id)
+		if errors.Is(err, db.ErrNotFound) {
+			jsonErr(w, "not found", http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			jsonErr(w, "get profile: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonOK(w, p, http.StatusOK)
+	case http.MethodPatch:
+		var body struct {
+			Name         *string           `json:"name"`
+			DefaultModel *string           `json:"default_model"`
+			DefaultImage *string           `json:"default_image"`
+			AWSProfile   *string           `json:"aws_profile"`
+			AWSRegion    *string           `json:"aws_region"`
+			ExtraEnv     map[string]string `json:"extra_env"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			jsonErr(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if body.Name != nil && *body.Name == "" {
+			jsonErr(w, "name is required", http.StatusBadRequest)
+			return
+		}
+		p, err := db.UpdateProfile(r.Context(), s.pool, id, db.UpdateProfileParams{
+			Name: body.Name, DefaultModel: body.DefaultModel, DefaultImage: body.DefaultImage,
+			AWSProfile: body.AWSProfile, AWSRegion: body.AWSRegion, ExtraEnv: body.ExtraEnv,
+		})
+		if errors.Is(err, db.ErrNotFound) {
+			jsonErr(w, "not found", http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			jsonErr(w, "update profile: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonOK(w, p, http.StatusOK)
+	case http.MethodDelete:
+		if err := db.DeleteProfile(r.Context(), s.pool, id); errors.Is(err, db.ErrNotFound) {
+			jsonErr(w, "not found", http.StatusNotFound)
+			return
+		} else if err != nil {
+			jsonErr(w, "delete profile: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
 		jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
 	}
-	if err := db.DeleteProfile(r.Context(), s.pool, id); err != nil {
-		jsonErr(w, "delete profile: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
 }
 
 func RecoverOrphanDrafts(ctx context.Context, pool *pgxpool.Pool, cerb *cerberus.Client) {

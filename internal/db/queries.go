@@ -110,6 +110,56 @@ func GetProject(ctx context.Context, pool *pgxpool.Pool, id int64) (Project, err
 	return p, err
 }
 
+type UpdateProjectParams struct {
+	Name           *string
+	RepoPath       *string
+	MemoryRepoPath *string
+}
+
+func UpdateProject(ctx context.Context, pool *pgxpool.Pool, id int64, p UpdateProjectParams) (Project, error) {
+	set := []string{}
+	args := []any{}
+	n := 1
+	if p.Name != nil {
+		set = append(set, "name = $"+itoa(n))
+		args = append(args, *p.Name)
+		n++
+	}
+	if p.RepoPath != nil {
+		set = append(set, "repo_path = $"+itoa(n))
+		args = append(args, *p.RepoPath)
+		n++
+	}
+	if p.MemoryRepoPath != nil {
+		set = append(set, "memory_repo_path = $"+itoa(n))
+		args = append(args, *p.MemoryRepoPath)
+		n++
+	}
+	if len(set) == 0 {
+		return GetProject(ctx, pool, id)
+	}
+	args = append(args, id)
+	q := `UPDATE projects SET ` + joinComma(set) + ` WHERE id = $` + itoa(n) +
+		` RETURNING id, name, repo_path, memory_repo_path, created_at`
+	var out Project
+	err := pool.QueryRow(ctx, q, args...).Scan(&out.ID, &out.Name, &out.RepoPath, &out.MemoryRepoPath, &out.CreatedAt)
+	if err == pgx.ErrNoRows {
+		return out, ErrNotFound
+	}
+	return out, err
+}
+
+func DeleteProject(ctx context.Context, pool *pgxpool.Pool, id int64) error {
+	tag, err := pool.Exec(ctx, `DELETE FROM projects WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // --- Specs ---
 
 func CreateSpec(ctx context.Context, pool *pgxpool.Pool, projectID int64, title, content string, tags []byte) (Spec, error) {
@@ -761,13 +811,10 @@ func ListProfiles(ctx context.Context, pool *pgxpool.Pool) ([]Profile, error) {
 	return profiles, rows.Err()
 }
 
-func GetProfileByName(ctx context.Context, pool *pgxpool.Pool, name string) (Profile, error) {
+func scanProfile(row pgx.Row) (Profile, error) {
 	var p Profile
 	var rawEnv []byte
-	err := pool.QueryRow(ctx,
-		`SELECT id, name, default_model, default_image, aws_profile, aws_region, extra_env, created_at, updated_at
-		 FROM profiles WHERE name = $1`, name,
-	).Scan(&p.ID, &p.Name, &p.DefaultModel, &p.DefaultImage, &p.AWSProfile, &p.AWSRegion, &rawEnv, &p.CreatedAt, &p.UpdatedAt)
+	err := row.Scan(&p.ID, &p.Name, &p.DefaultModel, &p.DefaultImage, &p.AWSProfile, &p.AWSRegion, &rawEnv, &p.CreatedAt, &p.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		return p, ErrNotFound
 	}
@@ -780,7 +827,67 @@ func GetProfileByName(ctx context.Context, pool *pgxpool.Pool, name string) (Pro
 	return p, nil
 }
 
+func GetProfile(ctx context.Context, pool *pgxpool.Pool, id int64) (Profile, error) {
+	return scanProfile(pool.QueryRow(ctx,
+		`SELECT id, name, default_model, default_image, aws_profile, aws_region, extra_env, created_at, updated_at
+		 FROM profiles WHERE id = $1`, id,
+	))
+}
+
+func GetProfileByName(ctx context.Context, pool *pgxpool.Pool, name string) (Profile, error) {
+	return scanProfile(pool.QueryRow(ctx,
+		`SELECT id, name, default_model, default_image, aws_profile, aws_region, extra_env, created_at, updated_at
+		 FROM profiles WHERE name = $1`, name,
+	))
+}
+
+type UpdateProfileParams struct {
+	Name         *string
+	DefaultModel *string
+	DefaultImage *string
+	AWSProfile   *string
+	AWSRegion    *string
+	ExtraEnv     map[string]string
+}
+
+func UpdateProfile(ctx context.Context, pool *pgxpool.Pool, id int64, p UpdateProfileParams) (Profile, error) {
+	set := []string{"updated_at = NOW()"}
+	args := []any{}
+	n := 1
+	maybeStr := func(field string, v *string) {
+		if v != nil {
+			set = append(set, field+" = $"+itoa(n))
+			args = append(args, *v)
+			n++
+		}
+	}
+	maybeStr("name", p.Name)
+	maybeStr("default_model", p.DefaultModel)
+	maybeStr("default_image", p.DefaultImage)
+	maybeStr("aws_profile", p.AWSProfile)
+	maybeStr("aws_region", p.AWSRegion)
+	if p.ExtraEnv != nil {
+		envJSON, err := json.Marshal(p.ExtraEnv)
+		if err != nil {
+			return Profile{}, err
+		}
+		set = append(set, "extra_env = $"+itoa(n))
+		args = append(args, envJSON)
+		n++
+	}
+	args = append(args, id)
+	q := `UPDATE profiles SET ` + joinComma(set) + ` WHERE id = $` + itoa(n) +
+		` RETURNING id, name, default_model, default_image, aws_profile, aws_region, extra_env, created_at, updated_at`
+	return scanProfile(pool.QueryRow(ctx, q, args...))
+}
+
 func DeleteProfile(ctx context.Context, pool *pgxpool.Pool, id int64) error {
-	_, err := pool.Exec(ctx, `DELETE FROM profiles WHERE id = $1`, id)
-	return err
+	tag, err := pool.Exec(ctx, `DELETE FROM profiles WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }

@@ -3,9 +3,11 @@
 
 function formJSON(form) {
   const data = {};
+  const includeEmpty = form.hasAttribute('data-include-empty');
   for (const [key, value] of new FormData(form).entries()) {
-    if (value === '') continue;
-    if (/^-?\d+(\.\d+)?$/.test(value)) data[key] = Number(value);
+    if (value === '' && !includeEmpty) continue;
+    if (key === 'extra_env') data[key] = value.trim() ? JSON.parse(value) : {};
+    else if (/^-?\d+(\.\d+)?$/.test(value)) data[key] = Number(value);
     else data[key] = value;
   }
   return data;
@@ -96,7 +98,7 @@ document.addEventListener('submit', async (event) => {
   if (!form.matches('[data-json], [data-settings]')) return;
   event.preventDefault();
   try {
-    const method = form.matches('[data-settings]') ? 'PATCH' : (form.method || 'POST').toUpperCase();
+    const method = form.dataset.method || (form.matches('[data-settings]') ? 'PATCH' : (form.method || 'POST').toUpperCase());
     const data = await sendJSON(method, form.action, formJSON(form));
     if (!redirectFrom(form, data)) refresh(form.dataset.refresh, form.dataset.target);
   } catch (err) {
@@ -105,13 +107,14 @@ document.addEventListener('submit', async (event) => {
 });
 
 document.addEventListener('click', async (event) => {
-  const button = event.target.closest('[data-json-post], [data-json-delete]');
+  const button = event.target.closest('[data-json-post], [data-json-patch], [data-json-delete]');
   if (!button) return;
   event.preventDefault();
+  if (button.hasAttribute('data-confirm') && !window.confirm(button.dataset.confirm)) return;
   try {
     const body = button.dataset.body ? JSON.parse(button.dataset.body) : {};
-    const method = button.dataset.jsonDelete ? 'DELETE' : 'POST';
-    const url = button.dataset.jsonDelete || button.dataset.jsonPost;
+    const method = button.dataset.jsonDelete ? 'DELETE' : (button.dataset.jsonPatch ? 'PATCH' : 'POST');
+    const url = button.dataset.jsonDelete || button.dataset.jsonPatch || button.dataset.jsonPost;
     const data = await sendJSON(method, url, method === 'DELETE' ? undefined : body);
     if (!redirectFrom(button, data)) refresh(button.dataset.refresh, button.dataset.target);
   } catch (err) {
