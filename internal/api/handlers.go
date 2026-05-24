@@ -251,7 +251,7 @@ What this phase does.</textarea></div>
 <div data-page="backlog" data-workflow-stream="/api/workflows/{{.Workflow.ID}}/stream" data-refresh="/workflows/{{.Workflow.ID}}/fragment">
   <a class="back" href="/specs/{{.Spec.ID}}" hx-get="/specs/{{.Spec.ID}}/fragment" hx-target="#app" hx-push-url="/specs/{{.Spec.ID}}">← {{.Spec.Title}}</a>
   <div class="page-header"><div><h2>Workflow #{{.Workflow.ID}}</h2><div class="card-meta">Spec #{{.Spec.ID}} · {{.Workflow.Track}} · created {{datetime .Workflow.CreatedAt}}</div></div><span class="chip chip-{{.Workflow.Status}}">{{.Workflow.Status}}</span></div>
-  <div class="card-actions"><button class="btn" data-json-post="/api/workflows/{{.Workflow.ID}}/resume" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app">Resume</button><button class="btn btn-danger" data-json-post="/api/workflows/{{.Workflow.ID}}/stop" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app">Stop</button></div>
+  <div class="card-actions"><button class="btn" data-json-post="/api/workflows/{{.Workflow.ID}}/resume" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app">Resume</button>{{if eq .Workflow.Status "failed"}}<button class="btn btn-primary" data-json-post="/api/workflows/{{.Workflow.ID}}/follow-up" data-redirect-template="/workflows/{id}">Follow-up run</button>{{end}}<button class="btn btn-danger" data-json-post="/api/workflows/{{.Workflow.ID}}/stop" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app">Stop</button></div>
   <div class="section"><h3>Approved memory used</h3>{{if .MemoryError}}<div class="empty">{{.MemoryError}}</div>{{else if .Memory.Markdown}}<div class="card-meta">{{len .Memory.Files}} file(s) from {{.Memory.Root}}</div><pre class="doc-box">{{.Memory.Markdown}}</pre>{{else}}<div class="empty">No approved markdown memory found for this workflow's project namespace.</div>{{end}}</div>
   <div class="section"><h3>Memory update review</h3>{{if .MemoryUpdateError}}<div class="empty">{{.MemoryUpdateError}}</div>{{end}}{{if .MemoryUpdate}}<div class="card"><div class="card-header"><span class="card-title">Memory update #{{.MemoryUpdate.ID}}</span><span class="chip chip-{{.MemoryUpdate.Status}}">{{.MemoryUpdate.Status}}</span></div>{{if .MemoryUpdate.MemoryPath}}<div class="card-meta">written to {{.MemoryUpdate.MemoryPath}}</div>{{end}}{{if .MemoryUpdate.ReviewerComment}}<div class="card-meta">comment: {{.MemoryUpdate.ReviewerComment}}</div>{{end}}<pre class="doc-box">{{.MemoryUpdate.ProposalMarkdown}}</pre><div class="card-actions"><button class="btn btn-primary" data-json-post="/api/workflows/{{.Workflow.ID}}/memory-update/accept" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app">Accept</button><button class="btn btn-danger" data-json-post="/api/workflows/{{.Workflow.ID}}/memory-update/reject" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app">Reject</button></div><form data-json method="post" action="/api/workflows/{{.Workflow.ID}}/memory-update/revise" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app"><div class="field"><label>Revision comment</label><textarea name="comment" required></textarea></div><button class="btn">Revise with comment</button></form></div>{{else}}<form data-json method="post" action="/api/workflows/{{.Workflow.ID}}/memory-update" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app"><div class="field"><label>Feedback for memory</label><textarea name="feedback" placeholder="What durable context should be remembered from this workflow?"></textarea></div><button class="btn btn-primary">Create memory update proposal</button></form>{{end}}</div>
   <div class="section"><h3>Phases</h3>{{range .Phases}}<article class="phase-row" id="phase-{{.ID}}"><div class="phase-pos">{{.Position}}</div><div class="phase-body"><div class="card-header"><span class="phase-name">{{.Name}}</span>{{if eq .Status "failed"}}<span class="chip chip-{{.Status}}">{{.Status}}</span>{{else if .ReviewVerdict}}<span class="chip chip-{{strptr .ReviewVerdict}}">{{strptr .ReviewVerdict}}</span>{{else}}<span class="chip chip-{{.Status}}">{{.Status}}</span>{{end}}</div><div class="phase-goal">{{.Goal}}</div><div class="card-meta">cost {{money .CostUSD}} · started {{ptime .StartedAt}} · finished {{ptime .FinishedAt}}</div><div class="card-actions"><button class="btn" data-phase-detail="logs" data-phase-id="{{.ID}}" hx-get="/phases/{{.ID}}/logs/fragment" hx-target="#phase-detail-{{.ID}}" hx-swap="innerHTML">Logs</button><button class="btn" data-phase-detail="diff" data-phase-id="{{.ID}}" hx-get="/phases/{{.ID}}/diff/fragment" hx-target="#phase-detail-{{.ID}}" hx-swap="innerHTML">Diff</button><button class="btn btn-primary" data-json-post="/api/phases/{{.ID}}/approve" data-refresh="/workflows/{{$.Workflow.ID}}/fragment" data-target="#app">Approve</button><button class="btn btn-danger" data-json-post="/api/phases/{{.ID}}/reject" data-refresh="/workflows/{{$.Workflow.ID}}/fragment" data-target="#app">Reject</button><button class="btn" data-json-post="/api/phases/{{.ID}}/clean" data-refresh="/workflows/{{$.Workflow.ID}}/fragment" data-target="#app">Clean</button></div><div id="phase-detail-{{.ID}}" class="phase-detail" data-phase-detail-panel="{{.ID}}"></div></div></article>{{end}}</div>
@@ -1082,6 +1082,8 @@ func (s *Server) handleWorkflow(w http.ResponseWriter, r *http.Request) {
 	case suffix == "stop" && r.Method == http.MethodPost:
 		s.runner.Stop(id)
 		jsonOK(w, map[string]string{"status": "stopping"}, http.StatusOK)
+	case suffix == "follow-up" && r.Method == http.MethodPost:
+		s.handleWorkflowFollowUp(w, r, id)
 	case strings.HasPrefix(suffix, "memory-update"):
 		s.handleWorkflowMemoryUpdate(w, r, id, strings.Trim(strings.TrimPrefix(suffix, "memory-update"), "/"))
 	case suffix == "stream":
@@ -1089,6 +1091,146 @@ func (s *Server) handleWorkflow(w http.ResponseWriter, r *http.Request) {
 	default:
 		jsonErr(w, "not found", http.StatusNotFound)
 	}
+}
+
+func (s *Server) handleWorkflowFollowUp(w http.ResponseWriter, r *http.Request, workflowID int64) {
+	wf, sp, _, err := s.workflowProject(r.Context(), workflowID)
+	if errors.Is(err, db.ErrNotFound) {
+		jsonErr(w, "not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		jsonErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if wf.Status != "failed" {
+		jsonErr(w, "follow-up runs can only be created for failed workflows", http.StatusConflict)
+		return
+	}
+	phases, err := db.ListPhasesByWorkflow(r.Context(), s.pool, workflowID)
+	if err != nil {
+		jsonErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	failed := make([]db.Phase, 0)
+	for _, ph := range phases {
+		if ph.Status == "failed" {
+			failed = append(failed, ph)
+		}
+	}
+	if len(failed) == 0 {
+		jsonErr(w, "workflow has no failed phases", http.StatusConflict)
+		return
+	}
+
+	content := s.buildFollowUpSpecContent(r.Context(), sp, wf, failed)
+	newTitle := "Follow-up: " + sp.Title
+	newSpec, err := db.CreateSpec(r.Context(), s.pool, sp.ProjectID, newTitle, content, sp.Tags)
+	if err != nil {
+		jsonErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	track := sp.Track
+	running := "running"
+	newSpec, err = db.UpdateSpec(r.Context(), s.pool, newSpec.ID, db.UpdateSpecParams{Track: &track, Status: &running})
+	if err != nil {
+		jsonErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	newWorkflow, err := db.CreateWorkflow(r.Context(), s.pool, newSpec.ID, newSpec.Track, wf.MaxCostUSD)
+	if err != nil {
+		jsonErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.runner.Start(newWorkflow.ID)
+	jsonOK(w, newWorkflow, http.StatusCreated)
+}
+
+func (s *Server) buildFollowUpSpecContent(ctx context.Context, sp db.Spec, wf db.Workflow, failed []db.Phase) string {
+	context := s.buildFollowUpContext(ctx, wf, failed)
+	content := strings.TrimSpace(sp.Content)
+	idx := strings.Index(content, "\n## Phase ")
+	if idx == -1 {
+		return strings.TrimSpace(content + "\n\n" + context)
+	}
+	return strings.TrimSpace(content[:idx] + "\n\n" + context + "\n" + content[idx+1:])
+}
+
+func (s *Server) buildFollowUpContext(ctx context.Context, wf db.Workflow, failed []db.Phase) string {
+	var b strings.Builder
+	b.WriteString("## Follow-up run context\n\n")
+	b.WriteString(fmt.Sprintf("This spec was generated as a follow-up to failed workflow #%d. Use the failure context below to avoid repeating the same mistakes and to complete the original phases.\n", wf.ID))
+	for _, ph := range failed {
+		b.WriteString(fmt.Sprintf("\n### Failed phase %d: %s\n\n", ph.Position, ph.Name))
+		b.WriteString(fmt.Sprintf("- Phase ID: %d\n- Status: %s\n- Retry count: %d\n", ph.ID, ph.Status, ph.RetryCount))
+		if ph.ReviewVerdict != nil && strings.TrimSpace(*ph.ReviewVerdict) != "" {
+			b.WriteString("- Review verdict: ")
+			b.WriteString(strings.TrimSpace(*ph.ReviewVerdict))
+			b.WriteString("\n")
+		}
+		if ph.ReviewNotes != nil && strings.TrimSpace(*ph.ReviewNotes) != "" {
+			b.WriteString("\nReview notes:\n")
+			b.WriteString(indentBlock(strings.TrimSpace(*ph.ReviewNotes)))
+			b.WriteString("\n")
+		}
+		if ph.DecisionSummary != nil && strings.TrimSpace(*ph.DecisionSummary) != "" {
+			b.WriteString("\nDecision summary:\n")
+			b.WriteString(indentBlock(strings.TrimSpace(*ph.DecisionSummary)))
+			b.WriteString("\n")
+		}
+		if ph.DecisionRationale != nil && strings.TrimSpace(*ph.DecisionRationale) != "" {
+			b.WriteString("\nDecision rationale:\n")
+			b.WriteString(indentBlock(strings.TrimSpace(*ph.DecisionRationale)))
+			b.WriteString("\n")
+		}
+		if ph.PromptSent != nil && strings.TrimSpace(*ph.PromptSent) != "" {
+			b.WriteString("\nPrompt sent excerpt:\n")
+			b.WriteString(indentBlock(truncateString(strings.TrimSpace(*ph.PromptSent), 2000)))
+			b.WriteString("\n")
+		}
+		logs, err := db.ListRecentPhaseLogs(ctx, s.pool, ph.ID, 80)
+		if err != nil {
+			b.WriteString("\nLog summary: unavailable: ")
+			b.WriteString(err.Error())
+			b.WriteString("\n")
+			continue
+		}
+		if len(logs) > 0 {
+			b.WriteString("\nRecent log summary (tail):\n")
+			var lines []string
+			for _, l := range logs {
+				line := strings.TrimSpace(l.Line)
+				if line != "" {
+					lines = append(lines, line)
+				}
+			}
+			b.WriteString(indentBlock(truncateString(strings.Join(lines, "\n"), 4000)))
+			b.WriteString("\n")
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func indentBlock(s string) string {
+	if s == "" {
+		return ""
+	}
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		lines[i] = "> " + line
+	}
+	return strings.Join(lines, "\n")
+}
+
+func truncateString(s string, max int) string {
+	const marker = "\n... truncated ..."
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	if max <= len(marker) {
+		return s[:max]
+	}
+	return s[:max-len(marker)] + marker
 }
 
 func (s *Server) handleWorkflowMemoryUpdate(w http.ResponseWriter, r *http.Request, workflowID int64, action string) {
