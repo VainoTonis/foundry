@@ -23,6 +23,7 @@ type Config struct {
 	ReviewAPIKey               string  `yaml:"review_api_key"`
 	ReviewModel                string  `yaml:"review_model"`
 	GitRoot                    string  `yaml:"git_root"`
+	MemoryRepoPath             string  `yaml:"memory_repo_path"`
 }
 
 func Load(path string) (Config, error) {
@@ -63,6 +64,9 @@ func setDefaults(c *Config) {
 	}
 	if c.GitRoot != "" {
 		c.GitRoot = expandHome(c.GitRoot)
+	}
+	if c.MemoryRepoPath != "" {
+		c.MemoryRepoPath = expandHome(c.MemoryRepoPath)
 	}
 }
 

@@ -32,6 +32,7 @@ type Server struct {
 	eventHub        *hub.EventHub
 	defaultBudget   float64
 	gitRoot         string
+	memoryRepoPath  string
 	cfgPath         string
 	serverPort      int
 	cerberusProfile string
@@ -39,8 +40,8 @@ type Server struct {
 	cerbBuffers     map[string]*cerberusTextBuffer
 }
 
-func NewServer(pool *pgxpool.Pool, runner *workflow.Runner, cerb *cerberus.Client, eventHub *hub.EventHub, defaultBudget float64, gitRoot string, cfgPath string, cerberusProfile string, serverPort int) *Server {
-	s := &Server{pool: pool, runner: runner, cerb: cerb, eventHub: eventHub, defaultBudget: defaultBudget, gitRoot: gitRoot, cfgPath: cfgPath, serverPort: serverPort, cerberusProfile: cerberusProfile, cerbBuffers: make(map[string]*cerberusTextBuffer)}
+func NewServer(pool *pgxpool.Pool, runner *workflow.Runner, cerb *cerberus.Client, eventHub *hub.EventHub, defaultBudget float64, gitRoot string, memoryRepoPath string, cfgPath string, cerberusProfile string, serverPort int) *Server {
+	s := &Server{pool: pool, runner: runner, cerb: cerb, eventHub: eventHub, defaultBudget: defaultBudget, gitRoot: gitRoot, memoryRepoPath: memoryRepoPath, cfgPath: cfgPath, serverPort: serverPort, cerberusProfile: cerberusProfile, cerbBuffers: make(map[string]*cerberusTextBuffer)}
 	s.mux = http.NewServeMux()
 	s.routes()
 	return s
@@ -158,7 +159,7 @@ var uiTemplates = template.Must(template.New("ui").Funcs(template.FuncMap{
     <form data-json method="post" action="/api/projects" data-refresh="/backlog/fragment" data-target="#app">
       <div class="field"><label>Name</label><input name="name" required></div>
       <div class="field"><label>Repo path</label><input name="repo_path" required></div>
-      <div class="field"><label>Memory repo path</label><input name="memory_repo_path" placeholder="Private memory repo path"></div>
+      <div class="field"><label>Memory namespace</label><input name="memory_namespace" placeholder="Project memory namespace"></div>
       <button class="btn btn-primary">Create</button>
     </form>
   </div>
@@ -207,13 +208,14 @@ What this phase does.</textarea></div>
     <form data-json data-include-empty method="post" action="/api/projects" data-refresh="/projects/fragment" data-target="#app">
       <div class="field"><label>Name</label><input name="name" required></div>
       <div class="field"><label>Target repo path</label><input name="repo_path" required></div>
-      <div class="field"><label>Memory repo path</label><input name="memory_repo_path" placeholder="Private memory repo path"></div>
+      <div class="field"><label>Memory namespace</label><input name="memory_namespace" placeholder="Project memory namespace"></div>
       <button class="btn btn-primary">Create</button>
     </form>
   </div>
-  {{if .Projects}}<div class="group-label">Registered projects</div>{{range .Projects}}<article class="card"><div class="card-header"><a class="card-title" href="/projects/{{.ID}}" hx-get="/projects/{{.ID}}/fragment" hx-target="#app" hx-push-url="/projects/{{.ID}}">{{.Name}}</a></div><div class="card-meta">target: {{.RepoPath}} · memory: {{if .MemoryRepoPath}}{{.MemoryRepoPath}}{{else}}—{{end}}</div><div class="card-actions"><a class="btn" href="/projects/{{.ID}}" hx-get="/projects/{{.ID}}/fragment" hx-target="#app" hx-push-url="/projects/{{.ID}}">View / edit</a></div></article>{{end}}{{else}}<div class="empty">No projects yet. Create one or click Discover repos to scan configured git root.</div>{{end}}
+  <div class="empty">Memory repo: {{if .MemoryRepoPath}}{{.MemoryRepoPath}}{{else}}not configured{{end}}</div>
+  {{if .Projects}}<div class="group-label">Registered projects</div>{{range .Projects}}<article class="card"><div class="card-header"><a class="card-title" href="/projects/{{.ID}}" hx-get="/projects/{{.ID}}/fragment" hx-target="#app" hx-push-url="/projects/{{.ID}}">{{.Name}}</a></div><div class="card-meta">target: {{.RepoPath}} · namespace: {{if .MemoryNamespace}}{{.MemoryNamespace}}{{else}}—{{end}}</div><div class="card-actions"><a class="btn" href="/projects/{{.ID}}" hx-get="/projects/{{.ID}}/fragment" hx-target="#app" hx-push-url="/projects/{{.ID}}">View / edit</a></div></article>{{end}}{{else}}<div class="empty">No projects yet. Create one or click Discover repos to scan configured git root.</div>{{end}}
   {{if .DiscoverErr}}<div class="empty">{{.DiscoverErr}}</div>{{end}}
-  {{if .Repos}}<div class="group-label">Discovered repos</div>{{range .Repos}}<article class="card"><div class="card-header"><span class="card-title">{{.Name}}</span>{{if .Imported}}<span class="chip chip-done">imported</span>{{end}}</div><div class="card-meta">target: {{.Path}}{{if .Imported}} · memory: {{if .MemoryRepoPath}}{{.MemoryRepoPath}}{{else}}—{{end}}{{end}}</div>{{if not .Imported}}<div class="card-actions"><button class="btn btn-primary" data-json-post="/api/projects" data-body='{"name":{{printf "%q" .Name}},"repo_path":{{printf "%q" .Path}},"memory_repo_path":""}' data-refresh="/projects/fragment" data-target="#app">Import</button></div>{{end}}</article>{{end}}{{end}}
+  {{if .Repos}}<div class="group-label">Discovered repos</div>{{range .Repos}}<article class="card"><div class="card-header"><span class="card-title">{{.Name}}</span>{{if .Imported}}<span class="chip chip-done">imported</span>{{end}}</div><div class="card-meta">target: {{.Path}}{{if .Imported}} · namespace: {{if .MemoryNamespace}}{{.MemoryNamespace}}{{else}}—{{end}}{{end}}</div>{{if not .Imported}}<div class="card-actions"><button class="btn btn-primary" data-json-post="/api/projects" data-body='{"name":{{printf "%q" .Name}},"repo_path":{{printf "%q" .Path}},"memory_namespace":{{printf "%q" .Name}}}' data-refresh="/projects/fragment" data-target="#app">Import</button></div>{{end}}</article>{{end}}{{end}}
 </div>
 {{end}}
 
@@ -224,7 +226,7 @@ What this phase does.</textarea></div>
   <form data-json data-include-empty data-method="PATCH" method="post" action="/api/projects/{{.Project.ID}}" data-refresh="/projects/{{.Project.ID}}/fragment" data-target="#app">
     <div class="field"><label>Name</label><input name="name" value="{{.Project.Name}}" required></div>
     <div class="field"><label>Target repo path</label><input name="repo_path" value="{{.Project.RepoPath}}" required></div>
-    <div class="field"><label>Memory repo path</label><input name="memory_repo_path" value="{{.Project.MemoryRepoPath}}" placeholder="Private memory repo path"></div>
+    <div class="field"><label>Memory namespace</label><input name="memory_namespace" value="{{.Project.MemoryNamespace}}" placeholder="Project memory namespace"></div>
     <button class="btn btn-primary">Save changes</button>
   </form>
 </div>
@@ -361,8 +363,8 @@ func (s *Server) handleUIBacklogFragment(w http.ResponseWriter, r *http.Request)
 
 type uiRepoItem struct {
 	discover.Repo
-	Imported       bool
-	MemoryRepoPath string
+	Imported        bool
+	MemoryNamespace string
 }
 
 func (s *Server) handleUIProjectsFragment(w http.ResponseWriter, r *http.Request) {
@@ -385,15 +387,16 @@ func (s *Server) handleUIProjectsFragment(w http.ResponseWriter, r *http.Request
 			}
 			for _, repo := range found {
 				p, imported := byPath[repo.Path]
-				repos = append(repos, uiRepoItem{Repo: repo, Imported: imported, MemoryRepoPath: p.MemoryRepoPath})
+				repos = append(repos, uiRepoItem{Repo: repo, Imported: imported, MemoryNamespace: p.MemoryNamespace})
 			}
 		}
 	}
 	data := struct {
-		Projects    []db.Project
-		Repos       []uiRepoItem
-		DiscoverErr string
-	}{projects, repos, discoverErr}
+		Projects       []db.Project
+		Repos          []uiRepoItem
+		DiscoverErr    string
+		MemoryRepoPath string
+	}{projects, repos, discoverErr, s.memoryRepoPath}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := uiTemplates.ExecuteTemplate(w, "projects", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -658,15 +661,15 @@ func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
 		var body struct {
-			Name           string `json:"name"`
-			RepoPath       string `json:"repo_path"`
-			MemoryRepoPath string `json:"memory_repo_path"`
+			Name            string `json:"name"`
+			RepoPath        string `json:"repo_path"`
+			MemoryNamespace string `json:"memory_namespace"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			jsonErr(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		p, err := db.CreateProject(r.Context(), s.pool, body.Name, body.RepoPath, body.MemoryRepoPath)
+		p, err := db.CreateProject(r.Context(), s.pool, body.Name, body.RepoPath, body.MemoryNamespace)
 		if err != nil {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -706,13 +709,13 @@ func (s *Server) handleDiscover(w http.ResponseWriter, r *http.Request) {
 	}
 	type repoItem struct {
 		discover.Repo
-		Imported       bool   `json:"imported"`
-		MemoryRepoPath string `json:"memory_repo_path"`
+		Imported        bool   `json:"imported"`
+		MemoryNamespace string `json:"memory_namespace"`
 	}
 	out := make([]repoItem, 0, len(repos))
 	for _, repo := range repos {
 		p, imported := byPath[repo.Path]
-		out = append(out, repoItem{Repo: repo, Imported: imported, MemoryRepoPath: p.MemoryRepoPath})
+		out = append(out, repoItem{Repo: repo, Imported: imported, MemoryNamespace: p.MemoryNamespace})
 	}
 	jsonOK(w, out, http.StatusOK)
 }
@@ -738,18 +741,18 @@ func (s *Server) handleProject(w http.ResponseWriter, r *http.Request) {
 		jsonOK(w, p, http.StatusOK)
 	case http.MethodPatch:
 		var body struct {
-			Name           *string `json:"name"`
-			RepoPath       *string `json:"repo_path"`
-			MemoryRepoPath *string `json:"memory_repo_path"`
+			Name            *string `json:"name"`
+			RepoPath        *string `json:"repo_path"`
+			MemoryNamespace *string `json:"memory_namespace"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			jsonErr(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		p, err := db.UpdateProject(r.Context(), s.pool, id, db.UpdateProjectParams{
-			Name:           body.Name,
-			RepoPath:       body.RepoPath,
-			MemoryRepoPath: body.MemoryRepoPath,
+			Name:            body.Name,
+			RepoPath:        body.RepoPath,
+			MemoryNamespace: body.MemoryNamespace,
 		})
 		if errors.Is(err, db.ErrNotFound) {
 			jsonErr(w, "not found", http.StatusNotFound)

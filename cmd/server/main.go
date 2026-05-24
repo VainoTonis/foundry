@@ -73,7 +73,7 @@ func main() {
 	go api.RecoverOrphanDrafts(context.Background(), pool, cerb)
 
 	// API server
-	srv := api.NewServer(pool, runner, cerb, eventHub, cfg.DefaultWorkflowBudgetUSD, cfg.GitRoot, cfgPath, cfg.CerberusProfile, cfg.ServerPort)
+	srv := api.NewServer(pool, runner, cerb, eventHub, cfg.DefaultWorkflowBudgetUSD, cfg.GitRoot, cfg.MemoryRepoPath, cfgPath, cfg.CerberusProfile, cfg.ServerPort)
 
 	// serve API, server-rendered UI, and static assets
 	mux := http.NewServeMux()

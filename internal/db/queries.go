@@ -12,11 +12,11 @@ import (
 )
 
 type Project struct {
-	ID             int64     `json:"id"`
-	Name           string    `json:"name"`
-	RepoPath       string    `json:"repo_path"`
-	MemoryRepoPath string    `json:"memory_repo_path"`
-	CreatedAt      time.Time `json:"created_at"`
+	ID              int64     `json:"id"`
+	Name            string    `json:"name"`
+	RepoPath        string    `json:"repo_path"`
+	MemoryNamespace string    `json:"memory_namespace"`
+	CreatedAt       time.Time `json:"created_at"`
 }
 
 type Spec struct {
@@ -73,17 +73,17 @@ type PhaseLog struct {
 
 // --- Projects ---
 
-func CreateProject(ctx context.Context, pool *pgxpool.Pool, name, repoPath, memoryRepoPath string) (Project, error) {
+func CreateProject(ctx context.Context, pool *pgxpool.Pool, name, repoPath, memoryNamespace string) (Project, error) {
 	var p Project
 	err := pool.QueryRow(ctx,
-		`INSERT INTO projects (name, repo_path, memory_repo_path) VALUES ($1, $2, $3) RETURNING id, name, repo_path, memory_repo_path, created_at`,
-		name, repoPath, memoryRepoPath,
-	).Scan(&p.ID, &p.Name, &p.RepoPath, &p.MemoryRepoPath, &p.CreatedAt)
+		`INSERT INTO projects (name, repo_path, memory_namespace) VALUES ($1, $2, $3) RETURNING id, name, repo_path, memory_namespace, created_at`,
+		name, repoPath, memoryNamespace,
+	).Scan(&p.ID, &p.Name, &p.RepoPath, &p.MemoryNamespace, &p.CreatedAt)
 	return p, err
 }
 
 func ListProjects(ctx context.Context, pool *pgxpool.Pool) ([]Project, error) {
-	rows, err := pool.Query(ctx, `SELECT id, name, repo_path, memory_repo_path, created_at FROM projects ORDER BY id`)
+	rows, err := pool.Query(ctx, `SELECT id, name, repo_path, memory_namespace, created_at FROM projects ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +91,7 @@ func ListProjects(ctx context.Context, pool *pgxpool.Pool) ([]Project, error) {
 	var out []Project
 	for rows.Next() {
 		var p Project
-		if err := rows.Scan(&p.ID, &p.Name, &p.RepoPath, &p.MemoryRepoPath, &p.CreatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.RepoPath, &p.MemoryNamespace, &p.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -102,8 +102,8 @@ func ListProjects(ctx context.Context, pool *pgxpool.Pool) ([]Project, error) {
 func GetProject(ctx context.Context, pool *pgxpool.Pool, id int64) (Project, error) {
 	var p Project
 	err := pool.QueryRow(ctx,
-		`SELECT id, name, repo_path, memory_repo_path, created_at FROM projects WHERE id = $1`, id,
-	).Scan(&p.ID, &p.Name, &p.RepoPath, &p.MemoryRepoPath, &p.CreatedAt)
+		`SELECT id, name, repo_path, memory_namespace, created_at FROM projects WHERE id = $1`, id,
+	).Scan(&p.ID, &p.Name, &p.RepoPath, &p.MemoryNamespace, &p.CreatedAt)
 	if err == pgx.ErrNoRows {
 		return p, ErrNotFound
 	}
@@ -111,9 +111,9 @@ func GetProject(ctx context.Context, pool *pgxpool.Pool, id int64) (Project, err
 }
 
 type UpdateProjectParams struct {
-	Name           *string
-	RepoPath       *string
-	MemoryRepoPath *string
+	Name            *string
+	RepoPath        *string
+	MemoryNamespace *string
 }
 
 func UpdateProject(ctx context.Context, pool *pgxpool.Pool, id int64, p UpdateProjectParams) (Project, error) {
@@ -130,9 +130,9 @@ func UpdateProject(ctx context.Context, pool *pgxpool.Pool, id int64, p UpdatePr
 		args = append(args, *p.RepoPath)
 		n++
 	}
-	if p.MemoryRepoPath != nil {
-		set = append(set, "memory_repo_path = $"+itoa(n))
-		args = append(args, *p.MemoryRepoPath)
+	if p.MemoryNamespace != nil {
+		set = append(set, "memory_namespace = $"+itoa(n))
+		args = append(args, *p.MemoryNamespace)
 		n++
 	}
 	if len(set) == 0 {
@@ -140,9 +140,9 @@ func UpdateProject(ctx context.Context, pool *pgxpool.Pool, id int64, p UpdatePr
 	}
 	args = append(args, id)
 	q := `UPDATE projects SET ` + joinComma(set) + ` WHERE id = $` + itoa(n) +
-		` RETURNING id, name, repo_path, memory_repo_path, created_at`
+		` RETURNING id, name, repo_path, memory_namespace, created_at`
 	var out Project
-	err := pool.QueryRow(ctx, q, args...).Scan(&out.ID, &out.Name, &out.RepoPath, &out.MemoryRepoPath, &out.CreatedAt)
+	err := pool.QueryRow(ctx, q, args...).Scan(&out.ID, &out.Name, &out.RepoPath, &out.MemoryNamespace, &out.CreatedAt)
 	if err == pgx.ErrNoRows {
 		return out, ErrNotFound
 	}

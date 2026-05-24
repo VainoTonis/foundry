@@ -10,5 +10,6 @@ review_base_url: "https://api.openai.com/v1"
 review_api_key: ""
 review_model: "claude-haiku-4-5"
 git_root: "~/git"
+memory_repo_path: ""
 
 cerberus_profile: ""
