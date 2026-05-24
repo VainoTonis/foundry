@@ -8,7 +8,7 @@ Foundry is a self-hosted web tool for managing private project memory around age
 
 It connects:
 - target git repos containing code
-- private memory repo containing markdown knowledge
+- one unified private memory repo containing markdown knowledge
 - Cerberus as external LLM and agent bridge
 
 Foundry does not replace Cerberus. Cerberus remains the tool that calls LLMs and runs agent work.
@@ -34,7 +34,7 @@ Foundry owns:
 - phase records
 - feedback records
 - memory update workflow
-- private memory repo integration
+- unified private memory repo integration
 
 Cerberus owns:
 - LLM execution
@@ -47,7 +47,7 @@ Target repos own:
 - source code
 - normal git history
 
-Private memory repo owns:
+Unified private memory repo owns:
 - curated project memory
 - specs
 - run summaries
@@ -69,7 +69,7 @@ Database stores runtime and index state:
 - Cerberus session references
 - paths to markdown artifacts
 
-Memory repo stores human-readable knowledge:
+Unified memory repo stores human-readable knowledge:
 - facts
 - decisions
 - lessons
@@ -187,8 +187,9 @@ Cerberus behavior inside target repos is external to Foundry and can be addresse
 ### 0.1 Project Registry
 
 - Register target git repo path.
-- Register private memory repo path.
-- Map project to memory location.
+- Register one unified private memory repo path at app/config level.
+- Map each project to a namespace or directory inside the unified memory repo.
+- Do not store separate memory repo paths per project.
 - List projects in web UI.
 
 ### 0.2 Relevant Memory Review
