@@ -116,3 +116,27 @@ func Prepend(markdown, prompt string) string {
 	}
 	return markdown + "\n\n---\n\n" + prompt
 }
+
+func WriteApprovedUpdate(repoPath, namespace string, workflowID int64, markdown string) (string, error) {
+	repoPath = strings.TrimSpace(repoPath)
+	namespace = strings.Trim(strings.TrimSpace(namespace), string(os.PathSeparator)+"/")
+	if repoPath == "" {
+		return "", fmt.Errorf("memory repo path is not configured")
+	}
+	if namespace == "" {
+		return "", fmt.Errorf("project memory namespace is not configured")
+	}
+	repoRoot := filepath.Clean(repoPath)
+	dir := filepath.Clean(filepath.Join(repoRoot, filepath.FromSlash(namespace), "workflow-updates"))
+	if rel, err := filepath.Rel(repoRoot, dir); err != nil || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("invalid memory namespace %q", namespace)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, fmt.Sprintf("workflow-%d.md", workflowID))
+	if err := os.WriteFile(path, []byte(strings.TrimSpace(markdown)+"\n"), 0o644); err != nil {
+		return "", err
+	}
+	return path, nil
+}

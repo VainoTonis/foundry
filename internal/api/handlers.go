@@ -83,6 +83,7 @@ func (s *Server) routes() {
 
 	s.mux.HandleFunc("/api/workflows", s.handleWorkflows)
 	s.mux.HandleFunc("/api/workflows/", s.handleWorkflow)
+	s.mux.HandleFunc("/api/memory-updates/", s.handleMemoryUpdate)
 
 	s.mux.HandleFunc("/api/phases/", s.handlePhase)
 	s.mux.HandleFunc("/api/settings", s.handleSettings)
@@ -252,6 +253,7 @@ What this phase does.</textarea></div>
   <div class="page-header"><div><h2>Workflow #{{.Workflow.ID}}</h2><div class="card-meta">Spec #{{.Spec.ID}} · {{.Workflow.Track}} · created {{datetime .Workflow.CreatedAt}}</div></div><span class="chip chip-{{.Workflow.Status}}">{{.Workflow.Status}}</span></div>
   <div class="card-actions"><button class="btn" data-json-post="/api/workflows/{{.Workflow.ID}}/resume" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app">Resume</button><button class="btn btn-danger" data-json-post="/api/workflows/{{.Workflow.ID}}/stop" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app">Stop</button></div>
   <div class="section"><h3>Approved memory used</h3>{{if .MemoryError}}<div class="empty">{{.MemoryError}}</div>{{else if .Memory.Markdown}}<div class="card-meta">{{len .Memory.Files}} file(s) from {{.Memory.Root}}</div><pre class="doc-box">{{.Memory.Markdown}}</pre>{{else}}<div class="empty">No approved markdown memory found for this workflow's project namespace.</div>{{end}}</div>
+  <div class="section"><h3>Memory update review</h3>{{if .MemoryUpdateError}}<div class="empty">{{.MemoryUpdateError}}</div>{{end}}{{if .MemoryUpdate}}<div class="card"><div class="card-header"><span class="card-title">Memory update #{{.MemoryUpdate.ID}}</span><span class="chip chip-{{.MemoryUpdate.Status}}">{{.MemoryUpdate.Status}}</span></div>{{if .MemoryUpdate.MemoryPath}}<div class="card-meta">written to {{.MemoryUpdate.MemoryPath}}</div>{{end}}{{if .MemoryUpdate.ReviewerComment}}<div class="card-meta">comment: {{.MemoryUpdate.ReviewerComment}}</div>{{end}}<pre class="doc-box">{{.MemoryUpdate.ProposalMarkdown}}</pre><div class="card-actions"><button class="btn btn-primary" data-json-post="/api/workflows/{{.Workflow.ID}}/memory-update/accept" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app">Accept</button><button class="btn btn-danger" data-json-post="/api/workflows/{{.Workflow.ID}}/memory-update/reject" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app">Reject</button></div><form data-json method="post" action="/api/workflows/{{.Workflow.ID}}/memory-update/revise" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app"><div class="field"><label>Revision comment</label><textarea name="comment" required></textarea></div><button class="btn">Revise with comment</button></form></div>{{else}}<form data-json method="post" action="/api/workflows/{{.Workflow.ID}}/memory-update" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app"><div class="field"><label>Feedback for memory</label><textarea name="feedback" placeholder="What durable context should be remembered from this workflow?"></textarea></div><button class="btn btn-primary">Create memory update proposal</button></form>{{end}}</div>
   <div class="section"><h3>Phases</h3>{{range .Phases}}<article class="phase-row" id="phase-{{.ID}}"><div class="phase-pos">{{.Position}}</div><div class="phase-body"><div class="card-header"><span class="phase-name">{{.Name}}</span>{{if eq .Status "failed"}}<span class="chip chip-{{.Status}}">{{.Status}}</span>{{else if .ReviewVerdict}}<span class="chip chip-{{strptr .ReviewVerdict}}">{{strptr .ReviewVerdict}}</span>{{else}}<span class="chip chip-{{.Status}}">{{.Status}}</span>{{end}}</div><div class="phase-goal">{{.Goal}}</div><div class="card-meta">cost {{money .CostUSD}} · started {{ptime .StartedAt}} · finished {{ptime .FinishedAt}}</div><div class="card-actions"><button class="btn" data-phase-detail="logs" data-phase-id="{{.ID}}" hx-get="/phases/{{.ID}}/logs/fragment" hx-target="#phase-detail-{{.ID}}" hx-swap="innerHTML">Logs</button><button class="btn" data-phase-detail="diff" data-phase-id="{{.ID}}" hx-get="/phases/{{.ID}}/diff/fragment" hx-target="#phase-detail-{{.ID}}" hx-swap="innerHTML">Diff</button><button class="btn btn-primary" data-json-post="/api/phases/{{.ID}}/approve" data-refresh="/workflows/{{$.Workflow.ID}}/fragment" data-target="#app">Approve</button><button class="btn btn-danger" data-json-post="/api/phases/{{.ID}}/reject" data-refresh="/workflows/{{$.Workflow.ID}}/fragment" data-target="#app">Reject</button><button class="btn" data-json-post="/api/phases/{{.ID}}/clean" data-refresh="/workflows/{{$.Workflow.ID}}/fragment" data-target="#app">Clean</button></div><div id="phase-detail-{{.ID}}" class="phase-detail" data-phase-detail-panel="{{.ID}}"></div></div></article>{{end}}</div>
 </div>
 {{end}}
@@ -514,14 +516,23 @@ func (s *Server) handleUIWorkflowFragment(w http.ResponseWriter, r *http.Request
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	var memUpdate *db.MemoryUpdateJob
+	var memUpdateErr string
+	if job, err := db.GetLatestMemoryUpdateJobByWorkflow(r.Context(), s.pool, id); err == nil {
+		memUpdate = &job
+	} else if !errors.Is(err, db.ErrNotFound) {
+		memUpdateErr = err.Error()
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := uiTemplates.ExecuteTemplate(w, "workflowDetail", struct {
-		Workflow    db.Workflow
-		Spec        db.Spec
-		Phases      []db.Phase
-		Memory      memory.Slice
-		MemoryError string
-	}{wf, sp, phases, mem, memErrMsg}); err != nil {
+		Workflow          db.Workflow
+		Spec              db.Spec
+		Phases            []db.Phase
+		Memory            memory.Slice
+		MemoryError       string
+		MemoryUpdate      *db.MemoryUpdateJob
+		MemoryUpdateError string
+	}{wf, sp, phases, mem, memErrMsg, memUpdate, memUpdateErr}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -1071,11 +1082,286 @@ func (s *Server) handleWorkflow(w http.ResponseWriter, r *http.Request) {
 	case suffix == "stop" && r.Method == http.MethodPost:
 		s.runner.Stop(id)
 		jsonOK(w, map[string]string{"status": "stopping"}, http.StatusOK)
+	case strings.HasPrefix(suffix, "memory-update"):
+		s.handleWorkflowMemoryUpdate(w, r, id, strings.Trim(strings.TrimPrefix(suffix, "memory-update"), "/"))
 	case suffix == "stream":
 		s.streamWorkflow(w, r, id)
 	default:
 		jsonErr(w, "not found", http.StatusNotFound)
 	}
+}
+
+func (s *Server) handleWorkflowMemoryUpdate(w http.ResponseWriter, r *http.Request, workflowID int64, action string) {
+	switch {
+	case action == "" && r.Method == http.MethodGet:
+		job, err := db.GetLatestMemoryUpdateJobByWorkflow(r.Context(), s.pool, workflowID)
+		if errors.Is(err, db.ErrNotFound) {
+			jsonErr(w, "not found", http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonOK(w, job, http.StatusOK)
+	case action == "" && r.Method == http.MethodPost:
+		var body struct {
+			Feedback         string `json:"feedback"`
+			Comment          string `json:"comment"`
+			ProposalMarkdown string `json:"proposal_markdown"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			jsonErr(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		proposal := strings.TrimSpace(body.ProposalMarkdown)
+		comment := strings.TrimSpace(body.Comment)
+		if comment == "" {
+			comment = strings.TrimSpace(body.Feedback)
+		}
+		if proposal == "" {
+			var err error
+			proposal, err = s.buildWorkflowMemoryProposal(r.Context(), workflowID, comment)
+			if errors.Is(err, db.ErrNotFound) {
+				jsonErr(w, "not found", http.StatusNotFound)
+				return
+			}
+			if err != nil {
+				jsonErr(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+		job, err := db.CreateMemoryUpdateJob(r.Context(), s.pool, workflowID, proposal, comment)
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonOK(w, job, http.StatusCreated)
+	case action == "accept" && r.Method == http.MethodPost:
+		job, err := db.GetLatestMemoryUpdateJobByWorkflow(r.Context(), s.pool, workflowID)
+		if errors.Is(err, db.ErrNotFound) {
+			jsonErr(w, "not found", http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_, _, proj, err := s.workflowProject(r.Context(), workflowID)
+		if errors.Is(err, db.ErrNotFound) {
+			jsonErr(w, "not found", http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		path, err := memory.WriteApprovedUpdate(s.memoryRepoPath, proj.MemoryNamespace, workflowID, job.ProposalMarkdown)
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		accepted := "accepted"
+		job, err = db.UpdateMemoryUpdateJob(r.Context(), s.pool, job.ID, db.UpdateMemoryUpdateJobParams{Status: &accepted, MemoryPath: &path})
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonOK(w, job, http.StatusOK)
+	case action == "reject" && r.Method == http.MethodPost:
+		var body struct {
+			Comment string `json:"comment"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		job, err := db.GetLatestMemoryUpdateJobByWorkflow(r.Context(), s.pool, workflowID)
+		if errors.Is(err, db.ErrNotFound) {
+			jsonErr(w, "not found", http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		rejected := "rejected"
+		comment := strings.TrimSpace(body.Comment)
+		job, err = db.UpdateMemoryUpdateJob(r.Context(), s.pool, job.ID, db.UpdateMemoryUpdateJobParams{Status: &rejected, ReviewerComment: &comment})
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonOK(w, job, http.StatusOK)
+	case action == "revise" && r.Method == http.MethodPost:
+		var body struct {
+			Comment          string `json:"comment"`
+			ProposalMarkdown string `json:"proposal_markdown"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			jsonErr(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		job, err := db.GetLatestMemoryUpdateJobByWorkflow(r.Context(), s.pool, workflowID)
+		if errors.Is(err, db.ErrNotFound) {
+			jsonErr(w, "not found", http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		pending := "pending"
+		comment := strings.TrimSpace(body.Comment)
+		proposal := strings.TrimSpace(body.ProposalMarkdown)
+		params := db.UpdateMemoryUpdateJobParams{Status: &pending, ReviewerComment: &comment}
+		if proposal != "" {
+			params.ProposalMarkdown = &proposal
+		}
+		job, err = db.UpdateMemoryUpdateJob(r.Context(), s.pool, job.ID, params)
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonOK(w, job, http.StatusOK)
+	default:
+		jsonErr(w, "not found", http.StatusNotFound)
+	}
+}
+
+func (s *Server) handleMemoryUpdate(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/memory-updates/")
+	parts := strings.SplitN(path, "/", 2)
+	id, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		jsonErr(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	action := ""
+	if len(parts) == 2 {
+		action = parts[1]
+	}
+	job, err := db.GetMemoryUpdateJob(r.Context(), s.pool, id)
+	if errors.Is(err, db.ErrNotFound) {
+		jsonErr(w, "not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		jsonErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	switch {
+	case action == "" && r.Method == http.MethodGet:
+		jsonOK(w, job, http.StatusOK)
+	case action == "accept" && r.Method == http.MethodPost:
+		_, _, proj, err := s.workflowProject(r.Context(), job.WorkflowID)
+		if errors.Is(err, db.ErrNotFound) {
+			jsonErr(w, "not found", http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		path, err := memory.WriteApprovedUpdate(s.memoryRepoPath, proj.MemoryNamespace, job.WorkflowID, job.ProposalMarkdown)
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		accepted := "accepted"
+		job, err = db.UpdateMemoryUpdateJob(r.Context(), s.pool, job.ID, db.UpdateMemoryUpdateJobParams{Status: &accepted, MemoryPath: &path})
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonOK(w, job, http.StatusOK)
+	case action == "reject" && r.Method == http.MethodPost:
+		var body struct {
+			Comment string `json:"comment"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		rejected := "rejected"
+		comment := strings.TrimSpace(body.Comment)
+		job, err = db.UpdateMemoryUpdateJob(r.Context(), s.pool, job.ID, db.UpdateMemoryUpdateJobParams{Status: &rejected, ReviewerComment: &comment})
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonOK(w, job, http.StatusOK)
+	case action == "revise" && r.Method == http.MethodPost:
+		var body struct {
+			Comment          string `json:"comment"`
+			ProposalMarkdown string `json:"proposal_markdown"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			jsonErr(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		pending := "pending"
+		comment := strings.TrimSpace(body.Comment)
+		proposal := strings.TrimSpace(body.ProposalMarkdown)
+		params := db.UpdateMemoryUpdateJobParams{Status: &pending, ReviewerComment: &comment}
+		if proposal != "" {
+			params.ProposalMarkdown = &proposal
+		}
+		job, err = db.UpdateMemoryUpdateJob(r.Context(), s.pool, job.ID, params)
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonOK(w, job, http.StatusOK)
+	default:
+		jsonErr(w, "not found", http.StatusNotFound)
+	}
+}
+
+func (s *Server) workflowProject(ctx context.Context, workflowID int64) (db.Workflow, db.Spec, db.Project, error) {
+	wf, err := db.GetWorkflow(ctx, s.pool, workflowID)
+	if err != nil {
+		return wf, db.Spec{}, db.Project{}, err
+	}
+	sp, err := db.GetSpec(ctx, s.pool, wf.SpecID)
+	if err != nil {
+		return wf, sp, db.Project{}, err
+	}
+	proj, err := db.GetProject(ctx, s.pool, sp.ProjectID)
+	return wf, sp, proj, err
+}
+
+func (s *Server) buildWorkflowMemoryProposal(ctx context.Context, workflowID int64, feedback string) (string, error) {
+	wf, sp, proj, err := s.workflowProject(ctx, workflowID)
+	if err != nil {
+		return "", err
+	}
+	phases, err := db.ListPhasesByWorkflow(ctx, s.pool, workflowID)
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("# Workflow %d memory update\n\n", workflowID))
+	b.WriteString(fmt.Sprintf("Project: %s\nSpec: %s\nTrack: %s\nStatus: %s\n", proj.Name, sp.Title, wf.Track, wf.Status))
+	if feedback = strings.TrimSpace(feedback); feedback != "" {
+		b.WriteString("\n## Reviewer feedback\n\n")
+		b.WriteString(feedback)
+		b.WriteString("\n")
+	}
+	b.WriteString("\n## Phase decisions\n")
+	for _, ph := range phases {
+		b.WriteString(fmt.Sprintf("\n### Phase %d: %s\n\n", ph.Position, ph.Name))
+		if ph.DecisionSummary != nil && strings.TrimSpace(*ph.DecisionSummary) != "" {
+			b.WriteString("Summary: ")
+			b.WriteString(strings.TrimSpace(*ph.DecisionSummary))
+			b.WriteString("\n")
+		}
+		if ph.DecisionRationale != nil && strings.TrimSpace(*ph.DecisionRationale) != "" {
+			b.WriteString("Rationale: ")
+			b.WriteString(strings.TrimSpace(*ph.DecisionRationale))
+			b.WriteString("\n")
+		}
+		if len(ph.FilesTouched) > 0 && string(ph.FilesTouched) != "[]" {
+			b.WriteString("Files touched: `")
+			b.WriteString(string(ph.FilesTouched))
+			b.WriteString("`\n")
+		}
+	}
+	return strings.TrimSpace(b.String()), nil
 }
 
 // ---- phases ----
