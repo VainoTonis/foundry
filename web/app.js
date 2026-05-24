@@ -18,6 +18,31 @@ function refresh(url, target) {
   else if (url) location.href = url.replace('/fragment', '');
 }
 
+async function refreshWorkflowPreservingPhase(url) {
+  if (!url) return;
+  const app = document.getElementById('app');
+  const open = currentPhaseDetail && app?.querySelector(`#phase-detail-${currentPhaseDetail.id}:not(:empty)`);
+  if (!app || !open) { refresh(url, '#app'); return; }
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(await res.text());
+    const doc = new DOMParser().parseFromString(await res.text(), 'text/html');
+    const next = doc.body.firstElementChild;
+    const nextPanel = next?.querySelector(`#phase-detail-${currentPhaseDetail.id}`);
+    if (next && nextPanel) {
+      nextPanel.innerHTML = open.innerHTML;
+      app.innerHTML = '';
+      app.appendChild(next);
+      if (window.htmx) htmx.process(app);
+      initStreams(app);
+    } else {
+      refresh(url, '#app');
+    }
+  } catch (_) {
+    refresh(url, '#app');
+  }
+}
+
 function fragmentURL(url) {
   if (url.endsWith('/fragment')) return url;
   return url.replace(/\/$/, '') + '/fragment';
@@ -107,6 +132,14 @@ document.addEventListener('submit', async (event) => {
 });
 
 document.addEventListener('click', async (event) => {
+  const phaseButton = event.target.closest('[data-phase-detail]');
+  if (phaseButton) {
+    currentPhaseDetail = { id: phaseButton.dataset.phaseId, kind: phaseButton.dataset.phaseDetail };
+    document.querySelectorAll('.phase-detail').forEach((panel) => {
+      if (panel.id !== `phase-detail-${currentPhaseDetail.id}`) panel.innerHTML = '';
+    });
+  }
+
   const button = event.target.closest('[data-json-post], [data-json-patch], [data-json-delete]');
   if (!button) return;
   event.preventDefault();
@@ -127,6 +160,7 @@ let draftSource;
 let logSource;
 let refreshTimer;
 let liveAssistantBody;
+let currentPhaseDetail;
 
 function initWorkflowStream(root) {
   const el = root.querySelector?.('[data-workflow-stream]');
@@ -135,7 +169,7 @@ function initWorkflowStream(root) {
   workflowSource = new EventSource(el.dataset.workflowStream);
   const schedule = () => {
     clearTimeout(refreshTimer);
-    refreshTimer = setTimeout(() => refresh(el.dataset.refresh, '#app'), 600);
+    refreshTimer = setTimeout(() => refreshWorkflowPreservingPhase(el.dataset.refresh), 600);
   };
   workflowSource.onmessage = schedule;
   ['snapshot', 'workflow', 'workflow_update', 'phase', 'phase_update', 'done', 'failed'].forEach((name) => workflowSource.addEventListener(name, schedule));

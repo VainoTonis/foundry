@@ -115,6 +115,9 @@ button:hover, .btn:hover { background: var(--border); }
 .phase-body { flex: 1; }
 .phase-name { font-weight: 600; margin-bottom: .2rem; }
 .phase-goal { color: var(--muted); font-size: .82rem; white-space: pre-wrap; }
+.phase-detail { margin-top: .75rem; }
+.phase-detail:empty { display: none; }
+.phase-detail h3 { font-size: .8rem; color: var(--muted); margin-bottom: .5rem; letter-spacing: .05em; text-transform: uppercase; }
 
 /* --- log stream --- */
 .log-box {
