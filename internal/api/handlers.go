@@ -10,10 +10,12 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tonis2/foundry/internal/cerberus"
@@ -1361,9 +1363,9 @@ Your job: help the user write a Foundry spec — a markdown document that define
 
 ## Intent context
 
-Before drafting or materially updating a spec, read the key intent files in the project repository when they exist. Use file path references only; do not inline wiki contents into the prompt or generated spec.
+Before drafting or materially updating a spec, read the key intent files in the project's memory namespace when they exist. Use file path references only; do not inline wiki contents into the prompt or generated spec.
 
-Default intent files to inspect:
+Default intent files to inspect under the configured project memory namespace:
 - intent/README.md
 - intent/Product Model.md
 - intent/Principles.md
@@ -1430,6 +1432,10 @@ func (s *Server) handleSpecDrafts(w http.ResponseWriter, r *http.Request) {
 		}
 		jsonOK(w, list, http.StatusOK)
 	case http.MethodPost:
+		if strings.TrimSpace(s.memoryRepoPath) == "" {
+			jsonErr(w, "memory repo path is not configured", http.StatusUnprocessableEntity)
+			return
+		}
 		var body struct {
 			ProjectID   *int64 `json:"project_id"`
 			Description string `json:"description"`
@@ -1456,7 +1462,7 @@ func (s *Server) handleSpecDrafts(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.ProjectID != nil {
 			if proj, err := db.GetProject(r.Context(), s.pool, *body.ProjectID); err == nil {
-				initialPrompt += "\n\nProject name: " + proj.Name + "\nThe project code is mounted at /workspace inside your container."
+				initialPrompt += "\n\nProject name: " + proj.Name + "\nThe private memory repo is mounted at /workspace inside your container. Use project memory namespace " + proj.MemoryNamespace + "."
 				if mem, err := memory.LoadApproved(s.memoryRepoPath, proj.MemoryNamespace); err == nil {
 					initialPrompt = memory.Prepend(mem.Markdown, initialPrompt)
 				} else {
@@ -1469,6 +1475,7 @@ func (s *Server) handleSpecDrafts(w http.ResponseWriter, r *http.Request) {
 		cerb := s.cerb
 		draftID := draft.ID
 		cbURL := s.callbackURL()
+		memoryRepoPath := s.memoryRepoPath
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 			defer cancel()
@@ -1479,6 +1486,7 @@ func (s *Server) handleSpecDrafts(w http.ResponseWriter, r *http.Request) {
 			if profilePath != "" {
 				cerb.SetProfile(profilePath)
 			}
+			cerb.SetRepoPath(memoryRepoPath)
 			if err := cerb.Chat(ctx, session, initialPrompt, cbURL); err != nil {
 				log.Printf("spec-builder chat start error: %v", err)
 				errStatus := "error"
@@ -1564,9 +1572,11 @@ func (s *Server) handleSpecDraft(w http.ResponseWriter, r *http.Request) {
 		session := draft.CerberusSession
 		pool := s.pool
 		draftID := draft.ID
+		memoryRepoPath := s.memoryRepoPath
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 			defer cancel()
+			cerb.SetRepoPath(memoryRepoPath)
 			if err := cerb.Message(ctx, session, body.Content, cbURL); err != nil {
 				log.Printf("spec-builder message error: %v", err)
 				errStatus := "error"
@@ -1597,6 +1607,7 @@ func (s *Server) handleSpecDraft(w http.ResponseWriter, r *http.Request) {
 			jsonErr(w, "could not extract spec from conversation — ask the agent to update the spec with full spec content", http.StatusUnprocessableEntity)
 			return
 		}
+		s.cerb.SetRepoPath(s.memoryRepoPath)
 		if err := s.cerb.Close(r.Context(), draft.CerberusSession); err != nil {
 			log.Printf("spec-builder close error: %v", err)
 		}
@@ -1606,8 +1617,15 @@ func (s *Server) handleSpecDraft(w http.ResponseWriter, r *http.Request) {
 		db.DeleteCerberusEvents(r.Context(), s.pool, draft.CerberusSession)
 		removeProfileFile(draft.CerberusSession)
 		var projID int64
+		var proj *db.Project
 		if draft.ProjectID != nil {
 			projID = *draft.ProjectID
+			p, err := db.GetProject(r.Context(), s.pool, projID)
+			if err != nil {
+				jsonErr(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			proj = &p
 		}
 		title := saveBody.Title
 		if title == "" {
@@ -1615,6 +1633,12 @@ func (s *Server) handleSpecDraft(w http.ResponseWriter, r *http.Request) {
 		}
 		if title == "" {
 			title = draft.Title
+		}
+		if proj != nil {
+			if _, err := writeSpecMarkdownToMemory(s.memoryRepoPath, proj.MemoryNamespace, draft.ID, title, specContent); err != nil {
+				jsonErr(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 		}
 		sp, err := db.CreateSpec(r.Context(), s.pool, projID, title, specContent, []byte("[]"))
 		if err != nil {
@@ -1636,6 +1660,7 @@ func (s *Server) handleSpecDraft(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if draft.CerberusSession != "" {
+			s.cerb.SetRepoPath(s.memoryRepoPath)
 			if err := s.cerb.Close(r.Context(), draft.CerberusSession); err != nil {
 				log.Printf("spec-builder close on delete: %v", err)
 			}
@@ -1709,6 +1734,55 @@ func extractSpecTitle(specContent string) string {
 		}
 	}
 	return ""
+}
+
+func writeSpecMarkdownToMemory(repoPath, namespace string, draftID int64, title, content string) (string, error) {
+	repoPath = strings.TrimSpace(repoPath)
+	namespace = strings.Trim(strings.TrimSpace(namespace), string(os.PathSeparator)+"/")
+	if repoPath == "" {
+		return "", fmt.Errorf("memory repo path is not configured")
+	}
+	if namespace == "" {
+		return "", fmt.Errorf("project memory namespace is not configured")
+	}
+
+	repoRoot := filepath.Clean(repoPath)
+	specDir := filepath.Clean(filepath.Join(repoRoot, filepath.FromSlash(namespace), "specs"))
+	if rel, err := filepath.Rel(repoRoot, specDir); err != nil || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("invalid memory namespace %q", namespace)
+	}
+	if err := os.MkdirAll(specDir, 0o755); err != nil {
+		return "", fmt.Errorf("create memory specs dir: %w", err)
+	}
+
+	base := fmt.Sprintf("draft-%d-%s", draftID, slugifySpecFilename(title))
+	path := filepath.Join(specDir, base+".md")
+	if err := os.WriteFile(path, []byte(strings.TrimSpace(content)+"\n"), 0o644); err != nil {
+		return "", fmt.Errorf("write memory spec: %w", err)
+	}
+	return path, nil
+}
+
+func slugifySpecFilename(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	var b strings.Builder
+	lastDash := false
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash && b.Len() > 0 {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if out == "" {
+		return "spec"
+	}
+	return out
 }
 
 func appendMessage(existing []byte, role, content string) []byte {
