@@ -27,8 +27,11 @@ type File struct {
 // all non-hidden .md files under that directory are considered approved memory.
 func LoadApproved(repoPath, namespace string) (Slice, error) {
 	repoPath = strings.TrimSpace(repoPath)
-	namespace = strings.Trim(strings.TrimSpace(namespace), string(os.PathSeparator)+"/")
+	namespace, nsErr := cleanNamespace(namespace)
 	out := Slice{RepoPath: repoPath, Namespace: namespace}
+	if nsErr != nil {
+		return out, nsErr
+	}
 	if repoPath == "" || namespace == "" {
 		return out, nil
 	}
@@ -119,7 +122,10 @@ func Prepend(markdown, prompt string) string {
 
 func WriteApprovedUpdate(repoPath, namespace string, workflowID int64, markdown string) (string, error) {
 	repoPath = strings.TrimSpace(repoPath)
-	namespace = strings.Trim(strings.TrimSpace(namespace), string(os.PathSeparator)+"/")
+	namespace, nsErr := cleanNamespace(namespace)
+	if nsErr != nil {
+		return "", nsErr
+	}
 	if repoPath == "" {
 		return "", fmt.Errorf("memory repo path is not configured")
 	}
@@ -139,4 +145,20 @@ func WriteApprovedUpdate(repoPath, namespace string, workflowID int64, markdown 
 		return "", err
 	}
 	return path, nil
+}
+
+func cleanNamespace(namespace string) (string, error) {
+	namespace = strings.Trim(strings.TrimSpace(namespace), string(os.PathSeparator)+"/")
+	if namespace == "" {
+		return "", nil
+	}
+	if filepath.IsAbs(namespace) || filepath.IsAbs(filepath.FromSlash(namespace)) {
+		return "", fmt.Errorf("invalid memory namespace %q", namespace)
+	}
+	for _, part := range strings.Split(filepath.ToSlash(namespace), "/") {
+		if part == "" || part == "." || part == ".." {
+			return "", fmt.Errorf("invalid memory namespace %q", namespace)
+		}
+	}
+	return namespace, nil
 }
