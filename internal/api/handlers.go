@@ -159,7 +159,7 @@ var uiTemplates = template.Must(template.New("ui").Funcs(template.FuncMap{
     <form data-json method="post" action="/api/projects" data-refresh="/backlog/fragment" data-target="#app">
       <div class="field"><label>Name</label><input name="name" required></div>
       <div class="field"><label>Repo path</label><input name="repo_path" required></div>
-      <div class="field"><label>Memory namespace</label><input name="memory_namespace" placeholder="Project memory namespace"></div>
+      <div class="field"><label>Memory namespace</label><input name="memory_namespace" placeholder="Defaults to project name"><p class="hint">Leave blank to use the project name.</p></div>
       <button class="btn btn-primary">Create</button>
     </form>
   </div>
@@ -208,7 +208,7 @@ What this phase does.</textarea></div>
     <form data-json data-include-empty method="post" action="/api/projects" data-refresh="/projects/fragment" data-target="#app">
       <div class="field"><label>Name</label><input name="name" required></div>
       <div class="field"><label>Target repo path</label><input name="repo_path" required></div>
-      <div class="field"><label>Memory namespace</label><input name="memory_namespace" placeholder="Project memory namespace"></div>
+      <div class="field"><label>Memory namespace</label><input name="memory_namespace" placeholder="Defaults to project name"><p class="hint">Leave blank to use the project name.</p></div>
       <button class="btn btn-primary">Create</button>
     </form>
   </div>
@@ -226,7 +226,7 @@ What this phase does.</textarea></div>
   <form data-json data-include-empty data-method="PATCH" method="post" action="/api/projects/{{.Project.ID}}" data-refresh="/projects/{{.Project.ID}}/fragment" data-target="#app">
     <div class="field"><label>Name</label><input name="name" value="{{.Project.Name}}" required></div>
     <div class="field"><label>Target repo path</label><input name="repo_path" value="{{.Project.RepoPath}}" required></div>
-    <div class="field"><label>Memory namespace</label><input name="memory_namespace" value="{{.Project.MemoryNamespace}}" placeholder="Project memory namespace"></div>
+    <div class="field"><label>Memory namespace</label><input name="memory_namespace" value="{{.Project.MemoryNamespace}}" placeholder="Defaults to project name"><p class="hint">On create, blank defaults to the project name.</p></div>
     <button class="btn btn-primary">Save changes</button>
   </form>
 </div>
@@ -669,7 +669,11 @@ func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
 			jsonErr(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		p, err := db.CreateProject(r.Context(), s.pool, body.Name, body.RepoPath, body.MemoryNamespace)
+		memoryNamespace := strings.TrimSpace(body.MemoryNamespace)
+		if memoryNamespace == "" {
+			memoryNamespace = body.Name
+		}
+		p, err := db.CreateProject(r.Context(), s.pool, body.Name, body.RepoPath, memoryNamespace)
 		if err != nil {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
