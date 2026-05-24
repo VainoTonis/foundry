@@ -3,6 +3,7 @@ package memory
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -144,7 +145,26 @@ func WriteApprovedUpdate(repoPath, namespace string, workflowID int64, markdown 
 	if err := os.WriteFile(path, []byte(strings.TrimSpace(markdown)+"\n"), 0o644); err != nil {
 		return "", err
 	}
+	if err := commitFile(repoRoot, path, workflowID); err != nil {
+		return "", err
+	}
 	return path, nil
+}
+
+func commitFile(repoRoot, path string, workflowID int64) error {
+	rel, err := filepath.Rel(repoRoot, path)
+	if err != nil {
+		return err
+	}
+	add := exec.Command("git", "-C", repoRoot, "add", "--", rel)
+	if out, err := add.CombinedOutput(); err != nil {
+		return fmt.Errorf("git add memory update failed: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	commit := exec.Command("git", "-C", repoRoot, "commit", "-m", fmt.Sprintf("Accept memory update for workflow %d", workflowID), "--", rel)
+	if out, err := commit.CombinedOutput(); err != nil {
+		return fmt.Errorf("git commit memory update failed: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func cleanNamespace(namespace string) (string, error) {

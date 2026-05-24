@@ -2,6 +2,7 @@ package memory
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -51,6 +52,7 @@ func TestLoadApprovedMapsNamespaceToMemoryRepoDirectory(t *testing.T) {
 
 func TestWriteApprovedUpdateStaysInsideNamespaceWorkflowUpdates(t *testing.T) {
 	repo := t.TempDir()
+	initGitRepo(t, repo)
 	targetRepo := t.TempDir()
 
 	path, err := WriteApprovedUpdate(repo, "project-a", 42, " update body \n")
@@ -71,6 +73,19 @@ func TestWriteApprovedUpdateStaysInsideNamespaceWorkflowUpdates(t *testing.T) {
 	}
 	if entries, err := os.ReadDir(targetRepo); err != nil || len(entries) != 0 {
 		t.Fatalf("target repo should remain untouched; entries=%d err=%v", len(entries), err)
+	}
+	log := gitOutput(t, repo, "log", "--oneline", "--", filepath.ToSlash(filepath.Join("project-a", "workflow-updates", "workflow-42.md")))
+	if !strings.Contains(log, "Accept memory update for workflow 42") {
+		t.Fatalf("memory update was not committed; log:\n%s", log)
+	}
+}
+
+func TestWriteApprovedUpdateReturnsClearCommitError(t *testing.T) {
+	repo := t.TempDir()
+
+	_, err := WriteApprovedUpdate(repo, "project-a", 42, "body")
+	if err == nil || !strings.Contains(err.Error(), "git add memory update failed") {
+		t.Fatalf("error = %v, want clear git add failure", err)
 	}
 }
 
@@ -111,4 +126,24 @@ func mustWriteFile(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile(%q): %v", path, err)
 	}
+}
+
+func initGitRepo(t *testing.T, repo string) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	gitOutput(t, repo, "init")
+	gitOutput(t, repo, "config", "user.email", "test@example.com")
+	gitOutput(t, repo, "config", "user.name", "Test User")
+}
+
+func gitOutput(t *testing.T, repo string, args ...string) string {
+	t.Helper()
+	cmdArgs := append([]string{"-C", repo}, args...)
+	out, err := exec.Command("git", cmdArgs...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v failed: %v\n%s", args, err, out)
+	}
+	return string(out)
 }
