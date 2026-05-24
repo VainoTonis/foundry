@@ -268,7 +268,7 @@ What this phase does.</textarea></div>
 <div data-page="builder">
   <div class="page-header"><h2>Spec Builder</h2></div>
   <form data-json method="post" action="/api/spec-drafts" data-redirect-template="/spec-builder/{id}">
-    <div class="field"><label>Project</label><select name="project_id"><option value="">No project</option>{{range .Projects}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select></div>
+    <div class="field"><label>Project</label><select name="project_id" required>{{range .Projects}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select></div>
     <div class="field"><label>What should be built?</label><textarea name="description" required placeholder="Describe the feature, constraints, and expected phases."></textarea></div>
     <button class="btn btn-primary">Start builder</button>
   </form>
@@ -1442,6 +1442,10 @@ func (s *Server) handleSpecDrafts(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			jsonErr(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if body.ProjectID == nil {
+			jsonErr(w, "project_id is required", http.StatusUnprocessableEntity)
 			return
 		}
 		draft, err := db.CreateSpecDraft(r.Context(), s.pool, body.ProjectID, "(untitled)")
