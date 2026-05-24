@@ -312,10 +312,12 @@ loop:
 				// abort any partial cherry-pick so repo stays clean
 				_ = exec.CommandContext(ctx, "git", "-C", proj.RepoPath, "cherry-pick", "--abort").Run()
 				failStatus := "failed"
+				failVerdict := "fail"
 				cherryErr := fmt.Sprintf("cherry-pick %s failed: %v — %s", commitHash, err, strings.TrimSpace(string(out)))
 				_, _ = db.UpdatePhase(ctx, r.pool, phase.ID, db.UpdatePhaseParams{
-					Status:      &failStatus,
-					ReviewNotes: &cherryErr,
+					Status:        &failStatus,
+					ReviewVerdict: &failVerdict,
+					ReviewNotes:   &cherryErr,
 				})
 				r.publishPhaseUpdate(wf.ID, phase.ID, "failed")
 				return fmt.Errorf("phase %d cherry-pick: %w", phase.ID, err)

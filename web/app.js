@@ -171,8 +171,7 @@ function initWorkflowStream(root) {
     clearTimeout(refreshTimer);
     refreshTimer = setTimeout(() => refreshWorkflowPreservingPhase(el.dataset.refresh), 600);
   };
-  workflowSource.onmessage = schedule;
-  ['snapshot', 'workflow', 'workflow_update', 'phase', 'phase_update', 'done', 'failed'].forEach((name) => workflowSource.addEventListener(name, schedule));
+  ['workflow_update', 'phase_update', 'done', 'failed'].forEach((name) => workflowSource.addEventListener(name, schedule));
 }
 
 function updateDraftPreviewFromTool(ev) {
