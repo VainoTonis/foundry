@@ -137,16 +137,17 @@ var uiTemplates = template.Must(template.New("ui").Funcs(template.FuncMap{
   <script defer src="/app.js"></script>
 </head>
 <body data-page="{{.Page}}">
+  <a class="skip-link" href="#app">Skip to content</a>
   <header>
     <h1><a href="/" hx-get="/backlog/fragment" hx-target="#app" hx-push-url="/" class="brand">Foundry</a></h1>
-    <nav>
+    <nav aria-label="Primary navigation">
       <a href="/backlog" data-nav="backlog" hx-get="/backlog/fragment" hx-target="#app" hx-push-url="/backlog">Backlog</a>
       <a href="/projects" data-nav="projects" hx-get="/projects/fragment" hx-target="#app" hx-push-url="/projects">Projects</a>
       <a href="/spec-builder" data-nav="builder" hx-get="/spec-builder/fragment" hx-target="#app" hx-push-url="/spec-builder">Spec Builder</a>
       <a href="/settings" data-nav="settings" hx-get="/settings/fragment" hx-target="#app" hx-push-url="/settings">Settings</a>
     </nav>
   </header>
-  <main id="app" hx-get="{{.Fragment}}" hx-trigger="load" hx-swap="innerHTML"></main>
+  <main id="app" tabindex="-1" hx-get="{{.Fragment}}" hx-trigger="load" hx-swap="innerHTML"></main>
 </body>
 </html>
 {{end}}
@@ -296,7 +297,8 @@ What this phase does.</textarea></div>
 <div data-page="settings">
   <h2 style="margin-bottom:1.25rem">Settings</h2>
   <form data-settings action="/api/settings" data-refresh="/settings/fragment" data-target="#app">
-    {{range .Settings}}<div class="field"><label>{{.Key}}</label><input name="{{.Key}}" value="{{.Value}}"></div>{{end}}
+    {{range .Settings}}{{if not .IsVerbosity}}<div class="field"><label>{{.Key}}</label><input name="{{.Key}}" value="{{.Value}}"></div>{{end}}{{end}}
+    <div class="field"><label for="verbosity-level">Verbosity level</label>{{if .HasVerbosity}}<select id="verbosity-level" name="{{.VerbosityKey}}"><option value="quiet" {{if eq .VerbosityValue "quiet"}}selected{{end}}>Quiet</option><option value="normal" {{if eq .VerbosityValue "normal"}}selected{{end}}>Normal</option><option value="verbose" {{if eq .VerbosityValue "verbose"}}selected{{end}}>Verbose</option></select>{{else}}<select id="verbosity-level" disabled><option>Normal</option></select><p class="hint">Static UI placeholder: this install has no verbosity key in config.yaml yet.</p>{{end}}</div>
     <p class="hint">Changes are written to config.yaml. Restart the server for most changes to take effect.</p>
     <button class="btn btn-primary">Save</button>
   </form>
@@ -855,19 +857,32 @@ func (s *Server) handleUISettingsFragment(w http.ResponseWriter, r *http.Request
 		return
 	}
 	profiles, _ := db.ListProfiles(r.Context(), s.pool)
-	type setting struct{ Key, Value string }
+	type setting struct {
+		Key, Value  string
+		IsVerbosity bool
+	}
 	var settings []setting
+	var verbosityKey, verbosityValue string
 	for _, line := range strings.Split(string(data), "\n") {
 		parts := strings.SplitN(line, ":", 2)
 		if len(parts) == 2 && strings.TrimSpace(parts[0]) != "" {
-			settings = append(settings, setting{Key: strings.TrimSpace(parts[0]), Value: strings.Trim(strings.TrimSpace(parts[1]), "\"")})
+			key := strings.TrimSpace(parts[0])
+			value := strings.Trim(strings.TrimSpace(parts[1]), "\"")
+			isVerbosity := key == "verbosity" || key == "ui_verbosity" || key == "log_verbosity"
+			if isVerbosity && verbosityKey == "" {
+				verbosityKey, verbosityValue = key, value
+			}
+			settings = append(settings, setting{Key: key, Value: value, IsVerbosity: isVerbosity})
 		}
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := uiTemplates.ExecuteTemplate(w, "settings", struct {
-		Settings []setting
-		Profiles []db.Profile
-	}{settings, profiles}); err != nil {
+		Settings       []setting
+		Profiles       []db.Profile
+		HasVerbosity   bool
+		VerbosityKey   string
+		VerbosityValue string
+	}{settings, profiles, verbosityKey != "", verbosityKey, verbosityValue}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
