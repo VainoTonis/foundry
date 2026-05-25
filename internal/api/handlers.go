@@ -212,7 +212,7 @@ What this phase does.</textarea></div>
   <div class="page-header"><h2>Projects</h2><div class="card-actions"><button class="btn" popovertarget="new-project-page">+ Project</button><button class="btn btn-primary" hx-get="/projects/fragment?discover=1" hx-target="#app" hx-push-url="/projects">Discover repos</button></div></div>
   <div id="new-project-page" class="popover-card" popover>
     <h3>New Project</h3>
-    <form data-json data-include-empty method="post" action="/api/projects" data-refresh="/projects/fragment" data-target="#app">
+    <form method="post" action="/projects" hx-post="/projects" hx-target="#app" hx-swap="innerHTML">
       <div class="field"><label>Name</label><input name="name" required></div>
       <div class="field"><label>Target repo path</label><input name="repo_path" required></div>
       <div class="field"><label>Memory namespace</label><input name="memory_namespace" placeholder="Defaults to project name"><p class="hint">Leave blank to use the project name.</p></div>
@@ -222,15 +222,15 @@ What this phase does.</textarea></div>
   <div class="empty">Memory repo: {{if .MemoryRepoPath}}{{.MemoryRepoPath}}{{else}}not configured{{end}}</div>
   {{if .Projects}}<div class="group-label">Registered projects</div>{{range .Projects}}<article class="card"><div class="card-header"><a class="card-title" href="/projects/{{.ID}}" hx-get="/projects/{{.ID}}/fragment" hx-target="#app" hx-push-url="/projects/{{.ID}}">{{.Name}}</a></div><div class="card-meta">target: {{.RepoPath}} · namespace: {{if .MemoryNamespace}}{{.MemoryNamespace}}{{else}}—{{end}}</div><div class="card-actions"><a class="btn" href="/projects/{{.ID}}" hx-get="/projects/{{.ID}}/fragment" hx-target="#app" hx-push-url="/projects/{{.ID}}">View / edit</a></div></article>{{end}}{{else}}<div class="empty">No projects yet. Create one or click Discover repos to scan configured git root.</div>{{end}}
   {{if .DiscoverErr}}<div class="empty">{{.DiscoverErr}}</div>{{end}}
-  {{if .Repos}}<div class="group-label">Discovered repos</div>{{range .Repos}}<article class="card"><div class="card-header"><span class="card-title">{{.Name}}</span>{{if .Imported}}<span class="chip chip-done">imported</span>{{end}}</div><div class="card-meta">target: {{.Path}}{{if .Imported}} · namespace: {{if .MemoryNamespace}}{{.MemoryNamespace}}{{else}}—{{end}}{{end}}</div>{{if not .Imported}}<div class="card-actions"><button class="btn btn-primary" data-json-post="/api/projects" data-body='{"name":{{printf "%q" .Name}},"repo_path":{{printf "%q" .Path}},"memory_namespace":{{printf "%q" .Name}}}' data-refresh="/projects/fragment" data-target="#app">Import</button></div>{{end}}</article>{{end}}{{end}}
+  {{if .Repos}}<div class="group-label">Discovered repos</div>{{range .Repos}}<article class="card"><div class="card-header"><span class="card-title">{{.Name}}</span>{{if .Imported}}<span class="chip chip-done">imported</span>{{end}}</div><div class="card-meta">target: {{.Path}}{{if .Imported}} · namespace: {{if .MemoryNamespace}}{{.MemoryNamespace}}{{else}}—{{end}}{{end}}</div>{{if not .Imported}}<div class="card-actions"><form method="post" action="/projects?discover=1" hx-post="/projects?discover=1" hx-target="#app" hx-swap="innerHTML"><input type="hidden" name="name" value="{{.Name}}"><input type="hidden" name="repo_path" value="{{.Path}}"><input type="hidden" name="memory_namespace" value="{{.Name}}"><button class="btn btn-primary">Import</button></form></div>{{end}}</article>{{end}}{{end}}
 </div>
 {{end}}
 
 {{define "projectDetail"}}
 <div data-page="projects">
   <a class="back" href="/projects" hx-get="/projects/fragment" hx-target="#app" hx-push-url="/projects">← Projects</a>
-  <div class="page-header"><div><h2>{{.Project.Name}}</h2><div class="card-meta">Project #{{.Project.ID}} · created {{date .Project.CreatedAt}}</div></div><button class="btn btn-danger" data-json-delete="/api/projects/{{.Project.ID}}" data-redirect="/projects" data-confirm="Delete this project and its specs/workflows?">Delete</button></div>
-  <form data-json data-include-empty data-method="PATCH" method="post" action="/api/projects/{{.Project.ID}}" data-refresh="/projects/{{.Project.ID}}/fragment" data-target="#app">
+  <div class="page-header"><div><h2>{{.Project.Name}}</h2><div class="card-meta">Project #{{.Project.ID}} · created {{date .Project.CreatedAt}}</div></div><button class="btn btn-danger" hx-delete="/projects/{{.Project.ID}}" hx-confirm="Delete this project and its specs/workflows?">Delete</button></div>
+  <form method="post" action="/projects/{{.Project.ID}}" hx-patch="/projects/{{.Project.ID}}" hx-target="#app" hx-swap="innerHTML">
     <div class="field"><label>Name</label><input name="name" value="{{.Project.Name}}" required></div>
     <div class="field"><label>Target repo path</label><input name="repo_path" value="{{.Project.RepoPath}}" required></div>
     <div class="field"><label>Memory namespace</label><input name="memory_namespace" value="{{.Project.MemoryNamespace}}" placeholder="Defaults to project name"><p class="hint">On create, blank defaults to the project name.</p></div>
@@ -335,7 +335,18 @@ func (s *Server) handleUIBacklogPage(w http.ResponseWriter, r *http.Request) {
 	s.renderShell(w, "backlog", "/backlog/fragment")
 }
 func (s *Server) handleUIProjectsPage(w http.ResponseWriter, r *http.Request) {
-	s.renderShell(w, "projects", "/projects/fragment")
+	if r.URL.Path != "/projects" {
+		http.NotFound(w, r)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		s.renderShell(w, "projects", "/projects/fragment")
+	case http.MethodPost:
+		s.handleUIProjectCreate(w, r)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 func (s *Server) handleUISettingsPage(w http.ResponseWriter, r *http.Request) {
 	s.renderShell(w, "settings", "/settings/fragment")
@@ -500,6 +511,24 @@ func (s *Server) handleUIProjectsFragment(w http.ResponseWriter, r *http.Request
 	}
 }
 
+func (s *Server) handleUIProjectCreate(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	name := strings.TrimSpace(r.FormValue("name"))
+	repoPath := strings.TrimSpace(r.FormValue("repo_path"))
+	memoryNamespace := strings.TrimSpace(r.FormValue("memory_namespace"))
+	if memoryNamespace == "" {
+		memoryNamespace = name
+	}
+	if _, err := db.CreateProject(r.Context(), s.pool, name, repoPath, memoryNamespace); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.handleUIProjectsFragment(w, r)
+}
+
 func (s *Server) handleUIProject(w http.ResponseWriter, r *http.Request) {
 	id, frag, ok := parseUIID(r.URL.Path, "/projects/")
 	if !ok {
@@ -507,10 +536,57 @@ func (s *Server) handleUIProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if frag {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
 		s.handleUIProjectFragment(w, r, id)
 		return
 	}
-	s.renderShell(w, "projects", fmt.Sprintf("/projects/%d/fragment", id))
+	switch r.Method {
+	case http.MethodGet:
+		s.renderShell(w, "projects", fmt.Sprintf("/projects/%d/fragment", id))
+	case http.MethodPatch, http.MethodPost:
+		s.handleUIProjectUpdate(w, r, id)
+	case http.MethodDelete:
+		s.handleUIProjectDelete(w, r, id)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleUIProjectUpdate(w http.ResponseWriter, r *http.Request, id int64) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	name := strings.TrimSpace(r.FormValue("name"))
+	repoPath := strings.TrimSpace(r.FormValue("repo_path"))
+	memoryNamespace := strings.TrimSpace(r.FormValue("memory_namespace"))
+	if _, err := db.UpdateProject(r.Context(), s.pool, id, db.UpdateProjectParams{
+		Name:            &name,
+		RepoPath:        &repoPath,
+		MemoryNamespace: &memoryNamespace,
+	}); errors.Is(err, db.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	} else if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.handleUIProjectFragment(w, r, id)
+}
+
+func (s *Server) handleUIProjectDelete(w http.ResponseWriter, r *http.Request, id int64) {
+	if err := db.DeleteProject(r.Context(), s.pool, id); errors.Is(err, db.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	} else if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("HX-Redirect", "/projects")
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleUIProjectFragment(w http.ResponseWriter, r *http.Request, id int64) {
