@@ -1,6 +1,6 @@
 # Foundry
 
-A spec-driven, self-running development loop.
+Foundry 0.9 is a spec-driven, self-running development loop.
 
 Here is intent. Here is agent work. Here is evidence. Here is decision.
 
@@ -32,6 +32,34 @@ Runs unattended. Check results in the UI when you're back.
 - PostgreSQL (pgx, no ORM)
 - Vanilla JS frontend, no framework
 - [cerberus](https://github.com/VainoTonis/cerberus) as the agent execution engine
+
+## Quick start
+
+```sh
+docker compose up -d postgres
+cp config.yaml config.local.yaml
+$EDITOR config.local.yaml
+go run ./cmd/server config.local.yaml
+```
+
+Open `http://localhost:8080`. The checked-in Compose file starts PostgreSQL only; the server runs from source unless you build the `Dockerfile` image.
+
+Minimum useful config:
+
+- `db_url` points to PostgreSQL.
+- `git_root` points at the directory to scan for target repos.
+- `memory_repo_path` points at a private git repo for approved Markdown memory.
+- `cerberus_bin` points at the Cerberus CLI, or `cerberus` is on `PATH`.
+
+On startup, Foundry loads config, runs migrations, connects to PostgreSQL, and serves the UI/API.
+
+## Documentation
+
+- [Install](./docs/install.md)
+- [Self-hosting](./docs/self-hosting.md)
+- [Private memory repo](./docs/private-memory.md)
+- [Cerberus integration](./docs/cerberus.md)
+- [Troubleshooting](./docs/troubleshooting.md)
 
 ## Status
 
