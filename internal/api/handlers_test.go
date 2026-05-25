@@ -59,16 +59,40 @@ func TestBuildFollowUpSpecContentAppendsWhenSpecHasNoPhases(t *testing.T) {
 	}
 }
 
+func TestMemoryReviewStateHelpers(t *testing.T) {
+	accept := acceptMemoryUpdateParams(" /memory/project/workflow-updates/workflow-9.md ")
+	if accept.Status == nil || *accept.Status != "accepted" || accept.MemoryPath == nil || *accept.MemoryPath != "/memory/project/workflow-updates/workflow-9.md" || accept.ProposalMarkdown != nil || accept.ReviewerComment != nil {
+		t.Fatalf("acceptMemoryUpdateParams = %#v, want accepted path-only update", accept)
+	}
+
+	reject := rejectMemoryUpdateParams(" no durable signal ")
+	if reject.Status == nil || *reject.Status != "rejected" || reject.ReviewerComment == nil || *reject.ReviewerComment != "no durable signal" || reject.ProposalMarkdown != nil || reject.MemoryPath != nil {
+		t.Fatalf("rejectMemoryUpdateParams = %#v, want rejected/comment-only update", reject)
+	}
+
+	revise := reviseMemoryUpdateParams(" tighten scope ", " revised proposal ")
+	if revise.Status == nil || *revise.Status != "pending" || revise.ReviewerComment == nil || *revise.ReviewerComment != "tighten scope" || revise.ProposalMarkdown == nil || *revise.ProposalMarkdown != "revised proposal" || revise.MemoryPath != nil {
+		t.Fatalf("reviseMemoryUpdateParams = %#v, want pending with trimmed comment/proposal", revise)
+	}
+
+	reviseNoProposal := reviseMemoryUpdateParams(" keep existing proposal ", "  ")
+	if reviseNoProposal.ProposalMarkdown != nil || reviseNoProposal.ReviewerComment == nil || *reviseNoProposal.ReviewerComment != "keep existing proposal" {
+		t.Fatalf("reviseMemoryUpdateParams with blank proposal = %#v, want existing proposal preserved", reviseNoProposal)
+	}
+}
+
 func TestFormatWorkflowMemoryProposalBoundaries(t *testing.T) {
 	feedback := " remember the durable bit "
 	summary := "Use bounded writes"
 	rationale := "Avoid touching target repo"
 	prompt := "do not include prompt bodies"
+	adjusted := "do not include adjusted prompts"
+	notes := "do not include review notes"
 	proposal := formatWorkflowMemoryProposal(
 		db.Workflow{ID: 42, Track: "impl", Status: "done"},
 		db.Spec{Title: "Storage"},
 		db.Project{Name: "Foundry"},
-		[]db.Phase{{Position: 1, Name: "Persist", PromptSent: &prompt, DecisionSummary: &summary, DecisionRationale: &rationale, FilesTouched: []byte(`["internal/memory/memory.go"]`)}},
+		[]db.Phase{{Position: 1, Name: "Persist", PromptSent: &prompt, AdjustedPrompt: &adjusted, ReviewNotes: &notes, DecisionSummary: &summary, DecisionRationale: &rationale, FilesTouched: []byte(`["internal/memory/memory.go"]`)}},
 		feedback,
 	)
 
@@ -77,8 +101,13 @@ func TestFormatWorkflowMemoryProposalBoundaries(t *testing.T) {
 			t.Fatalf("proposal missing %q:\n%s", want, proposal)
 		}
 	}
-	if strings.Contains(proposal, prompt) || strings.HasSuffix(proposal, "\n") {
-		t.Fatalf("proposal crossed intended boundary or was not trimmed:\n%s", proposal)
+	for _, notWant := range []string{prompt, adjusted, notes, "Prompt sent", "Adjusted prompt", "Review notes:"} {
+		if strings.Contains(proposal, notWant) {
+			t.Fatalf("proposal crossed intended boundary with %q:\n%s", notWant, proposal)
+		}
+	}
+	if strings.HasSuffix(proposal, "\n") {
+		t.Fatalf("proposal was not trimmed:\n%s", proposal)
 	}
 }
 

@@ -111,6 +111,41 @@ func TestLoadApprovedDoesNotFollowSymlinkedMarkdownOutsideNamespace(t *testing.T
 	}
 }
 
+func TestMemoryNamespaceRootSymlinkDoesNotEscapeRepo(t *testing.T) {
+	repo := t.TempDir()
+	outside := t.TempDir()
+	mustWriteFile(t, filepath.Join(outside, "workflow-updates", "workflow-7.md"), "outside")
+	if err := os.Symlink(outside, filepath.Join(repo, "project")); err != nil {
+		t.Skipf("symlink not available: %v", err)
+	}
+
+	if _, err := LoadApproved(repo, "project"); err == nil {
+		t.Fatalf("LoadApproved followed symlinked namespace root, want boundary error")
+	}
+	if _, err := WriteApprovedUpdate(repo, "project", 7, "inside"); err == nil {
+		t.Fatalf("WriteApprovedUpdate followed symlinked namespace root, want boundary error")
+	}
+	data, err := os.ReadFile(filepath.Join(outside, "workflow-updates", "workflow-7.md"))
+	if err != nil || string(data) != "outside" {
+		t.Fatalf("outside memory was changed: data=%q err=%v", data, err)
+	}
+}
+
+func TestMemoryNamespaceAncestorSymlinkDoesNotEscapeRepo(t *testing.T) {
+	repo := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(repo, "team")); err != nil {
+		t.Skipf("symlink not available: %v", err)
+	}
+
+	if _, err := WriteApprovedUpdate(repo, "team/project", 8, "inside"); err == nil {
+		t.Fatalf("WriteApprovedUpdate followed symlinked namespace ancestor, want boundary error")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "project")); !os.IsNotExist(err) {
+		t.Fatalf("outside project directory was created or stat failed unexpectedly: %v", err)
+	}
+}
+
 func TestWriteApprovedUpdateRejectsEmptyNamespaceBeforeWriting(t *testing.T) {
 	repo := t.TempDir()
 	initGitRepo(t, repo)

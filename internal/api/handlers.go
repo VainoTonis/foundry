@@ -1401,8 +1401,7 @@ func (s *Server) handleWorkflowMemoryUpdate(w http.ResponseWriter, r *http.Reque
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		accepted := "accepted"
-		job, err = db.UpdateMemoryUpdateJob(r.Context(), s.pool, job.ID, db.UpdateMemoryUpdateJobParams{Status: &accepted, MemoryPath: &path})
+		job, err = db.UpdateMemoryUpdateJob(r.Context(), s.pool, job.ID, acceptMemoryUpdateParams(path))
 		if err != nil {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -1422,9 +1421,7 @@ func (s *Server) handleWorkflowMemoryUpdate(w http.ResponseWriter, r *http.Reque
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		rejected := "rejected"
-		comment := strings.TrimSpace(body.Comment)
-		job, err = db.UpdateMemoryUpdateJob(r.Context(), s.pool, job.ID, db.UpdateMemoryUpdateJobParams{Status: &rejected, ReviewerComment: &comment})
+		job, err = db.UpdateMemoryUpdateJob(r.Context(), s.pool, job.ID, rejectMemoryUpdateParams(body.Comment))
 		if err != nil {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -1448,14 +1445,7 @@ func (s *Server) handleWorkflowMemoryUpdate(w http.ResponseWriter, r *http.Reque
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		pending := "pending"
-		comment := strings.TrimSpace(body.Comment)
-		proposal := strings.TrimSpace(body.ProposalMarkdown)
-		params := db.UpdateMemoryUpdateJobParams{Status: &pending, ReviewerComment: &comment}
-		if proposal != "" {
-			params.ProposalMarkdown = &proposal
-		}
-		job, err = db.UpdateMemoryUpdateJob(r.Context(), s.pool, job.ID, params)
+		job, err = db.UpdateMemoryUpdateJob(r.Context(), s.pool, job.ID, reviseMemoryUpdateParams(body.Comment, body.ProposalMarkdown))
 		if err != nil {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -1505,8 +1495,7 @@ func (s *Server) handleMemoryUpdate(w http.ResponseWriter, r *http.Request) {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		accepted := "accepted"
-		job, err = db.UpdateMemoryUpdateJob(r.Context(), s.pool, job.ID, db.UpdateMemoryUpdateJobParams{Status: &accepted, MemoryPath: &path})
+		job, err = db.UpdateMemoryUpdateJob(r.Context(), s.pool, job.ID, acceptMemoryUpdateParams(path))
 		if err != nil {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -1517,9 +1506,7 @@ func (s *Server) handleMemoryUpdate(w http.ResponseWriter, r *http.Request) {
 			Comment string `json:"comment"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		rejected := "rejected"
-		comment := strings.TrimSpace(body.Comment)
-		job, err = db.UpdateMemoryUpdateJob(r.Context(), s.pool, job.ID, db.UpdateMemoryUpdateJobParams{Status: &rejected, ReviewerComment: &comment})
+		job, err = db.UpdateMemoryUpdateJob(r.Context(), s.pool, job.ID, rejectMemoryUpdateParams(body.Comment))
 		if err != nil {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -1534,14 +1521,7 @@ func (s *Server) handleMemoryUpdate(w http.ResponseWriter, r *http.Request) {
 			jsonErr(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		pending := "pending"
-		comment := strings.TrimSpace(body.Comment)
-		proposal := strings.TrimSpace(body.ProposalMarkdown)
-		params := db.UpdateMemoryUpdateJobParams{Status: &pending, ReviewerComment: &comment}
-		if proposal != "" {
-			params.ProposalMarkdown = &proposal
-		}
-		job, err = db.UpdateMemoryUpdateJob(r.Context(), s.pool, job.ID, params)
+		job, err = db.UpdateMemoryUpdateJob(r.Context(), s.pool, job.ID, reviseMemoryUpdateParams(body.Comment, body.ProposalMarkdown))
 		if err != nil {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -1550,6 +1530,29 @@ func (s *Server) handleMemoryUpdate(w http.ResponseWriter, r *http.Request) {
 	default:
 		jsonErr(w, "not found", http.StatusNotFound)
 	}
+}
+
+func acceptMemoryUpdateParams(path string) db.UpdateMemoryUpdateJobParams {
+	accepted := "accepted"
+	path = strings.TrimSpace(path)
+	return db.UpdateMemoryUpdateJobParams{Status: &accepted, MemoryPath: &path}
+}
+
+func rejectMemoryUpdateParams(comment string) db.UpdateMemoryUpdateJobParams {
+	rejected := "rejected"
+	comment = strings.TrimSpace(comment)
+	return db.UpdateMemoryUpdateJobParams{Status: &rejected, ReviewerComment: &comment}
+}
+
+func reviseMemoryUpdateParams(comment, proposal string) db.UpdateMemoryUpdateJobParams {
+	pending := "pending"
+	comment = strings.TrimSpace(comment)
+	proposal = strings.TrimSpace(proposal)
+	params := db.UpdateMemoryUpdateJobParams{Status: &pending, ReviewerComment: &comment}
+	if proposal != "" {
+		params.ProposalMarkdown = &proposal
+	}
+	return params
 }
 
 func (s *Server) workflowProject(ctx context.Context, workflowID int64) (db.Workflow, db.Spec, db.Project, error) {

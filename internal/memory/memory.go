@@ -44,6 +44,9 @@ func LoadApproved(repoPath, namespace string) (Slice, error) {
 		return out, fmt.Errorf("invalid memory namespace %q", namespace)
 	}
 	out.Root = root
+	if err := rejectSymlinkedNamespacePath(repoClean, namespace); err != nil {
+		return out, err
+	}
 
 	info, err := os.Stat(root)
 	if err != nil {
@@ -141,6 +144,9 @@ func WriteApprovedUpdate(repoPath, namespace string, workflowID int64, markdown 
 	if rel, err := filepath.Rel(repoRoot, dir); err != nil || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
 		return "", fmt.Errorf("invalid memory namespace %q", namespace)
 	}
+	if err := rejectSymlinkedNamespacePath(repoRoot, namespace); err != nil {
+		return "", err
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
@@ -166,6 +172,24 @@ func commitFile(repoRoot, path string, workflowID int64) error {
 	commit := exec.Command("git", "-C", repoRoot, "commit", "-m", fmt.Sprintf("Accept memory update for workflow %d", workflowID), "--", rel)
 	if out, err := commit.CombinedOutput(); err != nil {
 		return fmt.Errorf("git commit memory update failed: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func rejectSymlinkedNamespacePath(repoRoot, namespace string) error {
+	cur := filepath.Clean(repoRoot)
+	for _, part := range strings.Split(filepath.ToSlash(namespace), "/") {
+		cur = filepath.Join(cur, part)
+		info, err := os.Lstat(cur)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("invalid memory namespace %q", namespace)
+		}
 	}
 	return nil
 }
