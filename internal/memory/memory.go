@@ -67,6 +67,9 @@ func LoadApproved(repoPath, namespace string) (Slice, error) {
 			}
 			return nil
 		}
+		if d.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
 		if strings.HasPrefix(name, ".") || !strings.EqualFold(filepath.Ext(name), ".md") {
 			return nil
 		}

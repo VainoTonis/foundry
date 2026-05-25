@@ -1156,12 +1156,7 @@ func (s *Server) handleWorkflow(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, ph := range phases {
 			if ph.Status == "failed" {
-				pending := "pending"
-				zero := 0
-				_, _ = db.UpdatePhase(r.Context(), s.pool, ph.ID, db.UpdatePhaseParams{
-					Status:     &pending,
-					RetryCount: &zero,
-				})
+				_, _ = db.UpdatePhase(r.Context(), s.pool, ph.ID, resumeFailedPhaseUpdate())
 				break
 			}
 		}
@@ -1237,7 +1232,10 @@ func (s *Server) handleWorkflowFollowUp(w http.ResponseWriter, r *http.Request, 
 }
 
 func (s *Server) buildFollowUpSpecContent(ctx context.Context, sp db.Spec, wf db.Workflow, failed []db.Phase) string {
-	context := s.buildFollowUpContext(ctx, wf, failed)
+	return buildFollowUpSpecContentWithContext(sp, s.buildFollowUpContext(ctx, wf, failed))
+}
+
+func buildFollowUpSpecContentWithContext(sp db.Spec, context string) string {
 	content := strings.TrimSpace(sp.Content)
 	idx := strings.Index(content, "\n## Phase ")
 	if idx == -1 {
@@ -1247,6 +1245,12 @@ func (s *Server) buildFollowUpSpecContent(ctx context.Context, sp db.Spec, wf db
 }
 
 func (s *Server) buildFollowUpContext(ctx context.Context, wf db.Workflow, failed []db.Phase) string {
+	return buildFollowUpFailureContext(ctx, wf, failed, func(ctx context.Context, phaseID int64, limit int) ([]db.PhaseLog, error) {
+		return db.ListRecentPhaseLogs(ctx, s.pool, phaseID, limit)
+	})
+}
+
+func buildFollowUpFailureContext(ctx context.Context, wf db.Workflow, failed []db.Phase, recentLogs func(context.Context, int64, int) ([]db.PhaseLog, error)) string {
 	var b strings.Builder
 	b.WriteString("## Follow-up run context\n\n")
 	b.WriteString(fmt.Sprintf("This spec was generated as a follow-up to failed workflow #%d. Use the failure context below to avoid repeating the same mistakes and to complete the original phases.\n", wf.ID))
@@ -1278,12 +1282,16 @@ func (s *Server) buildFollowUpContext(ctx context.Context, wf db.Workflow, faile
 			b.WriteString(indentBlock(truncateString(strings.TrimSpace(*ph.PromptSent), 2000)))
 			b.WriteString("\n")
 		}
-		logs, err := db.ListRecentPhaseLogs(ctx, s.pool, ph.ID, 80)
-		if err != nil {
-			b.WriteString("\nLog summary: unavailable: ")
-			b.WriteString(err.Error())
-			b.WriteString("\n")
-			continue
+		var logs []db.PhaseLog
+		if recentLogs != nil {
+			var err error
+			logs, err = recentLogs(ctx, ph.ID, 80)
+			if err != nil {
+				b.WriteString("\nLog summary: unavailable: ")
+				b.WriteString(err.Error())
+				b.WriteString("\n")
+				continue
+			}
 		}
 		if len(logs) > 0 {
 			b.WriteString("\nRecent log summary (tail):\n")
@@ -1566,8 +1574,12 @@ func (s *Server) buildWorkflowMemoryProposal(ctx context.Context, workflowID int
 	if err != nil {
 		return "", err
 	}
+	return formatWorkflowMemoryProposal(wf, sp, proj, phases, feedback), nil
+}
+
+func formatWorkflowMemoryProposal(wf db.Workflow, sp db.Spec, proj db.Project, phases []db.Phase, feedback string) string {
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("# Workflow %d memory update\n\n", workflowID))
+	b.WriteString(fmt.Sprintf("# Workflow %d memory update\n\n", wf.ID))
 	b.WriteString(fmt.Sprintf("Project: %s\nSpec: %s\nTrack: %s\nStatus: %s\n", proj.Name, sp.Title, wf.Track, wf.Status))
 	if feedback = strings.TrimSpace(feedback); feedback != "" {
 		b.WriteString("\n## Reviewer feedback\n\n")
@@ -1593,10 +1605,28 @@ func (s *Server) buildWorkflowMemoryProposal(ctx context.Context, workflowID int
 			b.WriteString("`\n")
 		}
 	}
-	return strings.TrimSpace(b.String()), nil
+	return strings.TrimSpace(b.String())
 }
 
 // ---- phases ----
+
+func resumeFailedPhaseUpdate() db.UpdatePhaseParams {
+	pending := "pending"
+	zero := 0
+	return db.UpdatePhaseParams{Status: &pending, RetryCount: &zero}
+}
+
+func approvePhaseUpdate(now time.Time) db.UpdatePhaseParams {
+	done := "done"
+	pass := "pass"
+	return db.UpdatePhaseParams{Status: &done, ReviewVerdict: &pass, FinishedAt: &now}
+}
+
+func rejectPhaseUpdate(now time.Time) db.UpdatePhaseParams {
+	failed := "failed"
+	fail := "fail"
+	return db.UpdatePhaseParams{Status: &failed, ReviewVerdict: &fail, FinishedAt: &now}
+}
 
 func (s *Server) handlePhase(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/phases/")
@@ -1654,14 +1684,7 @@ func (s *Server) handlePhase(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		fmt.Fprint(w, diff)
 	case suffix == "approve" && r.Method == http.MethodPost:
-		done := "done"
-		pass := "pass"
-		now := time.Now()
-		_, err := db.UpdatePhase(r.Context(), s.pool, id, db.UpdatePhaseParams{
-			Status:        &done,
-			ReviewVerdict: &pass,
-			FinishedAt:    &now,
-		})
+		_, err := db.UpdatePhase(r.Context(), s.pool, id, approvePhaseUpdate(time.Now()))
 		if errors.Is(err, db.ErrNotFound) {
 			jsonErr(w, "not found", http.StatusNotFound)
 			return
@@ -1673,14 +1696,7 @@ func (s *Server) handlePhase(w http.ResponseWriter, r *http.Request) {
 		ph, _ := db.GetPhase(r.Context(), s.pool, id)
 		jsonOK(w, ph, http.StatusOK)
 	case suffix == "reject" && r.Method == http.MethodPost:
-		failed := "failed"
-		fail := "fail"
-		now := time.Now()
-		_, err := db.UpdatePhase(r.Context(), s.pool, id, db.UpdatePhaseParams{
-			Status:        &failed,
-			ReviewVerdict: &fail,
-			FinishedAt:    &now,
-		})
+		_, err := db.UpdatePhase(r.Context(), s.pool, id, rejectPhaseUpdate(time.Now()))
 		if errors.Is(err, db.ErrNotFound) {
 			jsonErr(w, "not found", http.StatusNotFound)
 			return

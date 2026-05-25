@@ -89,6 +89,40 @@ func TestWriteApprovedUpdateReturnsClearCommitError(t *testing.T) {
 	}
 }
 
+func TestLoadApprovedDoesNotFollowSymlinkedMarkdownOutsideNamespace(t *testing.T) {
+	repo := t.TempDir()
+	outside := t.TempDir()
+	mustWriteFile(t, filepath.Join(outside, "secret.md"), "outside secret")
+	root := filepath.Join(repo, "project")
+	mustWriteFile(t, filepath.Join(root, "approved.md"), "approved")
+	if err := os.Symlink(filepath.Join(outside, "secret.md"), filepath.Join(root, "linked.md")); err != nil {
+		t.Skipf("symlink not available: %v", err)
+	}
+
+	slice, err := LoadApproved(repo, "project")
+	if err != nil {
+		t.Fatalf("LoadApproved returned error: %v", err)
+	}
+	if len(slice.Files) != 1 || slice.Files[0].Path != "approved.md" {
+		t.Fatalf("loaded files = %#v, want only approved.md", slice.Files)
+	}
+	if strings.Contains(slice.Markdown, "outside secret") || strings.Contains(slice.Markdown, "linked.md") {
+		t.Fatalf("LoadApproved followed symlink outside namespace:\n%s", slice.Markdown)
+	}
+}
+
+func TestWriteApprovedUpdateRejectsEmptyNamespaceBeforeWriting(t *testing.T) {
+	repo := t.TempDir()
+	initGitRepo(t, repo)
+
+	if _, err := WriteApprovedUpdate(repo, " ", 7, "body"); err == nil || !strings.Contains(err.Error(), "project memory namespace is not configured") {
+		t.Fatalf("error = %v, want empty namespace rejection", err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "workflow-updates")); !os.IsNotExist(err) {
+		t.Fatalf("workflow-updates at repo root was created or stat failed unexpectedly: %v", err)
+	}
+}
+
 func TestMemoryNamespaceTraversalIsRejected(t *testing.T) {
 	repo := t.TempDir()
 	mustWriteFile(t, filepath.Join(repo, "other", "approved.md"), "other namespace")
