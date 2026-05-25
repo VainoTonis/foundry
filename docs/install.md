@@ -1,6 +1,6 @@
-# Install Foundry 0.9
+# Install Foundry 1.0
 
-Foundry 0.9 is a Go web server backed by PostgreSQL. The checked-in `docker-compose.yml` starts PostgreSQL only; run the Foundry server from source or build the `Dockerfile` image yourself.
+Foundry 1.0 is a Go web server backed by PostgreSQL. The checked-in `docker-compose.yml` starts PostgreSQL only; run the Foundry server from source or build the `Dockerfile` image yourself.
 
 ## Requirements
 
@@ -30,6 +30,7 @@ On startup Foundry loads the YAML config, runs all migrations from `migrations/`
 
 - `db_url`: PostgreSQL DSN. The compose database uses `postgres://foundry:foundry@localhost:5432/foundry?sslmode=disable`.
 - `server_port`: HTTP port; default is `8080`.
+- `ui_verbosity`: settings UI verbosity; default is `normal`.
 - `git_root`: root scanned by **Discover repos**.
 - `memory_repo_path`: private memory repo path used by spec builder and approved memory.
 - `cerberus_bin`: Cerberus executable; default `cerberus`.

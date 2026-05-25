@@ -1,6 +1,6 @@
 # Foundry
 
-Foundry 0.9 is a spec-driven, self-running development loop.
+Foundry 1.0 is a spec-driven, self-running development loop.
 
 Here is intent. Here is agent work. Here is evidence. Here is decision.
 

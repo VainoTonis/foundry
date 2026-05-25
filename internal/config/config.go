@@ -16,6 +16,7 @@ type Config struct {
 	CerberusModel              string  `yaml:"cerberus_model"`
 	CerberusProfile            string  `yaml:"cerberus_profile"`
 	ServerPort                 int     `yaml:"server_port"`
+	UIVerbosity                string  `yaml:"ui_verbosity"`
 	MaxConcurrentWorkflows     int     `yaml:"max_concurrent_workflows"`
 	DefaultWorkflowBudgetUSD   float64 `yaml:"default_workflow_budget_usd"`
 	DefaultPhaseTimeoutSeconds int     `yaml:"default_phase_timeout_seconds"`
@@ -46,6 +47,9 @@ func setDefaults(c *Config) {
 	}
 	if c.ServerPort == 0 {
 		c.ServerPort = 8080
+	}
+	if c.UIVerbosity == "" {
+		c.UIVerbosity = "normal"
 	}
 	if c.MaxConcurrentWorkflows == 0 {
 		c.MaxConcurrentWorkflows = 1

@@ -1,4 +1,4 @@
-# Self-hosting Foundry 0.9
+# Self-hosting Foundry 1.0
 
 Foundry has three runtime dependencies: PostgreSQL, the Foundry server, and Cerberus.
 
@@ -23,7 +23,7 @@ go run ./cmd/server /path/to/config.yaml
 Or build the image:
 
 ```sh
-docker build -t foundry:0.9 .
+docker build -t foundry:1.0 .
 ```
 
 If containerizing the server, mount:

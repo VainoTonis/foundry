@@ -1,4 +1,4 @@
-# Troubleshooting Foundry 0.9
+# Troubleshooting Foundry 1.0
 
 ## Server will not start
 

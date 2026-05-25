@@ -1,6 +1,6 @@
 # Private memory repo setup
 
-Foundry 0.9 uses a separate private git repository as durable project memory. Configure it with `memory_repo_path` in `config.yaml`.
+Foundry 1.0 uses a separate private git repository as durable project memory. Configure it with `memory_repo_path` in `config.yaml`.
 
 ## Create the repo
 

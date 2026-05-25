@@ -3,6 +3,7 @@ cerberus_bin: "cerberus"
 cerberus_image: ""
 cerberus_model: ""
 server_port: 8080
+ui_verbosity: "normal"
 max_concurrent_workflows: 1
 default_workflow_budget_usd: 0.5
 default_phase_timeout_seconds: 1800
