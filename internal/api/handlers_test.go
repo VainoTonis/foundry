@@ -88,15 +88,16 @@ func TestFormatWorkflowMemoryProposalBuildsBoundedContext(t *testing.T) {
 	prompt := "do not include prompt bodies"
 	adjusted := "do not include adjusted prompts"
 	notes := "do not include review notes"
+	phaseFeedback := []byte(`{"result":"pass","useful_context":["touched internal/memory/memory.go"],"problems":[],"suggested_memory":"remember storage writes","confidence":0.85}`)
 	proposal := formatWorkflowMemoryProposal(
 		db.Workflow{ID: 42, Track: "impl", Status: "done"},
 		db.Spec{Title: "Storage"},
 		db.Project{Name: "Foundry"},
-		[]db.Phase{{Position: 1, Name: "Persist", PromptSent: &prompt, AdjustedPrompt: &adjusted, ReviewNotes: &notes, DecisionSummary: &summary, DecisionRationale: &rationale, FilesTouched: []byte(`["internal/memory/memory.go"]`)}},
+		[]db.Phase{{Position: 1, Name: "Persist", PromptSent: &prompt, AdjustedPrompt: &adjusted, ReviewNotes: &notes, DecisionSummary: &summary, DecisionRationale: &rationale, FilesTouched: []byte(`["internal/memory/memory.go"]`), PhaseFeedback: phaseFeedback}},
 		feedback,
 	)
 
-	for _, want := range []string{"# Workflow 42 memory update", "Project: Foundry", "Spec: Storage", "## Reviewer feedback", strings.TrimSpace(feedback), "### Phase 1: Persist", "Summary: Use bounded writes", "Rationale: Avoid touching target repo", "Files touched: `"} {
+	for _, want := range []string{"# Workflow 42 memory update", "Project: Foundry", "Spec: Storage", "## Reviewer feedback", strings.TrimSpace(feedback), "### Phase 1: Persist", "Summary: Use bounded writes", "Rationale: Avoid touching target repo", "Files touched: `", "Structured feedback:", "- Result: pass", "- Useful context: touched internal/memory/memory.go", "- Suggested memory: remember storage writes", "- Confidence: 0.85"} {
 		if !strings.Contains(proposal, want) {
 			t.Fatalf("proposal missing %q:\n%s", want, proposal)
 		}

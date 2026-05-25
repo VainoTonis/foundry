@@ -1867,8 +1867,50 @@ func formatWorkflowMemoryProposal(wf db.Workflow, sp db.Spec, proj db.Project, p
 			b.WriteString(string(ph.FilesTouched))
 			b.WriteString("`\n")
 		}
+		if feedback := formatPhaseFeedback(ph.PhaseFeedback); feedback != "" {
+			b.WriteString("Structured feedback:\n")
+			b.WriteString(feedback)
+			b.WriteString("\n")
+		}
 	}
 	return strings.TrimSpace(b.String())
+}
+
+func formatPhaseFeedback(raw []byte) string {
+	if len(raw) == 0 || string(raw) == "{}" {
+		return ""
+	}
+	var fb struct {
+		Result          string   `json:"result"`
+		UsefulContext   []string `json:"useful_context"`
+		Problems        []string `json:"problems"`
+		SuggestedMemory string   `json:"suggested_memory"`
+		Confidence      float64  `json:"confidence"`
+	}
+	if err := json.Unmarshal(raw, &fb); err != nil {
+		return ""
+	}
+	var lines []string
+	if s := strings.TrimSpace(fb.Result); s != "" {
+		lines = append(lines, "- Result: "+s)
+	}
+	for _, s := range fb.UsefulContext {
+		if s = strings.TrimSpace(s); s != "" {
+			lines = append(lines, "- Useful context: "+s)
+		}
+	}
+	for _, s := range fb.Problems {
+		if s = strings.TrimSpace(s); s != "" {
+			lines = append(lines, "- Problem: "+s)
+		}
+	}
+	if s := strings.TrimSpace(fb.SuggestedMemory); s != "" {
+		lines = append(lines, "- Suggested memory: "+s)
+	}
+	if fb.Confidence != 0 {
+		lines = append(lines, fmt.Sprintf("- Confidence: %.2f", fb.Confidence))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // ---- phases ----

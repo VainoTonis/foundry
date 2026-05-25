@@ -245,12 +245,16 @@ loop:
 			}
 			if cerberusErr != nil {
 				failStatus := "failed"
+				failVerdict := "fail"
 				now2 := time.Now()
 				notes := fmt.Sprintf("cerberus start failed:\n%v", cerberusErr)
+				phaseFeedback := buildPhaseFeedback(failVerdict, notes, []byte("[]"), "")
 				_, _ = db.UpdatePhase(context.Background(), r.pool, phase.ID, db.UpdatePhaseParams{
-					Status:      &failStatus,
-					FinishedAt:  &now2,
-					ReviewNotes: &notes,
+					Status:        &failStatus,
+					FinishedAt:    &now2,
+					ReviewVerdict: &failVerdict,
+					ReviewNotes:   &notes,
+					PhaseFeedback: phaseFeedback,
 				})
 				r.publishPhaseUpdate(wf.ID, phase.ID, "failed")
 				return fmt.Errorf("cerberus: %w", cerberusErr)
@@ -261,10 +265,16 @@ loop:
 
 	if ctx.Err() != nil {
 		failStatus := "failed"
+		failVerdict := "fail"
 		now2 := time.Now()
+		notes := ctx.Err().Error()
+		phaseFeedback := buildPhaseFeedback(failVerdict, notes, []byte("[]"), "")
 		_, _ = db.UpdatePhase(context.Background(), r.pool, phase.ID, db.UpdatePhaseParams{
-			Status:     &failStatus,
-			FinishedAt: &now2,
+			Status:        &failStatus,
+			FinishedAt:    &now2,
+			ReviewVerdict: &failVerdict,
+			ReviewNotes:   &notes,
+			PhaseFeedback: phaseFeedback,
 		})
 		r.publishPhaseUpdate(wf.ID, phase.ID, "failed")
 		return ctx.Err()
@@ -296,10 +306,12 @@ loop:
 		commitHash = strings.TrimSpace(string(hashOut))
 	}
 
+	phaseFeedback := buildPhaseFeedback(verdict, notes, filesJSON, commitHash)
 	_, _ = db.UpdatePhase(ctx, r.pool, phase.ID, db.UpdatePhaseParams{
 		ReviewVerdict:  &verdict,
 		ReviewNotes:    &notes,
 		FilesTouched:   filesJSON,
+		PhaseFeedback:  phaseFeedback,
 		CerberusCommit: &commitHash,
 		FinishedAt:     &now3,
 	})
@@ -308,9 +320,11 @@ loop:
 		if commitHash == "" {
 			verdict = "fail"
 			notes = "cerberus produced diff but no commit hash found"
+			phaseFeedback = buildPhaseFeedback(verdict, notes, filesJSON, commitHash)
 			_, _ = db.UpdatePhase(ctx, r.pool, phase.ID, db.UpdatePhaseParams{
 				ReviewVerdict: &verdict,
 				ReviewNotes:   &notes,
+				PhaseFeedback: phaseFeedback,
 			})
 		} else {
 			cmd := exec.CommandContext(ctx, "git", "-C", proj.RepoPath, "cherry-pick", commitHash)
@@ -320,10 +334,12 @@ loop:
 				failStatus := "failed"
 				failVerdict := "fail"
 				cherryErr := fmt.Sprintf("cherry-pick %s failed: %v — %s", commitHash, err, strings.TrimSpace(string(out)))
+				phaseFeedback = buildPhaseFeedback(failVerdict, cherryErr, filesJSON, commitHash)
 				_, _ = db.UpdatePhase(ctx, r.pool, phase.ID, db.UpdatePhaseParams{
 					Status:        &failStatus,
 					ReviewVerdict: &failVerdict,
 					ReviewNotes:   &cherryErr,
+					PhaseFeedback: phaseFeedback,
 				})
 				r.publishPhaseUpdate(wf.ID, phase.ID, "failed")
 				return fmt.Errorf("phase %d cherry-pick: %w", phase.ID, err)
@@ -515,6 +531,50 @@ func (r *Runner) writeProfileFile(ctx context.Context, profileName, session stri
 		return "", fmt.Errorf("write profile file: %w", err)
 	}
 	return path, nil
+}
+
+type phaseFeedbackPayload struct {
+	Result          string   `json:"result"`
+	UsefulContext   []string `json:"useful_context"`
+	Problems        []string `json:"problems"`
+	SuggestedMemory string   `json:"suggested_memory"`
+	Confidence      float64  `json:"confidence"`
+}
+
+func buildPhaseFeedback(verdict, notes string, filesJSON []byte, commitHash string) []byte {
+	feedback := phaseFeedbackPayload{Result: strings.TrimSpace(verdict), Confidence: 0.6}
+	if feedback.Result == "pass" {
+		feedback.Confidence = 0.85
+	} else if feedback.Result == "fail" {
+		feedback.Confidence = 0.4
+	}
+	var files []string
+	if len(filesJSON) > 0 {
+		_ = json.Unmarshal(filesJSON, &files)
+	}
+	for _, f := range files {
+		if f = strings.TrimSpace(f); f != "" {
+			feedback.UsefulContext = append(feedback.UsefulContext, "touched "+f)
+		}
+	}
+	if commitHash = strings.TrimSpace(commitHash); commitHash != "" {
+		feedback.UsefulContext = append(feedback.UsefulContext, "commit "+commitHash)
+	}
+	if notes = strings.TrimSpace(notes); notes != "" {
+		if feedback.Result == "fail" {
+			feedback.Problems = append(feedback.Problems, notes)
+		} else {
+			feedback.UsefulContext = append(feedback.UsefulContext, notes)
+		}
+	}
+	if len(feedback.UsefulContext) > 0 {
+		feedback.SuggestedMemory = strings.Join(feedback.UsefulContext, "; ")
+	}
+	b, err := json.Marshal(feedback)
+	if err != nil {
+		return []byte(`{"result":"` + verdict + `","useful_context":[],"problems":["phase feedback marshal failed"],"suggested_memory":"","confidence":0}`)
+	}
+	return b
 }
 
 func extractFilesJSON(reviewOut string) []byte {

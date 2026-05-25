@@ -62,6 +62,7 @@ type Phase struct {
 	DecisionSummary   *string    `json:"decision_summary"`
 	DecisionRationale *string    `json:"decision_rationale"`
 	FilesTouched      []byte     `json:"files_touched"`
+	PhaseFeedback     []byte     `json:"phase_feedback"`
 }
 
 type PhaseLog struct {
@@ -448,7 +449,7 @@ func CreatePhase(ctx context.Context, pool *pgxpool.Pool, workflowID int64, posi
 		 RETURNING id, workflow_id, position, name, goal, prompt_sent, status, retry_count,
 		           timeout_seconds, cerberus_session, cerberus_commit, cost_usd,
 		           started_at, finished_at, review_verdict, review_notes,
-		           adjusted_prompt, decision_summary, decision_rationale, files_touched`,
+		           adjusted_prompt, decision_summary, decision_rationale, files_touched, phase_feedback`,
 		workflowID, position, name, goal, timeoutSeconds,
 	).Scan(phaseScans(&ph)...)
 	return ph, err
@@ -460,7 +461,7 @@ func GetPhase(ctx context.Context, pool *pgxpool.Pool, id int64) (Phase, error) 
 		`SELECT id, workflow_id, position, name, goal, prompt_sent, status, retry_count,
 		        timeout_seconds, cerberus_session, cerberus_commit, cost_usd,
 		        started_at, finished_at, review_verdict, review_notes,
-		        adjusted_prompt, decision_summary, decision_rationale, files_touched
+		        adjusted_prompt, decision_summary, decision_rationale, files_touched, phase_feedback
 		 FROM phases WHERE id = $1`, id,
 	).Scan(phaseScans(&ph)...)
 	if err == pgx.ErrNoRows {
@@ -475,7 +476,7 @@ func GetPhaseByCerberusSession(ctx context.Context, pool *pgxpool.Pool, session 
 		`SELECT id, workflow_id, position, name, goal, prompt_sent, status, retry_count,
 		        timeout_seconds, cerberus_session, cerberus_commit, cost_usd,
 		        started_at, finished_at, review_verdict, review_notes,
-		        adjusted_prompt, decision_summary, decision_rationale, files_touched
+		        adjusted_prompt, decision_summary, decision_rationale, files_touched, phase_feedback
 		 FROM phases WHERE cerberus_session = $1 ORDER BY id DESC LIMIT 1`, session,
 	).Scan(phaseScans(&ph)...)
 	if err == pgx.ErrNoRows {
@@ -489,7 +490,7 @@ func ListPhasesByWorkflow(ctx context.Context, pool *pgxpool.Pool, workflowID in
 		`SELECT id, workflow_id, position, name, goal, prompt_sent, status, retry_count,
 		        timeout_seconds, cerberus_session, cerberus_commit, cost_usd,
 		        started_at, finished_at, review_verdict, review_notes,
-		        adjusted_prompt, decision_summary, decision_rationale, files_touched
+		        adjusted_prompt, decision_summary, decision_rationale, files_touched, phase_feedback
 		 FROM phases WHERE workflow_id = $1 ORDER BY position`, workflowID,
 	)
 	if err != nil {
@@ -521,6 +522,7 @@ type UpdatePhaseParams struct {
 	DecisionSummary   *string
 	DecisionRationale *string
 	FilesTouched      []byte
+	PhaseFeedback     []byte
 	RetryCount        *int
 }
 
@@ -563,6 +565,11 @@ func UpdatePhase(ctx context.Context, pool *pgxpool.Pool, id int64, p UpdatePhas
 		args = append(args, p.FilesTouched)
 		n++
 	}
+	if p.PhaseFeedback != nil {
+		set = append(set, "phase_feedback = $"+itoa(n))
+		args = append(args, p.PhaseFeedback)
+		n++
+	}
 	if p.RetryCount != nil {
 		set = append(set, "retry_count = $"+itoa(n))
 		args = append(args, *p.RetryCount)
@@ -576,7 +583,7 @@ func UpdatePhase(ctx context.Context, pool *pgxpool.Pool, id int64, p UpdatePhas
 		` RETURNING id, workflow_id, position, name, goal, prompt_sent, status, retry_count,
 		            timeout_seconds, cerberus_session, cerberus_commit, cost_usd,
 		            started_at, finished_at, review_verdict, review_notes,
-		            adjusted_prompt, decision_summary, decision_rationale, files_touched`
+		            adjusted_prompt, decision_summary, decision_rationale, files_touched, phase_feedback`
 	var ph Phase
 	err := pool.QueryRow(ctx, q, args...).Scan(phaseScans(&ph)...)
 	if err == pgx.ErrNoRows {
@@ -591,7 +598,7 @@ func NextPendingPhase(ctx context.Context, pool *pgxpool.Pool, workflowID int64)
 		`SELECT id, workflow_id, position, name, goal, prompt_sent, status, retry_count,
 		        timeout_seconds, cerberus_session, cerberus_commit, cost_usd,
 		        started_at, finished_at, review_verdict, review_notes,
-		        adjusted_prompt, decision_summary, decision_rationale, files_touched
+		        adjusted_prompt, decision_summary, decision_rationale, files_touched, phase_feedback
 		 FROM phases WHERE workflow_id = $1 AND status = 'pending' ORDER BY position LIMIT 1`, workflowID,
 	).Scan(phaseScans(&ph)...)
 	if err == pgx.ErrNoRows {
@@ -680,7 +687,7 @@ func phaseScans(ph *Phase) []any {
 		&ph.PromptSent, &ph.Status, &ph.RetryCount,
 		&ph.TimeoutSeconds, &ph.CerberusSession, &ph.CerberusCommit, &ph.CostUSD,
 		&ph.StartedAt, &ph.FinishedAt, &ph.ReviewVerdict, &ph.ReviewNotes,
-		&ph.AdjustedPrompt, &ph.DecisionSummary, &ph.DecisionRationale, &ph.FilesTouched,
+		&ph.AdjustedPrompt, &ph.DecisionSummary, &ph.DecisionRationale, &ph.FilesTouched, &ph.PhaseFeedback,
 	}
 }
 
