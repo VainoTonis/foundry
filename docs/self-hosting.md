@@ -42,3 +42,7 @@ Foundry passes `http://localhost:<server_port>/api/cerberus/events` to Cerberus 
 ## Persistence
 
 Persist PostgreSQL data and keep target repos plus the memory repo on durable storage. Foundry stores workflow state in PostgreSQL; Cerberus applies accepted phase commits to the target git repo by cherry-picking from the Cerberus session branch.
+
+## Backups
+
+Use PostgreSQL-native backups for full recovery. For a lightweight read-only JSON snapshot of Foundry records, call `GET /api/export`; it includes projects, specs with workflows/phases/logs, spec drafts, profiles, and memory update jobs.
