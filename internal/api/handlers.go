@@ -62,6 +62,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/", s.handleUIShell)
 	s.mux.HandleFunc("/backlog", s.handleUIBacklogPage)
 	s.mux.HandleFunc("/backlog/fragment", s.handleUIBacklogFragment)
+	s.mux.HandleFunc("/backlog/projects", s.handleUIBacklogCreateProject)
+	s.mux.HandleFunc("/backlog/specs", s.handleUIBacklogCreateSpec)
+	s.mux.HandleFunc("/backlog/workflows", s.handleUIBacklogCreateWorkflow)
 	s.mux.HandleFunc("/projects", s.handleUIProjectsPage)
 	s.mux.HandleFunc("/projects/fragment", s.handleUIProjectsFragment)
 	s.mux.HandleFunc("/projects/", s.handleUIProject)
@@ -160,7 +163,7 @@ var uiTemplates = template.Must(template.New("ui").Funcs(template.FuncMap{
   </div>
   <div id="new-project" class="popover-card" popover>
     <h3>New Project</h3>
-    <form data-json method="post" action="/api/projects" data-refresh="/backlog/fragment" data-target="#app">
+    <form method="post" action="/backlog/projects" hx-post="/backlog/projects" hx-target="#app" hx-swap="innerHTML">
       <div class="field"><label>Name</label><input name="name" required></div>
       <div class="field"><label>Repo path</label><input name="repo_path" required></div>
       <div class="field"><label>Memory namespace</label><input name="memory_namespace" placeholder="Defaults to project name"><p class="hint">Leave blank to use the project name.</p></div>
@@ -169,7 +172,7 @@ var uiTemplates = template.Must(template.New("ui").Funcs(template.FuncMap{
   </div>
   <div id="new-spec" class="popover-card" popover>
     <h3>New Spec</h3>
-    <form data-json method="post" action="/api/specs" data-refresh="/backlog/fragment" data-target="#app">
+    <form method="post" action="/backlog/specs" hx-post="/backlog/specs" hx-target="#app" hx-swap="innerHTML">
       <div class="field"><label>Title</label><input name="title" required></div>
       <div class="field"><label>Project</label><select name="project_id" required>{{range .Projects}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select></div>
       <div class="field"><label>Content</label><textarea name="content" required># Feature title
@@ -191,7 +194,7 @@ What this phase does.</textarea></div>
           <article class="card">
             <div class="card-header"><a class="card-title" href="/specs/{{.ID}}" hx-get="/specs/{{.ID}}/fragment" hx-target="#app" hx-push-url="/specs/{{.ID}}">{{.Title}}</a><span class="chip chip-{{.Track}}">{{.Track}}</span><span class="chip chip-{{.Status}}">{{.Status}}</span></div>
             <div class="card-meta">Project #{{.ProjectID}} · {{date .CreatedAt}}</div>
-            <div class="card-actions"><button class="btn btn-primary" data-json-post="/api/workflows" data-body='{"spec_id":{{.ID}}}' data-redirect-template="/workflows/{id}">Run Workflow</button></div>
+            <div class="card-actions"><form method="post" action="/backlog/workflows" hx-post="/backlog/workflows"><input type="hidden" name="spec_id" value="{{.ID}}"><button class="btn btn-primary">Run Workflow</button></form></div>
           </article>
         {{end}}
       {{end}}
@@ -366,6 +369,93 @@ func (s *Server) handleUIBacklogFragment(w http.ResponseWriter, r *http.Request)
 	if err := uiTemplates.ExecuteTemplate(w, "backlog", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+func (s *Server) handleUIBacklogCreateProject(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	name := strings.TrimSpace(r.FormValue("name"))
+	repoPath := strings.TrimSpace(r.FormValue("repo_path"))
+	memoryNamespace := strings.TrimSpace(r.FormValue("memory_namespace"))
+	if memoryNamespace == "" {
+		memoryNamespace = name
+	}
+	if _, err := db.CreateProject(r.Context(), s.pool, name, repoPath, memoryNamespace); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.handleUIBacklogFragment(w, r)
+}
+
+func (s *Server) handleUIBacklogCreateSpec(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	projectID, err := strconv.ParseInt(r.FormValue("project_id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid project_id", http.StatusBadRequest)
+		return
+	}
+	if _, err := db.CreateSpec(r.Context(), s.pool, projectID, strings.TrimSpace(r.FormValue("title")), r.FormValue("content"), []byte("[]")); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.handleUIBacklogFragment(w, r)
+}
+
+func (s *Server) handleUIBacklogCreateWorkflow(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	specID, err := strconv.ParseInt(r.FormValue("spec_id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid spec_id", http.StatusBadRequest)
+		return
+	}
+	sp, err := db.GetSpec(r.Context(), s.pool, specID)
+	if errors.Is(err, db.ErrNotFound) {
+		http.Error(w, "spec not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	maxCost := &s.defaultBudget
+	if raw := strings.TrimSpace(r.FormValue("max_cost_usd")); raw != "" {
+		parsed, err := strconv.ParseFloat(raw, 64)
+		if err != nil {
+			http.Error(w, "invalid max_cost_usd", http.StatusBadRequest)
+			return
+		}
+		maxCost = &parsed
+	}
+	wf, err := db.CreateWorkflow(r.Context(), s.pool, sp.ID, sp.Track, maxCost)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	runStatus := "running"
+	_, _ = db.UpdateSpec(r.Context(), s.pool, sp.ID, db.UpdateSpecParams{Status: &runStatus})
+	s.runner.Start(wf.ID)
+	w.Header().Set("HX-Redirect", fmt.Sprintf("/workflows/%d", wf.ID))
+	w.WriteHeader(http.StatusCreated)
 }
 
 type uiRepoItem struct {
