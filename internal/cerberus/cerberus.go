@@ -189,6 +189,23 @@ func (c *Client) Message(ctx context.Context, session, msg, callbackURL string) 
 	return c.run(ctx, args...)
 }
 
+// Generate sends a single prompt to an interactive cerberus session and returns stdout.
+// The caller is responsible for cleaning the session when desired.
+// cerberus chat --name <session> --prompt <prompt>
+func (c *Client) Generate(ctx context.Context, session, prompt string) (string, error) {
+	args := []string{"chat", "--name", session, "--prompt", prompt}
+	if c.image != "" {
+		args = append(args, "--image", c.image)
+	}
+	if c.model != "" {
+		args = append(args, "--model", c.model)
+	}
+	if c.profile != "" {
+		args = append(args, "--profile-file", c.profile)
+	}
+	return c.output(ctx, args...)
+}
+
 // Close commits any changes and cleans up an interactive session.
 // cerberus close --name <session>
 func (c *Client) Close(ctx context.Context, session string) error {

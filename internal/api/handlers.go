@@ -1540,7 +1540,7 @@ func (s *Server) handleWorkflowMemoryUpdate(w http.ResponseWriter, r *http.Reque
 		}
 		if proposal == "" {
 			var err error
-			proposal, err = s.buildWorkflowMemoryProposal(r.Context(), workflowID, comment)
+			proposal, err = s.generateWorkflowMemoryProposal(r.Context(), workflowID, comment, "")
 			if errors.Is(err, db.ErrNotFound) {
 				jsonErr(w, "not found", http.StatusNotFound)
 				return
@@ -1624,7 +1624,19 @@ func (s *Server) handleWorkflowMemoryUpdate(w http.ResponseWriter, r *http.Reque
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		job, err = db.UpdateMemoryUpdateJob(r.Context(), s.pool, job.ID, reviseMemoryUpdateParams(body.Comment, body.ProposalMarkdown))
+		proposal := strings.TrimSpace(body.ProposalMarkdown)
+		if proposal == "" {
+			proposal, err = s.generateWorkflowMemoryProposal(r.Context(), workflowID, body.Comment, job.ProposalMarkdown)
+			if errors.Is(err, db.ErrNotFound) {
+				jsonErr(w, "not found", http.StatusNotFound)
+				return
+			}
+			if err != nil {
+				jsonErr(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+		job, err = db.UpdateMemoryUpdateJob(r.Context(), s.pool, job.ID, reviseMemoryUpdateParams(body.Comment, proposal))
 		if err != nil {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -1700,7 +1712,19 @@ func (s *Server) handleMemoryUpdate(w http.ResponseWriter, r *http.Request) {
 			jsonErr(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		job, err = db.UpdateMemoryUpdateJob(r.Context(), s.pool, job.ID, reviseMemoryUpdateParams(body.Comment, body.ProposalMarkdown))
+		proposal := strings.TrimSpace(body.ProposalMarkdown)
+		if proposal == "" {
+			proposal, err = s.generateWorkflowMemoryProposal(r.Context(), job.WorkflowID, body.Comment, job.ProposalMarkdown)
+			if errors.Is(err, db.ErrNotFound) {
+				jsonErr(w, "not found", http.StatusNotFound)
+				return
+			}
+			if err != nil {
+				jsonErr(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+		job, err = db.UpdateMemoryUpdateJob(r.Context(), s.pool, job.ID, reviseMemoryUpdateParams(body.Comment, proposal))
 		if err != nil {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -1732,6 +1756,63 @@ func reviseMemoryUpdateParams(comment, proposal string) db.UpdateMemoryUpdateJob
 		params.ProposalMarkdown = &proposal
 	}
 	return params
+}
+
+func (s *Server) generateWorkflowMemoryProposal(ctx context.Context, workflowID int64, comment, previousProposal string) (string, error) {
+	contextMarkdown, err := s.buildWorkflowMemoryProposal(ctx, workflowID, comment)
+	if err != nil {
+		return "", err
+	}
+	return s.generateMemoryProposalMarkdown(ctx, workflowID, contextMarkdown, comment, previousProposal)
+}
+
+func (s *Server) generateMemoryProposalMarkdown(ctx context.Context, workflowID int64, contextMarkdown, comment, previousProposal string) (string, error) {
+	if strings.TrimSpace(s.memoryRepoPath) == "" {
+		return "", fmt.Errorf("memory repo path not configured")
+	}
+	if s.cerb == nil {
+		return "", fmt.Errorf("cerberus client not configured")
+	}
+	session := fmt.Sprintf("foundry-memory-update-%d-%d", workflowID, time.Now().UnixNano())
+	profilePath, profileErr := s.writeProfileFile(ctx, session)
+	if profileErr != nil {
+		log.Printf("memory update proposal: write profile file: %v (proceeding without profile)", profileErr)
+	}
+	defer removeProfileFile(session)
+	s.cerb.SetProfile(profilePath)
+	s.cerb.SetRepoPath(s.memoryRepoPath)
+	out, err := s.cerb.Generate(ctx, session, memoryProposalPrompt(contextMarkdown, comment, previousProposal))
+	if cleanErr := s.cerb.Clean(ctx, session); cleanErr != nil {
+		log.Printf("memory update proposal: clean session %s: %v", session, cleanErr)
+	}
+	if err != nil {
+		return "", err
+	}
+	proposal := strings.TrimSpace(out)
+	if proposal == "" {
+		return "", fmt.Errorf("cerberus returned empty memory proposal")
+	}
+	return proposal, nil
+}
+
+func memoryProposalPrompt(contextMarkdown, comment, previousProposal string) string {
+	var b strings.Builder
+	b.WriteString("You are updating a private project memory repository. Read the existing memory files in /workspace as needed, but do not create, edit, delete, or commit files.\n\n")
+	b.WriteString("Return only the proposed durable memory update as markdown. Include concise facts that should help future work on this project. Exclude transient logs, prompt bodies, and implementation noise.\n")
+	if strings.TrimSpace(comment) != "" {
+		b.WriteString("\nReviewer instruction:\n")
+		b.WriteString(strings.TrimSpace(comment))
+		b.WriteString("\n")
+	}
+	if strings.TrimSpace(previousProposal) != "" {
+		b.WriteString("\nCurrent proposal to revise:\n")
+		b.WriteString(strings.TrimSpace(previousProposal))
+		b.WriteString("\n")
+	}
+	b.WriteString("\nWorkflow context:\n")
+	b.WriteString(strings.TrimSpace(contextMarkdown))
+	b.WriteString("\n")
+	return b.String()
 }
 
 func (s *Server) workflowProject(ctx context.Context, workflowID int64) (db.Workflow, db.Spec, db.Project, error) {

@@ -81,7 +81,7 @@ func TestMemoryReviewStateHelpers(t *testing.T) {
 	}
 }
 
-func TestFormatWorkflowMemoryProposalBoundaries(t *testing.T) {
+func TestFormatWorkflowMemoryProposalBuildsBoundedContext(t *testing.T) {
 	feedback := " remember the durable bit "
 	summary := "Use bounded writes"
 	rationale := "Avoid touching target repo"
@@ -108,6 +108,15 @@ func TestFormatWorkflowMemoryProposalBoundaries(t *testing.T) {
 	}
 	if strings.HasSuffix(proposal, "\n") {
 		t.Fatalf("proposal was not trimmed:\n%s", proposal)
+	}
+}
+
+func TestMemoryProposalPromptIncludesRevisionInputs(t *testing.T) {
+	prompt := memoryProposalPrompt("# Workflow 9 memory update\n\nContext", " tighten this ", "# Old proposal")
+	for _, want := range []string{"Return only the proposed durable memory update as markdown", "do not create, edit, delete, or commit files", "Reviewer instruction:\ntighten this", "Current proposal to revise:\n# Old proposal", "Workflow context:\n# Workflow 9 memory update"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, prompt)
+		}
 	}
 }
 
