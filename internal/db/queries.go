@@ -383,6 +383,26 @@ func GetMemoryUpdateJob(ctx context.Context, pool *pgxpool.Pool, id int64) (Memo
 	))
 }
 
+func ListMemoryUpdateJobs(ctx context.Context, pool *pgxpool.Pool) ([]MemoryUpdateJob, error) {
+	rows, err := pool.Query(ctx,
+		`SELECT id, workflow_id, status, proposal_markdown, reviewer_comment, memory_path, created_at, updated_at
+		 FROM memory_update_jobs ORDER BY id`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []MemoryUpdateJob
+	for rows.Next() {
+		var j MemoryUpdateJob
+		if err := rows.Scan(&j.ID, &j.WorkflowID, &j.Status, &j.ProposalMarkdown, &j.ReviewerComment, &j.MemoryPath, &j.CreatedAt, &j.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
 func GetLatestMemoryUpdateJobByWorkflow(ctx context.Context, pool *pgxpool.Pool, workflowID int64) (MemoryUpdateJob, error) {
 	return scanMemoryUpdateJob(pool.QueryRow(ctx,
 		`SELECT id, workflow_id, status, proposal_markdown, reviewer_comment, memory_path, created_at, updated_at

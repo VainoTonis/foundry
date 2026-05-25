@@ -909,10 +909,11 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 		Workflows []exportWorkflow `json:"workflows"`
 	}
 	type exportPayload struct {
-		Projects   []db.Project   `json:"projects"`
-		Specs      []exportSpec   `json:"specs"`
-		SpecDrafts []db.SpecDraft `json:"spec_drafts"`
-		Profiles   []db.Profile   `json:"profiles"`
+		Projects         []db.Project         `json:"projects"`
+		Specs            []exportSpec         `json:"specs"`
+		MemoryUpdateJobs []db.MemoryUpdateJob `json:"memory_update_jobs"`
+		SpecDrafts       []db.SpecDraft       `json:"spec_drafts"`
+		Profiles         []db.Profile         `json:"profiles"`
 	}
 
 	ctx := r.Context()
@@ -958,6 +959,10 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 		exportSpecs = append(exportSpecs, exportSpec{Spec: spec, Workflows: exportWorkflows})
 	}
 
+	memoryUpdateJobs, err := db.ListMemoryUpdateJobs(ctx, s.pool)
+	if fail(err) {
+		return
+	}
 	specDrafts, err := db.ListSpecDrafts(ctx, s.pool)
 	if fail(err) {
 		return
@@ -967,7 +972,7 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jsonOK(w, exportPayload{Projects: projects, Specs: exportSpecs, SpecDrafts: specDrafts, Profiles: profiles}, http.StatusOK)
+	jsonOK(w, exportPayload{Projects: projects, Specs: exportSpecs, MemoryUpdateJobs: memoryUpdateJobs, SpecDrafts: specDrafts, Profiles: profiles}, http.StatusOK)
 }
 
 // ---- projects ----
