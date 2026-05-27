@@ -264,7 +264,7 @@ What this phase does.</textarea></div>
 {{end}}
 
 {{define "phaseLogs"}}
-<div><h3>Logs · Phase #{{.Phase.ID}} {{.Phase.Name}}</h3><div class="log-box" data-log-stream="/api/phases/{{.Phase.ID}}/logs/stream?after_id={{.LastLogID}}">{{range .Logs}}<div class="log-line"><span class="log-ts">{{datetime .Ts}}</span>{{.Line}}</div>{{end}}</div></div>
+<div><h3>Logs · Phase #{{.Phase.ID}} {{.Phase.Name}}</h3><div class="log-box" data-log-stream="/api/phases/{{.Phase.ID}}/logs/stream?after_id={{.LastLogID}}" data-log-last-id="{{.LastLogID}}">{{range .Logs}}<div class="log-line" data-log-id="{{.ID}}"><span class="log-ts">{{datetime .Ts}}</span>{{.Line}}</div>{{end}}</div></div>
 {{end}}
 
 {{define "phaseDiff"}}
@@ -2041,6 +2041,15 @@ func (s *Server) streamLogs(w http.ResponseWriter, r *http.Request, phaseID int6
 		jsonErr(w, "streaming not supported", http.StatusInternalServerError)
 		return
 	}
+	ph, err := db.GetPhase(r.Context(), s.pool, phaseID)
+	if errors.Is(err, db.ErrNotFound) {
+		jsonErr(w, "not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		jsonErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -2051,29 +2060,76 @@ func (s *Server) streamLogs(w http.ResponseWriter, r *http.Request, phaseID int6
 			lastID = parsed
 		}
 	}
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
+
+	sendCatchup := func() bool {
+		logs, err := db.StreamPhaseLogs(r.Context(), s.pool, phaseID, lastID)
+		if err != nil {
+			return false
+		}
+		for _, l := range logs {
+			data, _ := json.Marshal(l)
+			fmt.Fprintf(w, "id: %d\ndata: %s\n\n", l.ID, data)
+			lastID = l.ID
+		}
+		flusher.Flush()
+		return true
+	}
+	isTerminal := func() bool {
+		ph, err := db.GetPhase(r.Context(), s.pool, phaseID)
+		if err != nil {
+			return true
+		}
+		return ph.Status == "done" || ph.Status == "failed"
+	}
+
+	if !sendCatchup() {
+		return
+	}
+	if isTerminal() {
+		fmt.Fprintf(w, "event: done\ndata: {}\n\n")
+		flusher.Flush()
+		return
+	}
+
+	key := fmt.Sprintf("wf:%d", ph.WorkflowID)
+	ch := s.eventHub.Subscribe(key)
+	defer s.eventHub.Unsubscribe(key, ch)
+	heartbeat := time.NewTicker(15 * time.Second)
+	defer heartbeat.Stop()
 	for {
 		select {
 		case <-r.Context().Done():
 			return
-		case <-ticker.C:
-			logs, err := db.StreamPhaseLogs(r.Context(), s.pool, phaseID, lastID)
-			if err != nil {
+		case <-heartbeat.C:
+			if !sendCatchup() {
 				return
 			}
-			for _, l := range logs {
-				data, _ := json.Marshal(l)
-				fmt.Fprintf(w, "data: %s\n\n", data)
-				lastID = l.ID
-			}
+			fmt.Fprintf(w, "event: heartbeat\ndata: {}\n\n")
 			flusher.Flush()
-			// stop streaming if phase is terminal
-			ph, err := db.GetPhase(r.Context(), s.pool, phaseID)
-			if err != nil {
+			if isTerminal() {
+				fmt.Fprintf(w, "event: done\ndata: {}\n\n")
+				flusher.Flush()
 				return
 			}
-			if ph.Status == "done" || ph.Status == "failed" {
+		case data, ok := <-ch:
+			if !ok {
+				return
+			}
+			var evt struct {
+				Event   string `json:"event"`
+				PhaseID int64  `json:"phase_id"`
+			}
+			if json.Unmarshal(data, &evt) != nil {
+				continue
+			}
+			if evt.Event == "log" && evt.PhaseID == phaseID {
+				if !sendCatchup() {
+					return
+				}
+			} else if evt.Event == "phase_update" && evt.PhaseID == phaseID && (isTerminal()) {
+				if !sendCatchup() {
+					return
+				}
 				fmt.Fprintf(w, "event: done\ndata: {}\n\n")
 				flusher.Flush()
 				return

@@ -57,9 +57,67 @@ async function sendJSON(method, url, body) {
   const init = { method, headers: { 'Content-Type': 'application/json' } };
   if (body !== undefined) init.body = JSON.stringify(body);
   const res = await fetch(url, init);
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) {
+    let message = await res.text();
+    try { message = JSON.parse(message).error || message; } catch (_) {}
+    throw new Error(message);
+  }
   if (res.status === 204) return null;
   return res.json();
+}
+
+function ensureToastHost() {
+  let host = document.getElementById('toast-host');
+  if (!host) {
+    host = document.createElement('div');
+    host.id = 'toast-host';
+    host.className = 'toast-host';
+    host.setAttribute('aria-live', 'polite');
+    document.body.appendChild(host);
+  }
+  return host;
+}
+
+function toast(message, kind = 'info') {
+  const host = ensureToastHost();
+  const item = document.createElement('div');
+  item.className = `toast toast-${kind}`;
+  item.textContent = message;
+  host.appendChild(item);
+  setTimeout(() => item.remove(), 4500);
+}
+
+function pendingLabel(el) {
+  return el?.dataset.pendingLabel || 'Working…';
+}
+
+function setPending(scope, pending) {
+  if (!scope) return;
+  const control = scope.matches?.('button, .btn') ? scope : scope.querySelector?.('button, .btn');
+  const controls = scope.matches?.('form') ? scope.querySelectorAll('button, input, select, textarea') : [scope];
+  controls.forEach?.((el) => {
+    if (!el) return;
+    if (pending) {
+      el.dataset.wasDisabled = el.disabled ? '1' : '0';
+      el.disabled = true;
+      el.setAttribute('aria-busy', 'true');
+    } else {
+      if (el.dataset.wasDisabled !== '1') el.disabled = false;
+      el.removeAttribute('aria-busy');
+      delete el.dataset.wasDisabled;
+    }
+  });
+  if (control) {
+    if (pending) {
+      if (!control.dataset.originalText) control.dataset.originalText = control.textContent;
+      control.classList.add('is-pending');
+      control.textContent = pendingLabel(control);
+    } else {
+      control.classList.remove('is-pending');
+      if (control.dataset.originalText) control.textContent = control.dataset.originalText;
+      delete control.dataset.originalText;
+    }
+  }
 }
 
 function redirectFrom(el, data) {
@@ -108,7 +166,7 @@ async function submitDraftMessage(form) {
   } catch (err) {
     setDraftInputDisabled(false);
     if (liveAssistantBody) liveAssistantBody.textContent = 'Error: ' + (err.message || String(err));
-    alert(err.message || String(err));
+    toast(err.message || String(err), 'error');
   }
 }
 
@@ -124,10 +182,15 @@ document.addEventListener('submit', async (event) => {
   event.preventDefault();
   try {
     const method = form.dataset.method || (form.matches('[data-settings]') ? 'PATCH' : (form.method || 'POST').toUpperCase());
-    const data = await sendJSON(method, form.action, formJSON(form));
+    const body = formJSON(form);
+    setPending(form, true);
+    const data = await sendJSON(method, form.action, body);
+    toast('Saved', 'success');
     if (!redirectFrom(form, data)) refresh(form.dataset.refresh, form.dataset.target);
   } catch (err) {
-    alert(err.message || String(err));
+    toast(err.message || String(err), 'error');
+  } finally {
+    setPending(form, false);
   }
 });
 
@@ -143,15 +206,20 @@ document.addEventListener('click', async (event) => {
   const button = event.target.closest('[data-json-post], [data-json-patch], [data-json-delete]');
   if (!button) return;
   event.preventDefault();
+  if (button.disabled) return;
   if (button.hasAttribute('data-confirm') && !window.confirm(button.dataset.confirm)) return;
+  setPending(button, true);
   try {
     const body = button.dataset.body ? JSON.parse(button.dataset.body) : {};
     const method = button.dataset.jsonDelete ? 'DELETE' : (button.dataset.jsonPatch ? 'PATCH' : 'POST');
     const url = button.dataset.jsonDelete || button.dataset.jsonPatch || button.dataset.jsonPost;
     const data = await sendJSON(method, url, method === 'DELETE' ? undefined : body);
+    toast('Done', 'success');
     if (!redirectFrom(button, data)) refresh(button.dataset.refresh, button.dataset.target);
   } catch (err) {
-    alert(err.message || String(err));
+    toast(err.message || String(err), 'error');
+  } finally {
+    setPending(button, false);
   }
 });
 
@@ -279,21 +347,35 @@ function initDraftStream(root) {
   draftSource.onerror = finish;
 }
 
+function appendLogRow(box, log) {
+  const id = Number(log.id || 0);
+  const last = Number(box.dataset.logLastId || 0);
+  if (id && id <= last) return;
+  const row = document.createElement('div');
+  row.className = 'log-line';
+  if (id) row.dataset.logId = String(id);
+  const ts = document.createElement('span');
+  ts.className = 'log-ts';
+  ts.textContent = formatSSETime(log.ts);
+  row.appendChild(ts);
+  row.append(document.createTextNode(log.line || ''));
+  box.appendChild(row);
+  if (id) {
+    box.dataset.logLastId = String(id);
+    box.dataset.logStream = box.dataset.logStream.replace(/([?&]after_id=)\d+/, `$1${id}`);
+  }
+  box.scrollTop = box.scrollHeight;
+}
+
 function initLogStream(root) {
   const box = root.querySelector?.('[data-log-stream]');
   if (logSource) { logSource.close(); logSource = null; }
   if (!box) return;
   logSource = new EventSource(box.dataset.logStream);
   logSource.onmessage = (ev) => {
-    try {
-      const log = JSON.parse(ev.data);
-      const row = document.createElement('div');
-      row.className = 'log-line';
-      row.textContent = `${log.ts || ''} ${log.line || ''}`;
-      box.appendChild(row);
-      box.scrollTop = box.scrollHeight;
-    } catch (_) {}
+    try { appendLogRow(box, JSON.parse(ev.data)); } catch (_) {}
   };
+  logSource.addEventListener('done', () => { if (logSource) { logSource.close(); logSource = null; } });
 }
 
 function initStreams(root) {
@@ -301,6 +383,17 @@ function initStreams(root) {
   initDraftStream(root);
   initLogStream(root);
 }
+
+document.body.addEventListener('htmx:beforeRequest', (event) => {
+  const el = event.detail.elt;
+  if (el?.matches?.('form, button, .btn')) setPending(el, true);
+});
+
+document.body.addEventListener('htmx:afterRequest', (event) => {
+  const el = event.detail.elt;
+  if (el?.matches?.('form, button, .btn')) setPending(el, false);
+  if (event.detail.failed) toast(event.detail.xhr?.responseText || 'Request failed', 'error');
+});
 
 document.body.addEventListener('htmx:afterSwap', (event) => {
   if (event.detail.target.id === 'app') {
