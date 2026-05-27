@@ -83,6 +83,26 @@ type MemoryUpdateJob struct {
 	UpdatedAt        time.Time `json:"updated_at"`
 }
 
+type KnownCerberusSession struct {
+	Session       string     `json:"session"`
+	Type          string     `json:"type"`
+	FoundryStatus string     `json:"foundry_status"`
+	ProjectID     *int64     `json:"project_id,omitempty"`
+	ProjectName   string     `json:"project_name"`
+	ProjectRepo   string     `json:"project_repo"`
+	SpecID        *int64     `json:"spec_id,omitempty"`
+	SpecTitle     string     `json:"spec_title"`
+	WorkflowID    *int64     `json:"workflow_id,omitempty"`
+	PhaseID       *int64     `json:"phase_id,omitempty"`
+	PhaseName     string     `json:"phase_name"`
+	DraftID       *int64     `json:"draft_id,omitempty"`
+	DraftTitle    string     `json:"draft_title"`
+	LastUpdatedAt time.Time  `json:"last_updated_at"`
+	FinishedAt    *time.Time `json:"finished_at,omitempty"`
+	SafeToClean   bool       `json:"safe_to_clean"`
+	UnsafeReason  string     `json:"unsafe_reason,omitempty"`
+}
+
 // --- Projects ---
 
 func CreateProject(ctx context.Context, pool *pgxpool.Pool, name, repoPath, memoryNamespace string) (Project, error) {
@@ -697,6 +717,70 @@ func itoa(n int) string {
 
 func joinComma(s []string) string {
 	return strings.Join(s, ", ")
+}
+
+// --- Cerberus sessions known to Foundry ---
+
+func ListKnownCerberusSessions(ctx context.Context, pool *pgxpool.Pool) ([]KnownCerberusSession, error) {
+	rows, err := pool.Query(ctx, `
+		SELECT p.cerberus_session, 'workflow_phase', p.status,
+		       pr.id, pr.name, pr.repo_path, s.id, s.title, w.id, p.id, p.name,
+		       COALESCE(p.finished_at, p.started_at, w.finished_at, w.created_at), p.finished_at
+		FROM phases p
+		JOIN workflows w ON w.id = p.workflow_id
+		JOIN specs s ON s.id = w.spec_id
+		JOIN projects pr ON pr.id = s.project_id
+		WHERE p.cerberus_session IS NOT NULL AND p.cerberus_session <> ''
+		ORDER BY COALESCE(p.finished_at, p.started_at, w.finished_at, w.created_at) DESC, p.id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []KnownCerberusSession{}
+	for rows.Next() {
+		var k KnownCerberusSession
+		var typ string
+		if err := rows.Scan(&k.Session, &typ, &k.FoundryStatus, &k.ProjectID, &k.ProjectName, &k.ProjectRepo, &k.SpecID, &k.SpecTitle, &k.WorkflowID, &k.PhaseID, &k.PhaseName, &k.LastUpdatedAt, &k.FinishedAt); err != nil {
+			return nil, err
+		}
+		k.Type = typ
+		if k.FoundryStatus == "done" || k.FoundryStatus == "failed" {
+			k.SafeToClean = true
+		} else {
+			k.UnsafeReason = "workflow phase is not terminal"
+		}
+		out = append(out, k)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	rows, err = pool.Query(ctx, `
+		SELECT d.cerberus_session, 'spec_draft', d.status,
+		       pr.id, COALESCE(pr.name, ''), COALESCE(pr.repo_path, ''), d.id, d.title, d.updated_at
+		FROM spec_drafts d
+		LEFT JOIN projects pr ON pr.id = d.project_id
+		WHERE d.cerberus_session <> ''
+		ORDER BY d.updated_at DESC, d.id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var k KnownCerberusSession
+		var typ string
+		if err := rows.Scan(&k.Session, &typ, &k.FoundryStatus, &k.ProjectID, &k.ProjectName, &k.ProjectRepo, &k.DraftID, &k.DraftTitle, &k.LastUpdatedAt); err != nil {
+			return nil, err
+		}
+		k.Type = typ
+		if k.FoundryStatus == "saved" || k.FoundryStatus == "error" {
+			k.SafeToClean = true
+		} else {
+			k.UnsafeReason = "spec draft is active"
+		}
+		out = append(out, k)
+	}
+	return out, rows.Err()
 }
 
 // --- SpecDrafts ---

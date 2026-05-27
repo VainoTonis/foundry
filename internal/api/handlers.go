@@ -93,6 +93,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/api/settings", s.handleSettings)
 	s.mux.HandleFunc("/api/profiles", s.handleProfiles)
 	s.mux.HandleFunc("/api/profiles/", s.handleProfile)
+	s.mux.HandleFunc("/api/cerberus/sessions", s.handleCerberusSessions)
+	s.mux.HandleFunc("/api/cerberus/sessions/", s.handleCerberusSession)
 	s.mux.HandleFunc("/api/cerberus/events", s.handleCerberusCallback)
 	s.mux.HandleFunc("/api/spec-drafts", s.handleSpecDrafts)
 	s.mux.HandleFunc("/api/spec-drafts/", s.handleSpecDraft)
@@ -124,6 +126,9 @@ var uiTemplates = template.Must(template.New("ui").Funcs(template.FuncMap{
 	"json": func(v any) string {
 		b, _ := json.MarshalIndent(v, "", "  ")
 		return string(b)
+	},
+	"cleanSessionURL": func(session string) string {
+		return "/api/cerberus/sessions/" + session + "/clean"
 	},
 }).Parse(`
 {{define "shell"}}
@@ -303,6 +308,9 @@ What this phase does.</textarea></div>
     <p class="hint">Changes are written to config.yaml. Restart the server for most changes to take effect.</p>
     <button class="btn btn-primary">Save</button>
   </form>
+  <h3 style="margin-top:2rem;margin-bottom:1rem">Cerberus sessions</h3>
+  {{if .SessionError}}<div class="empty">{{.SessionError}}</div>{{end}}
+  {{if .Sessions}}{{range .Sessions}}<article class="card"><div class="card-header"><span class="card-title">{{.Session}}</span><span class="chip chip-{{.FoundryStatus}}">{{.FoundryStatus}}</span>{{if .SafeToClean}}<span class="chip chip-done">safe cleanup</span>{{else}}<span class="chip chip-running">active / protected</span>{{end}}</div><div class="card-meta">{{.Type}}{{if .ProjectName}} · {{.ProjectName}}{{end}}{{if .SpecTitle}} · spec: {{.SpecTitle}}{{end}}{{if .PhaseName}} · phase: {{.PhaseName}}{{end}}{{if .DraftTitle}} · draft: {{.DraftTitle}}{{end}} · updated {{datetime .LastUpdatedAt}}</div><div class="card-meta">Cerberus: {{if .CerberusStatus}}{{.CerberusStatus}}{{else}}unknown{{end}}{{if .CerberusError}} · {{.CerberusError}}{{end}}{{if .UnsafeReason}} · {{.UnsafeReason}}{{end}}</div><div class="card-actions"><button class="btn" data-json-post="{{cleanSessionURL .Session}}" data-refresh="/settings/fragment" data-target="#app" {{if not .SafeToClean}}disabled title="{{.UnsafeReason}}"{{end}}>Clean session</button></div></article>{{end}}{{else}}<div class="empty">No Foundry-known Cerberus sessions.</div>{{end}}
   <h3 style="margin-top:2rem;margin-bottom:1rem">Profiles</h3>
   <form data-json method="post" action="/api/profiles" data-refresh="/settings/fragment" data-target="#app">
     <div class="field"><label>Name</label><input name="name" required></div>
@@ -851,6 +859,12 @@ func (s *Server) handleUISpecBuilderDetailFragment(w http.ResponseWriter, r *htt
 	}
 }
 
+type cerberusSessionView struct {
+	db.KnownCerberusSession
+	CerberusStatus string `json:"cerberus_status"`
+	CerberusError  string `json:"cerberus_error,omitempty"`
+}
+
 func (s *Server) handleUISettingsFragment(w http.ResponseWriter, r *http.Request) {
 	data, err := os.ReadFile(s.cfgPath)
 	if err != nil {
@@ -858,6 +872,11 @@ func (s *Server) handleUISettingsFragment(w http.ResponseWriter, r *http.Request
 		return
 	}
 	profiles, _ := db.ListProfiles(r.Context(), s.pool)
+	sessions, sessionErr := s.knownCerberusSessionViews(r.Context(), true)
+	sessionErrMsg := ""
+	if sessionErr != nil {
+		sessionErrMsg = sessionErr.Error()
+	}
 	type setting struct {
 		Key, Value  string
 		IsVerbosity bool
@@ -880,12 +899,104 @@ func (s *Server) handleUISettingsFragment(w http.ResponseWriter, r *http.Request
 	if err := uiTemplates.ExecuteTemplate(w, "settings", struct {
 		Settings       []setting
 		Profiles       []db.Profile
+		Sessions       []cerberusSessionView
+		SessionError   string
 		HasVerbosity   bool
 		VerbosityKey   string
 		VerbosityValue string
-	}{settings, profiles, verbosityKey != "", verbosityKey, verbosityValue}); err != nil {
+	}{settings, profiles, sessions, sessionErrMsg, verbosityKey != "", verbosityKey, verbosityValue}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+func (s *Server) knownCerberusSessionViews(ctx context.Context, withStatus bool) ([]cerberusSessionView, error) {
+	known, err := db.ListKnownCerberusSessions(ctx, s.pool)
+	if err != nil {
+		return nil, err
+	}
+	views := make([]cerberusSessionView, 0, len(known))
+	for _, k := range known {
+		v := cerberusSessionView{KnownCerberusSession: k}
+		if withStatus && s.cerb != nil {
+			if strings.TrimSpace(k.ProjectRepo) != "" {
+				s.cerb.SetRepoPath(k.ProjectRepo)
+			}
+			status, err := s.cerb.Status(ctx, k.Session)
+			if err != nil {
+				v.CerberusError = err.Error()
+			} else {
+				v.CerberusStatus = status
+			}
+		}
+		views = append(views, v)
+	}
+	return views, nil
+}
+
+func (s *Server) handleCerberusSessions(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		views, err := s.knownCerberusSessionViews(r.Context(), true)
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonOK(w, views, http.StatusOK)
+	default:
+		jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleCerberusSession(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/cerberus/sessions/")
+	if strings.HasSuffix(path, "/clean") && r.Method == http.MethodPost {
+		session := strings.TrimSuffix(path, "/clean")
+		force := r.URL.Query().Get("force") == "1" || r.URL.Query().Get("force") == "true"
+		var body struct {
+			Force bool `json:"force"`
+		}
+		if r.Body != nil {
+			if err := json.NewDecoder(r.Body).Decode(&body); err == nil && body.Force {
+				force = true
+			}
+		}
+		s.cleanKnownCerberusSession(w, r, session, force)
+		return
+	}
+	jsonErr(w, "not found", http.StatusNotFound)
+}
+
+func (s *Server) cleanKnownCerberusSession(w http.ResponseWriter, r *http.Request, session string, force bool) {
+	known, err := db.ListKnownCerberusSessions(r.Context(), s.pool)
+	if err != nil {
+		jsonErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	var item *db.KnownCerberusSession
+	for i := range known {
+		if known[i].Session == session {
+			item = &known[i]
+			break
+		}
+	}
+	if item == nil {
+		jsonErr(w, "unknown Foundry session", http.StatusNotFound)
+		return
+	}
+	if !item.SafeToClean && !force {
+		jsonErr(w, "refusing to clean active session: "+item.UnsafeReason, http.StatusConflict)
+		return
+	}
+	if strings.TrimSpace(item.ProjectRepo) != "" {
+		s.cerb.SetRepoPath(item.ProjectRepo)
+	}
+	if err := s.cerb.Clean(r.Context(), item.Session); err != nil {
+		jsonErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	db.DeleteCerberusEvents(r.Context(), s.pool, item.Session)
+	removeProfileFile(item.Session)
+	jsonOK(w, map[string]string{"status": "cleaned", "session": item.Session}, http.StatusOK)
 }
 
 // ---- export ----
@@ -2023,10 +2134,14 @@ func (s *Server) handlePhase(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if ph.CerberusSession != nil {
+			if _, _, proj, err := s.workflowProject(r.Context(), ph.WorkflowID); err == nil {
+				s.cerb.SetRepoPath(proj.RepoPath)
+			}
 			if err := s.cerb.Clean(r.Context(), *ph.CerberusSession); err != nil {
 				jsonErr(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
+			db.DeleteCerberusEvents(r.Context(), s.pool, *ph.CerberusSession)
 			removeProfileFile(*ph.CerberusSession)
 		}
 		jsonOK(w, map[string]string{"status": "cleaned"}, http.StatusOK)
@@ -2534,15 +2649,6 @@ func (s *Server) handleSpecDraft(w http.ResponseWriter, r *http.Request) {
 			jsonErr(w, "could not extract spec from conversation — ask the agent to update the spec with full spec content", http.StatusUnprocessableEntity)
 			return
 		}
-		s.cerb.SetRepoPath(s.memoryRepoPath)
-		if err := s.cerb.Close(r.Context(), draft.CerberusSession); err != nil {
-			log.Printf("spec-builder close error: %v", err)
-		}
-		if err := s.cerb.Clean(r.Context(), draft.CerberusSession); err != nil {
-			log.Printf("spec-builder clean error: %v", err)
-		}
-		db.DeleteCerberusEvents(r.Context(), s.pool, draft.CerberusSession)
-		removeProfileFile(draft.CerberusSession)
 		var projID int64
 		var proj *db.Project
 		if draft.ProjectID != nil {
@@ -2553,7 +2659,16 @@ func (s *Server) handleSpecDraft(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			proj = &p
+			s.cerb.SetRepoPath(p.RepoPath)
 		}
+		if err := s.cerb.Close(r.Context(), draft.CerberusSession); err != nil {
+			log.Printf("spec-builder close error: %v", err)
+		}
+		if err := s.cerb.Clean(r.Context(), draft.CerberusSession); err != nil {
+			log.Printf("spec-builder clean error: %v", err)
+		}
+		db.DeleteCerberusEvents(r.Context(), s.pool, draft.CerberusSession)
+		removeProfileFile(draft.CerberusSession)
 		title := saveBody.Title
 		if title == "" {
 			title = extractSpecTitle(specContent)
@@ -2587,7 +2702,11 @@ func (s *Server) handleSpecDraft(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if draft.CerberusSession != "" {
-			s.cerb.SetRepoPath(s.memoryRepoPath)
+			if draft.ProjectID != nil {
+				if proj, err := db.GetProject(r.Context(), s.pool, *draft.ProjectID); err == nil {
+					s.cerb.SetRepoPath(proj.RepoPath)
+				}
+			}
 			if err := s.cerb.Close(r.Context(), draft.CerberusSession); err != nil {
 				log.Printf("spec-builder close on delete: %v", err)
 			}
