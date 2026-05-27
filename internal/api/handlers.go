@@ -133,6 +133,9 @@ var uiTemplates = template.Must(template.New("ui").Funcs(template.FuncMap{
 	"phaseProgress":    phaseProgress,
 	"phaseFillClass":   phaseFillClass,
 	"phaseStatusLabel": phaseStatusLabel,
+	"diffSummary":      buildDiffSummary,
+	"diffRows":         buildDiffRows,
+	"logRows":          buildLogRows,
 }).Parse(`
 {{define "shell"}}
 <!DOCTYPE html>
@@ -292,16 +295,16 @@ What this phase does.</textarea></div>
     <div class="work-window-head"><div><h2>Work window</h2><p class="hint">Select a phase, then inspect changed code or full-width logs.</p></div><div class="work-tabs"><button type="button" class="work-tab is-selected" data-work-window-tab="diff">Diff</button><button type="button" class="work-tab" data-work-window-tab="logs">Logs</button></div></div>
     {{if .HasInitialPhase}}<div class="selected-phase-actions"><div><strong data-selected-phase-name>{{.InitialPhase.Name}}</strong><div class="card-meta">Phase actions apply to the selected strip item.</div></div><div class="card-actions"><button class="btn btn-primary" data-json-post="/api/phases/{{.InitialPhase.ID}}/approve" data-phase-action="approve" data-refresh="/workflows/{{$.Workflow.ID}}/fragment" data-target="#app">Approve</button><button class="btn btn-danger" data-json-post="/api/phases/{{.InitialPhase.ID}}/reject" data-phase-action="reject" data-refresh="/workflows/{{$.Workflow.ID}}/fragment" data-target="#app">Reject</button><button class="btn" data-json-post="/api/phases/{{.InitialPhase.ID}}/clean" data-phase-action="clean" data-refresh="/workflows/{{$.Workflow.ID}}/fragment" data-target="#app">Clean</button></div></div><div id="workflow-work-body" class="workflow-work-body" data-phase-detail-panel="{{.InitialPhase.ID}}" hx-get="/phases/{{.InitialPhase.ID}}/diff/fragment" hx-trigger="load" hx-swap="innerHTML"></div>{{else}}<div id="workflow-work-body" class="workflow-work-body empty empty-action">No selected phase.</div>{{end}}
   </section>
-  <details class="workflow-actions"><summary>Workflow actions and evidence</summary><div class="card-actions"><button class="btn" data-json-post="/api/workflows/{{.Workflow.ID}}/resume" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app">Resume</button>{{if eq .Workflow.Status "failed"}}<button class="btn btn-primary" data-json-post="/api/workflows/{{.Workflow.ID}}/follow-up" data-redirect-template="/workflows/{id}">Follow-up run</button>{{end}}<button class="btn btn-danger" data-json-post="/api/workflows/{{.Workflow.ID}}/stop" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app">Stop</button></div><div class="evidence-grid"><section><h3>Approved memory used</h3>{{if .MemoryError}}<div class="empty empty-error">{{.MemoryError}}</div>{{else if .Memory.Markdown}}<div class="card-meta">{{len .Memory.Files}} file(s) from {{.Memory.Root}}</div><pre class="doc-box">{{.Memory.Markdown}}</pre>{{else}}<div class="empty empty-action">No approved markdown memory found for this workflow's project namespace.</div>{{end}}</section><section><h3>Memory update review</h3>{{if .MemoryUpdateError}}<div class="empty empty-error">{{.MemoryUpdateError}}</div>{{end}}{{if .MemoryUpdate}}<div class="card"><div class="card-header"><span class="card-title">Memory update #{{.MemoryUpdate.ID}}</span><span class="chip chip-{{.MemoryUpdate.Status}}">{{.MemoryUpdate.Status}}</span></div>{{if .MemoryUpdate.MemoryPath}}<div class="card-meta">written to {{.MemoryUpdate.MemoryPath}}</div>{{end}}{{if .MemoryUpdate.ReviewerComment}}<div class="card-meta">comment: {{.MemoryUpdate.ReviewerComment}}</div>{{end}}<pre class="doc-box">{{.MemoryUpdate.ProposalMarkdown}}</pre><div class="card-actions"><button class="btn btn-primary" data-json-post="/api/workflows/{{.Workflow.ID}}/memory-update/accept" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app">Accept</button><button class="btn btn-danger" data-json-post="/api/workflows/{{.Workflow.ID}}/memory-update/reject" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app">Reject</button></div><form data-json method="post" action="/api/workflows/{{.Workflow.ID}}/memory-update/revise" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app"><div class="field"><label>Revision comment</label><textarea name="comment" required></textarea></div><button class="btn">Revise with comment</button></form></div>{{else}}<form data-json method="post" action="/api/workflows/{{.Workflow.ID}}/memory-update" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app"><div class="field"><label>Feedback for memory</label><textarea name="feedback" placeholder="What durable context should be remembered from this workflow?"></textarea></div><button class="btn btn-primary">Create memory update proposal</button></form>{{end}}</section></div></details>
+  <details class="workflow-actions"><summary>Workflow actions and evidence</summary><div class="card-actions"><button class="btn" data-json-post="/api/workflows/{{.Workflow.ID}}/resume" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app">Resume</button>{{if eq .Workflow.Status "failed"}}<button class="btn btn-primary" data-json-post="/api/workflows/{{.Workflow.ID}}/follow-up" data-redirect-template="/workflows/{id}">Follow-up run</button>{{end}}<button class="btn btn-danger" data-json-post="/api/workflows/{{.Workflow.ID}}/stop" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app">Stop</button></div><div class="evidence-grid"><section><h3>Approved memory used</h3>{{if .MemoryError}}<div class="empty empty-error">{{.MemoryError}}</div>{{else if .Memory.Markdown}}<div class="card-meta">{{len .Memory.Files}} file(s) from {{.Memory.Root}}</div><pre class="doc-box">{{.Memory.Markdown}}</pre>{{else}}<div class="empty empty-action">No approved markdown memory found for this workflow's project namespace.</div>{{end}}</section><section class="memory-review"><h3>Memory update review</h3>{{if .MemoryUpdateError}}<div class="empty empty-error">{{.MemoryUpdateError}}</div>{{end}}{{if .MemoryUpdate}}<div class="memory-proposal"><div class="memory-proposal-head"><div><span class="eyebrow">Proposal #{{.MemoryUpdate.ID}}</span><h4>Durable project memory</h4></div><span class="chip chip-{{.MemoryUpdate.Status}}">{{.MemoryUpdate.Status}}</span></div><dl class="fact-list"><div><dt>Destination path</dt><dd>{{if .MemoryUpdate.MemoryPath}}{{.MemoryUpdate.MemoryPath}}{{else}}Pending acceptance; no approved file has been written.{{end}}</dd></div><div><dt>Reviewer comment</dt><dd>{{if .MemoryUpdate.ReviewerComment}}{{.MemoryUpdate.ReviewerComment}}{{else}}No reviewer comment yet.{{end}}</dd></div></dl><div class="section-title-row"><h3>Proposal markdown</h3><span class="chip chip-review">review before write</span></div><pre class="doc-box memory-markdown">{{.MemoryUpdate.ProposalMarkdown}}</pre><div class="memory-action-zone"><div class="card-actions"><button class="btn btn-primary" data-json-post="/api/workflows/{{.Workflow.ID}}/memory-update/accept" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app">Accept and write memory</button><button class="btn btn-danger" data-json-post="/api/workflows/{{.Workflow.ID}}/memory-update/reject" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app">Reject proposal</button></div><form data-json method="post" action="/api/workflows/{{.Workflow.ID}}/memory-update/revise" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app"><div class="field"><label>Revision comment</label><textarea name="comment" required placeholder="What should change before this becomes approved memory?"></textarea></div><button class="btn">Revise with comment</button></form></div></div>{{else}}<form class="memory-proposal" data-json method="post" action="/api/workflows/{{.Workflow.ID}}/memory-update" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app"><h4>Create a reviewable memory proposal</h4><p class="hint">Nothing is written to approved memory until you accept the generated markdown.</p><div class="field"><label>Feedback for memory</label><textarea name="feedback" placeholder="What durable context should be remembered from this workflow?"></textarea></div><button class="btn btn-primary">Create memory update proposal</button></form>{{end}}</section></div></details>
 </div>
 {{end}}
 
 {{define "phaseLogs"}}
-<div><h3>Logs · Phase #{{.Phase.ID}} {{.Phase.Name}}</h3><div class="log-box" data-log-stream="/api/phases/{{.Phase.ID}}/logs/stream?after_id={{.LastLogID}}" data-log-last-id="{{.LastLogID}}">{{range .Logs}}<div class="log-line" data-log-id="{{.ID}}"><span class="log-ts">{{datetime .Ts}}</span>{{.Line}}</div>{{end}}</div></div>
+<div class="evidence-panel"><div class="evidence-head"><div><h3>Logs · Phase #{{.Phase.ID}} {{.Phase.Name}}</h3><p class="hint">Live activity stream. Rows stay inspectable while new events append.</p></div></div><div class="log-table" data-log-stream="/api/phases/{{.Phase.ID}}/logs/stream?after_id={{.LastLogID}}" data-log-last-id="{{.LastLogID}}"><div class="log-row log-row-head"><span>Time</span><span>Source</span><span>Event</span><span>State</span></div>{{range logRows .Logs}}<div class="log-row log-state-{{.State}}" data-log-id="{{.ID}}"><span class="log-time">{{.Time}}</span><span class="log-source">{{.Source}}</span><span class="log-event">{{.Event}}</span><span class="log-state"><span class="chip chip-{{.State}}">{{.State}}</span></span></div>{{else}}<div class="empty empty-action">No logs recorded for this phase yet. When agent activity starts, rows will appear here.</div>{{end}}</div></div>
 {{end}}
 
 {{define "phaseDiff"}}
-<div><h3>Diff · Phase #{{.Phase.ID}} {{.Phase.Name}}</h3>{{if .Error}}<div class="empty">{{.Error}}</div>{{else}}<pre class="diff-box">{{.Diff}}</pre>{{end}}</div>
+<div class="evidence-panel"><div class="evidence-head"><div><h3>Diff · Phase #{{.Phase.ID}} {{.Phase.Name}}</h3>{{if not .Error}}{{with diffSummary .Diff}}<p class="hint"><strong>{{.Path}}</strong> · {{.Summary}} · <span class="diff-count-add">+{{.Added}}</span> <span class="diff-count-del">-{{.Removed}}</span></p>{{end}}{{end}}</div></div>{{if .Error}}<div class="empty empty-error">{{.Error}}</div>{{else if not .Diff}}<div class="empty empty-action">No diff is available for this phase yet. Run or resume the workflow, then return here to inspect changed code.</div>{{else}}{{with diffSummary .Diff}}<div class="diff-surface" role="table" aria-label="Code diff"><div class="diff-row diff-row-head" role="row"><span>Line</span><span>Code</span></div>{{range diffRows $.Diff}}<div class="diff-row diff-kind-{{.Kind}}" role="row"><span class="diff-gutter">{{.Marker}}</span><code>{{.Text}}</code></div>{{end}}</div><div class="diff-summary-grid"><div><span>Added lines</span><strong>+{{.Added}}</strong></div><div><span>Removed lines</span><strong>-{{.Removed}}</strong></div><div><span>Conflicts</span><strong>{{.Conflicts}}</strong></div><div><span>DOM hooks touched</span><strong>{{.DOMHooks}}</strong></div></div>{{end}}{{end}}</div>
 {{end}}
 
 {{define "builderStart"}}
@@ -386,6 +389,135 @@ func phaseFillClass(status string) string {
 		return "phase-progress-review"
 	default:
 		return "phase-progress-muted"
+	}
+}
+
+type uiDiffSummary struct {
+	Path      string
+	Summary   string
+	Added     int
+	Removed   int
+	Conflicts int
+	DOMHooks  int
+}
+
+type uiDiffRow struct{ Kind, Marker, Text string }
+
+type uiLogRow struct {
+	ID                  int64
+	Time, Source, Event string
+	State               string
+}
+
+func buildDiffSummary(raw string) uiDiffSummary {
+	s := uiDiffSummary{Path: "unknown file", Summary: "No changed lines", DOMHooks: 0}
+	for _, line := range strings.Split(raw, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(line, "+++ b/") && s.Path == "unknown file" {
+			s.Path = strings.TrimPrefix(strings.TrimSpace(line), "+++ b/")
+		} else if strings.HasPrefix(line, "diff --git ") && s.Path == "unknown file" {
+			parts := strings.Fields(line)
+			if len(parts) >= 4 {
+				s.Path = strings.TrimPrefix(parts[3], "b/")
+			}
+		}
+		if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
+			s.Added++
+			if diffLineTouchesDOMHook(line) {
+				s.DOMHooks++
+			}
+		} else if strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---") {
+			s.Removed++
+			if diffLineTouchesDOMHook(line) {
+				s.DOMHooks++
+			}
+		}
+		if strings.HasPrefix(trimmed, "<<<<<<<") || strings.HasPrefix(trimmed, "=======") || strings.HasPrefix(trimmed, ">>>>>>>") {
+			s.Conflicts++
+		}
+	}
+	if s.Added > 0 || s.Removed > 0 {
+		s.Summary = fmt.Sprintf("%d changed lines", s.Added+s.Removed)
+	}
+	return s
+}
+
+func buildDiffRows(raw string) []uiDiffRow {
+	lines := strings.Split(raw, "\n")
+	rows := make([]uiDiffRow, 0, len(lines))
+	for _, line := range lines {
+		row := uiDiffRow{Kind: "context", Marker: " ", Text: line}
+		switch {
+		case strings.HasPrefix(line, "@@"):
+			row.Kind, row.Marker = "hunk", "@"
+		case strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++"):
+			row.Kind, row.Marker, row.Text = "add", "+", strings.TrimPrefix(line, "+")
+		case strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---"):
+			row.Kind, row.Marker, row.Text = "del", "-", strings.TrimPrefix(line, "-")
+		case strings.HasPrefix(line, "diff --git") || strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---"):
+			row.Kind, row.Marker = "meta", "•"
+		}
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+func diffLineTouchesDOMHook(line string) bool {
+	lower := strings.ToLower(line)
+	for _, token := range []string{"data-", "id=", "hx-", "aria-", "class="} {
+		if strings.Contains(lower, token) {
+			return true
+		}
+	}
+	return false
+}
+
+func buildLogRows(logs []db.PhaseLog) []uiLogRow {
+	rows := make([]uiLogRow, 0, len(logs))
+	for _, l := range logs {
+		source, event := splitLogSource(l.Line)
+		rows = append(rows, uiLogRow{ID: l.ID, Time: l.Ts.Format("2006-01-02 15:04:05"), Source: source, Event: event, State: classifyLogState(l.Line)})
+	}
+	return rows
+}
+
+func splitLogSource(line string) (string, string) {
+	text := strings.TrimSpace(line)
+	if text == "" {
+		return "system", "—"
+	}
+	if strings.HasPrefix(text, "[") {
+		if end := strings.Index(text, "]"); end > 1 && end < 32 {
+			return strings.ToLower(strings.TrimSpace(text[1:end])), strings.TrimSpace(text[end+1:])
+		}
+	}
+	if idx := strings.Index(text, ":"); idx > 0 && idx < 24 {
+		prefix := strings.TrimSpace(text[:idx])
+		if !strings.Contains(prefix, " ") {
+			return strings.ToLower(prefix), strings.TrimSpace(text[idx+1:])
+		}
+	}
+	if strings.Contains(strings.ToLower(text), "system") {
+		return "system", text
+	}
+	return "agent", text
+}
+
+func classifyLogState(line string) string {
+	lower := strings.ToLower(line)
+	switch {
+	case strings.Contains(lower, "blocked"):
+		return "blocked"
+	case strings.Contains(lower, "error") || strings.Contains(lower, "failed") || strings.Contains(lower, "fail"):
+		return "error"
+	case strings.Contains(lower, "warn") || strings.Contains(lower, "warning"):
+		return "warning"
+	case strings.Contains(lower, "done") || strings.Contains(lower, "complete"):
+		return "done"
+	case strings.Contains(lower, "running") || strings.Contains(lower, "started"):
+		return "running"
+	default:
+		return "normal"
 	}
 }
 

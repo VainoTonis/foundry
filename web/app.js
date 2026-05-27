@@ -413,18 +413,56 @@ function initDraftStream(root) {
   draftSource.onerror = finish;
 }
 
+function classifyLogState(line) {
+  const lower = String(line || '').toLowerCase();
+  if (lower.includes('blocked')) return 'blocked';
+  if (lower.includes('error') || lower.includes('failed') || lower.includes('fail')) return 'error';
+  if (lower.includes('warn')) return 'warning';
+  if (lower.includes('done') || lower.includes('complete')) return 'done';
+  if (lower.includes('running') || lower.includes('started')) return 'running';
+  return 'normal';
+}
+
+function splitLogSource(line) {
+  const text = String(line || '').trim();
+  if (!text) return ['system', '—'];
+  if (text.startsWith('[')) {
+    const end = text.indexOf(']');
+    if (end > 1 && end < 32) return [text.slice(1, end).trim().toLowerCase(), text.slice(end + 1).trim()];
+  }
+  const idx = text.indexOf(':');
+  if (idx > 0 && idx < 24) {
+    const prefix = text.slice(0, idx).trim();
+    if (!prefix.includes(' ')) return [prefix.toLowerCase(), text.slice(idx + 1).trim()];
+  }
+  return [text.toLowerCase().includes('system') ? 'system' : 'agent', text];
+}
+
 function appendLogRow(box, log) {
   const id = Number(log.id || 0);
   const last = Number(box.dataset.logLastId || 0);
   if (id && id <= last) return;
+  const [source, event] = splitLogSource(log.line || '');
+  const state = classifyLogState(log.line || '');
   const row = document.createElement('div');
-  row.className = 'log-line';
+  row.className = `log-row log-state-${state}`;
   if (id) row.dataset.logId = String(id);
-  const ts = document.createElement('span');
-  ts.className = 'log-ts';
-  ts.textContent = formatSSETime(log.ts);
-  row.appendChild(ts);
-  row.append(document.createTextNode(log.line || ''));
+  const timeEl = document.createElement('span');
+  timeEl.className = 'log-time';
+  timeEl.textContent = formatSSETime(log.ts);
+  const sourceEl = document.createElement('span');
+  sourceEl.className = 'log-source';
+  sourceEl.textContent = source;
+  const eventEl = document.createElement('span');
+  eventEl.className = 'log-event';
+  eventEl.textContent = event;
+  const stateEl = document.createElement('span');
+  stateEl.className = 'log-state';
+  const chip = document.createElement('span');
+  chip.className = `chip chip-${state}`;
+  chip.textContent = state;
+  stateEl.appendChild(chip);
+  row.append(timeEl, sourceEl, eventEl, stateEl);
   box.appendChild(row);
   if (id) {
     box.dataset.logLastId = String(id);
