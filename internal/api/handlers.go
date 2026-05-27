@@ -2287,6 +2287,20 @@ func (s *Server) handleSpecDrafts(w http.ResponseWriter, r *http.Request) {
 			jsonErr(w, "project_id is required", http.StatusUnprocessableEntity)
 			return
 		}
+		proj, err := db.GetProject(r.Context(), s.pool, *body.ProjectID)
+		if errors.Is(err, db.ErrNotFound) {
+			jsonErr(w, "project not found", http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		projectRepoPath := strings.TrimSpace(proj.RepoPath)
+		if projectRepoPath == "" {
+			jsonErr(w, "project repo path is not configured", http.StatusUnprocessableEntity)
+			return
+		}
 		draft, err := db.CreateSpecDraft(r.Context(), s.pool, body.ProjectID, "(untitled)")
 		if err != nil {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
@@ -2303,22 +2317,18 @@ func (s *Server) handleSpecDrafts(w http.ResponseWriter, r *http.Request) {
 		if body.Description != "" {
 			initialPrompt += "\n\nThe user's request:\n" + body.Description
 		}
-		if body.ProjectID != nil {
-			if proj, err := db.GetProject(r.Context(), s.pool, *body.ProjectID); err == nil {
-				initialPrompt += "\n\nProject name: " + proj.Name + "\nThe private memory repo is mounted at /workspace inside your container. Use project memory namespace " + proj.MemoryNamespace + "."
-				if mem, err := memory.LoadApproved(s.memoryRepoPath, proj.MemoryNamespace); err == nil {
-					initialPrompt = memory.Prepend(mem.Markdown, initialPrompt)
-				} else {
-					log.Printf("spec-builder draft %d: load memory: %v", draft.ID, err)
-				}
-			}
+		initialPrompt += "\n\nProject name: " + proj.Name + "\nThe selected project's repository is mounted at /workspace inside your container. Use project memory namespace " + proj.MemoryNamespace + "."
+		if mem, err := memory.LoadApproved(s.memoryRepoPath, proj.MemoryNamespace); err == nil {
+			initialPrompt = memory.Prepend(mem.Markdown, initialPrompt)
+		} else {
+			log.Printf("spec-builder draft %d: load memory: %v", draft.ID, err)
 		}
 
 		pool := s.pool
 		cerb := s.cerb
 		draftID := draft.ID
 		cbURL := s.callbackURL()
-		memoryRepoPath := s.memoryRepoPath
+		cerberusRepoPath := projectRepoPath
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 			defer cancel()
@@ -2329,7 +2339,7 @@ func (s *Server) handleSpecDrafts(w http.ResponseWriter, r *http.Request) {
 			if profilePath != "" {
 				cerb.SetProfile(profilePath)
 			}
-			cerb.SetRepoPath(memoryRepoPath)
+			cerb.SetRepoPath(cerberusRepoPath)
 			if err := cerb.Chat(ctx, session, initialPrompt, cbURL); err != nil {
 				log.Printf("spec-builder chat start error: %v", err)
 				errStatus := "error"
@@ -2410,16 +2420,34 @@ func (s *Server) handleSpecDraft(w http.ResponseWriter, r *http.Request) {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		if draft.ProjectID == nil {
+			jsonErr(w, "draft has no project", http.StatusUnprocessableEntity)
+			return
+		}
+		proj, err := db.GetProject(r.Context(), s.pool, *draft.ProjectID)
+		if errors.Is(err, db.ErrNotFound) {
+			jsonErr(w, "project not found", http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		projectRepoPath := strings.TrimSpace(proj.RepoPath)
+		if projectRepoPath == "" {
+			jsonErr(w, "project repo path is not configured", http.StatusUnprocessableEntity)
+			return
+		}
 		cbURL := s.callbackURL()
 		cerb := s.cerb
 		session := draft.CerberusSession
 		pool := s.pool
 		draftID := draft.ID
-		memoryRepoPath := s.memoryRepoPath
+		cerberusRepoPath := projectRepoPath
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 			defer cancel()
-			cerb.SetRepoPath(memoryRepoPath)
+			cerb.SetRepoPath(cerberusRepoPath)
 			if err := cerb.Message(ctx, session, body.Content, cbURL); err != nil {
 				log.Printf("spec-builder message error: %v", err)
 				errStatus := "error"
