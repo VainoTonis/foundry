@@ -54,6 +54,13 @@ This page maps where durable Foundry concepts live in the current repository. Us
 - Approved memory is plain Markdown in a private git repo; Postgres tracks proposals and workflow evidence but is not the canonical store for accepted intent memory.
 - The codebase favors explicit SQL, simple structs, and stdlib HTTP. Adding abstractions should preserve inspectable state and reviewable data flow.
 
+## Interesting interactions
+
+- Spec parsing and follow-up generation both assume executable phases are markdown `## Phase N: ...` sections. Specs that use different heading shapes may look readable but will not create phase rows, and follow-up insertion looks for `\n## Phase ` rather than a full markdown parser (`internal/spec/spec.go`, `internal/api/handlers.go`).
+- Workflow live UI is eventually database-backed: the runner publishes in-process SSE updates for responsiveness, while `/api/workflows/{id}/stream` sends a DB snapshot first so reconnects can recover from missed hub events (`internal/workflow/runner.go`, `internal/api/handlers.go`, `web/app.js`).
+- Memory proposal generation crosses a different repo boundary than phase execution: workflow phases run Cerberus in the target project repo, but memory proposal generation sets Cerberus to the private memory repo and passes workflow context in the prompt; accepted writes are then deterministic Foundry filesystem/git operations (`internal/cerberus/cerberus.go`, `internal/api/handlers.go`, `internal/memory/memory.go`).
+- The browser contract is fragment-oriented rather than model-oriented. `web/app.js` posts JSON for actions, then refreshes server-rendered fragments and preserves open phase detail panels; changing workflow screens usually means editing templates, handlers, and stream events together (`internal/api/handlers.go`, `web/app.js`).
+
 ## Source references
 
 - `README.md`
