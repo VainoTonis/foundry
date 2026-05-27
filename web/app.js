@@ -87,6 +87,20 @@ function toast(message, kind = 'info') {
   setTimeout(() => item.remove(), 4500);
 }
 
+function showError(message) {
+  const region = document.getElementById('action-errors');
+  if (!region) return;
+  region.textContent = message || 'Request failed';
+  region.hidden = false;
+}
+
+function clearError() {
+  const region = document.getElementById('action-errors');
+  if (!region) return;
+  region.textContent = '';
+  region.hidden = true;
+}
+
 function pendingLabel(el) {
   return el?.dataset.pendingLabel || 'Working…';
 }
@@ -166,6 +180,7 @@ async function submitDraftMessage(form) {
   } catch (err) {
     setDraftInputDisabled(false);
     if (liveAssistantBody) liveAssistantBody.textContent = 'Error: ' + (err.message || String(err));
+    showError(err.message || String(err));
     toast(err.message || String(err), 'error');
   }
 }
@@ -181,6 +196,7 @@ document.addEventListener('submit', async (event) => {
   if (!form.matches('[data-json], [data-settings]')) return;
   event.preventDefault();
   try {
+    clearError();
     const method = form.dataset.method || (form.matches('[data-settings]') ? 'PATCH' : (form.method || 'POST').toUpperCase());
     const body = formJSON(form);
     setPending(form, true);
@@ -188,6 +204,7 @@ document.addEventListener('submit', async (event) => {
     toast('Saved', 'success');
     if (!redirectFrom(form, data)) refresh(form.dataset.refresh, form.dataset.target);
   } catch (err) {
+    showError(err.message || String(err));
     toast(err.message || String(err), 'error');
   } finally {
     setPending(form, false);
@@ -210,6 +227,7 @@ document.addEventListener('click', async (event) => {
   if (button.hasAttribute('data-confirm') && !window.confirm(button.dataset.confirm)) return;
   setPending(button, true);
   try {
+    clearError();
     const body = button.dataset.body ? JSON.parse(button.dataset.body) : {};
     const method = button.dataset.jsonDelete ? 'DELETE' : (button.dataset.jsonPatch ? 'PATCH' : 'POST');
     const url = button.dataset.jsonDelete || button.dataset.jsonPatch || button.dataset.jsonPost;
@@ -217,6 +235,7 @@ document.addEventListener('click', async (event) => {
     toast('Done', 'success');
     if (!redirectFrom(button, data)) refresh(button.dataset.refresh, button.dataset.target);
   } catch (err) {
+    showError(err.message || String(err));
     toast(err.message || String(err), 'error');
   } finally {
     setPending(button, false);
@@ -230,7 +249,7 @@ let refreshTimer;
 let liveAssistantBody;
 let currentPhaseDetail;
 
-const STATUS_CLASSES = ['pending', 'running', 'paused', 'awaiting_review', 'done', 'failed', 'queued', 'pass', 'fail', 'stopping'];
+const STATUS_CLASSES = ['pending', 'queued', 'paused', 'idle', 'running', 'progress', 'streaming', 'awaiting_review', 'awaiting', 'review', 'warning', 'done', 'pass', 'accepted', 'failed', 'fail', 'error', 'blocked', 'rejected', 'stopping'];
 
 function displayStatus(status) {
   return String(status || '').replace(/_/g, ' ');
@@ -392,7 +411,13 @@ document.body.addEventListener('htmx:beforeRequest', (event) => {
 document.body.addEventListener('htmx:afterRequest', (event) => {
   const el = event.detail.elt;
   if (el?.matches?.('form, button, .btn')) setPending(el, false);
-  if (event.detail.failed) toast(event.detail.xhr?.responseText || 'Request failed', 'error');
+  if (event.detail.failed) {
+    const message = event.detail.xhr?.responseText || 'Request failed';
+    showError(message);
+    toast(message, 'error');
+  } else {
+    clearError();
+  }
 });
 
 document.body.addEventListener('htmx:afterSwap', (event) => {

@@ -144,15 +144,19 @@ var uiTemplates = template.Must(template.New("ui").Funcs(template.FuncMap{
 </head>
 <body data-page="{{.Page}}">
   <a class="skip-link" href="#app">Skip to content</a>
-  <header>
-    <h1><a href="/" hx-get="/backlog/fragment" hx-target="#app" hx-push-url="/" class="brand">Foundry</a></h1>
-    <nav aria-label="Primary navigation">
-      <a href="/backlog" data-nav="backlog" hx-get="/backlog/fragment" hx-target="#app" hx-push-url="/backlog">Backlog</a>
+  <header class="top-frame">
+    <div class="brand-slab">
+      <a href="/" hx-get="/backlog/fragment" hx-target="#app" hx-push-url="/" class="brand">Foundry</a>
+      <span class="brand-subtitle">intent / evidence / decisions</span>
+    </div>
+    <nav class="nav-slabs" aria-label="Primary navigation">
+      <a href="/backlog" data-nav="backlog" hx-get="/backlog/fragment" hx-target="#app" hx-push-url="/backlog">Foundry / backlog</a>
       <a href="/projects" data-nav="projects" hx-get="/projects/fragment" hx-target="#app" hx-push-url="/projects">Projects</a>
       <a href="/spec-builder" data-nav="builder" hx-get="/spec-builder/fragment" hx-target="#app" hx-push-url="/spec-builder">Spec Builder</a>
       <a href="/settings" data-nav="settings" hx-get="/settings/fragment" hx-target="#app" hx-push-url="/settings">Settings</a>
     </nav>
   </header>
+  <div id="action-errors" class="error-region" role="alert" aria-live="assertive" hidden></div>
   <main id="app" tabindex="-1" hx-get="{{.Fragment}}" hx-trigger="load" hx-swap="innerHTML"></main>
 </body>
 </html>
