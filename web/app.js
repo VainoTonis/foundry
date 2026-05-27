@@ -162,16 +162,79 @@ let refreshTimer;
 let liveAssistantBody;
 let currentPhaseDetail;
 
+const STATUS_CLASSES = ['pending', 'running', 'paused', 'awaiting_review', 'done', 'failed', 'queued', 'pass', 'fail', 'stopping'];
+
+function displayStatus(status) {
+  return String(status || '').replace(/_/g, ' ');
+}
+
+function setStatusChip(chip, status) {
+  if (!chip || !status) return false;
+  STATUS_CLASSES.forEach((s) => chip.classList.remove(`chip-${s}`));
+  chip.classList.add(`chip-${status}`);
+  chip.dataset.status = status;
+  chip.textContent = displayStatus(status);
+  return true;
+}
+
+function formatSSETime(value) {
+  if (!value) return '—';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function applyWorkflowStatus(root, status) {
+  return setStatusChip(root.querySelector('[data-workflow-status]'), status);
+}
+
+function applyPhaseStatus(root, phase) {
+  if (!phase) return false;
+  const id = phase.phase_id || phase.id;
+  const status = phase.status;
+  if (!id || !status) return false;
+  const row = root.querySelector(`[data-phase-row="${id}"]`);
+  const chip = root.querySelector(`[data-phase-status-chip="${id}"]`);
+  if (!row || !chip) return false;
+  STATUS_CLASSES.forEach((s) => row.classList.remove(`phase-row-${s}`));
+  row.classList.add(`phase-row-${status}`);
+  row.dataset.phaseStatus = status;
+  setStatusChip(chip, status);
+  const started = row.querySelector('[data-phase-started]');
+  if (started && phase.started_at) started.textContent = formatSSETime(phase.started_at);
+  const finished = row.querySelector('[data-phase-finished]');
+  if (finished && phase.finished_at) finished.textContent = formatSSETime(phase.finished_at);
+  return true;
+}
+
+function applyWorkflowEvent(root, ev) {
+  try {
+    const data = JSON.parse(ev.data || '{}');
+    if (ev.type === 'snapshot') {
+      const okWorkflow = applyWorkflowStatus(root, data.workflow?.status);
+      const phases = Array.isArray(data.phases) ? data.phases : [];
+      const okPhases = phases.every((phase) => applyPhaseStatus(root, phase));
+      return okWorkflow && okPhases;
+    }
+    if (ev.type === 'workflow_update') return applyWorkflowStatus(root, data.status);
+    if (ev.type === 'phase_update') return applyPhaseStatus(root, data);
+    if (ev.type === 'done' || ev.type === 'failed') return applyWorkflowStatus(root, data.status || ev.type);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 function initWorkflowStream(root) {
   const el = root.querySelector?.('[data-workflow-stream]');
   if (!el) return;
   if (workflowSource) { workflowSource.close(); workflowSource = null; }
   workflowSource = new EventSource(el.dataset.workflowStream);
-  const schedule = () => {
-    clearTimeout(refreshTimer);
-    refreshTimer = setTimeout(() => refreshWorkflowPreservingPhase(el.dataset.refresh), 600);
+  const handle = (ev) => {
+    if (!applyWorkflowEvent(el, ev)) refreshWorkflowPreservingPhase(el.dataset.refresh);
   };
-  ['workflow_update', 'phase_update', 'done', 'failed'].forEach((name) => workflowSource.addEventListener(name, schedule));
+  ['snapshot', 'workflow_update', 'phase_update', 'done', 'failed'].forEach((name) => workflowSource.addEventListener(name, handle));
 }
 
 function updateDraftPreviewFromTool(ev) {

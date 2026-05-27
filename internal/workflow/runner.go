@@ -444,9 +444,11 @@ func (r *Runner) publishPhaseUpdate(workflowID, phaseID int64, status string) {
 		return
 	}
 	data, _ := json.Marshal(map[string]any{
-		"event":    "phase_update",
-		"phase_id": phaseID,
-		"status":   status,
+		"event":       "phase_update",
+		"workflow_id": workflowID,
+		"phase_id":    phaseID,
+		"status":      status,
+		"ts":          time.Now().Format(time.RFC3339),
 	})
 	r.hub.Publish(fmt.Sprintf("wf:%d", workflowID), data)
 }
@@ -456,8 +458,10 @@ func (r *Runner) publishWorkflowUpdate(workflowID int64, status string) {
 		return
 	}
 	data, _ := json.Marshal(map[string]any{
-		"event":  "workflow_update",
-		"status": status,
+		"event":       "workflow_update",
+		"workflow_id": workflowID,
+		"status":      status,
+		"ts":          time.Now().Format(time.RFC3339),
 	})
 	r.hub.Publish(fmt.Sprintf("wf:%d", workflowID), data)
 }

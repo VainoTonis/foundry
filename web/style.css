@@ -69,6 +69,8 @@ button:hover, .btn:hover { background: var(--border); }
 .chip-done      { background: #1a3a2a; color: var(--green); }
 .chip-failed    { background: #3a1a1a; color: var(--red); }
 .chip-paused    { background: #2a2a3a; color: var(--muted); }
+.chip-queued    { background: #2d2d3a; color: var(--muted); }
+.chip-stopping  { background: #3a2d10; color: var(--yellow); }
 .chip-poc       { background: #2a2030; color: #b48ef7; }
 .chip-polish    { background: #1a2a3a; color: var(--blue); }
 .chip-pass      { background: #1a3a2a; color: var(--green); }
@@ -122,6 +124,10 @@ button:hover, .btn:hover { background: var(--border); }
   cursor: pointer; transition: border-color .15s;
 }
 .phase-row:hover { border-color: var(--accent); }
+.phase-row-running { border-color: rgba(99,179,237,.6); box-shadow: inset 3px 0 0 var(--blue); background: rgba(99,179,237,.05); }
+.phase-row-awaiting_review { border-color: rgba(246,173,85,.45); box-shadow: inset 3px 0 0 var(--yellow); }
+.phase-row-done { border-color: rgba(62,207,142,.35); }
+.phase-row-failed { border-color: rgba(245,101,101,.55); box-shadow: inset 3px 0 0 var(--red); }
 .phase-pos { color: var(--muted); font-size: .8rem; min-width: 2rem; padding-top: .1rem; }
 .phase-body { flex: 1; }
 .phase-name { font-weight: 600; margin-bottom: .2rem; }
