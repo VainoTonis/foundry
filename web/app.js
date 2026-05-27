@@ -21,23 +21,25 @@ function refresh(url, target) {
 async function refreshWorkflowPreservingPhase(url) {
   if (!url) return;
   const app = document.getElementById('app');
-  const open = currentPhaseDetail && app?.querySelector(`#phase-detail-${currentPhaseDetail.id}:not(:empty)`);
-  if (!app || !open) { refresh(url, '#app'); return; }
+  const desk = app?.querySelector('[data-workflow-id]');
+  const selectedPhase = currentPhaseDetail?.id || desk?.dataset.selectedPhase;
+  const selectedTab = currentPhaseDetail?.kind || desk?.dataset.selectedTab || 'diff';
+  if (!app || !desk || !selectedPhase) { refresh(url, '#app'); return; }
   try {
     const res = await fetch(url);
     if (!res.ok) throw new Error(await res.text());
     const doc = new DOMParser().parseFromString(await res.text(), 'text/html');
     const next = doc.body.firstElementChild;
-    const nextPanel = next?.querySelector(`#phase-detail-${currentPhaseDetail.id}`);
-    if (next && nextPanel) {
-      nextPanel.innerHTML = open.innerHTML;
-      app.innerHTML = '';
-      app.appendChild(next);
-      if (window.htmx) htmx.process(app);
-      initStreams(app);
-    } else {
-      refresh(url, '#app');
-    }
+    const nextDesk = next?.matches?.('[data-workflow-id]') ? next : next?.querySelector?.('[data-workflow-id]');
+    if (!next || !nextDesk) { refresh(url, '#app'); return; }
+    nextDesk.dataset.selectedPhase = String(selectedPhase);
+    nextDesk.dataset.selectedTab = selectedTab;
+    app.innerHTML = '';
+    app.appendChild(next);
+    if (window.htmx) htmx.process(app);
+    initStreams(app);
+    const phaseControl = app.querySelector(`[data-workflow-phase-select][data-phase-id="${selectedPhase}"]`) || nextDesk;
+    setWorkWindowPhase(phaseControl, selectedPhase, selectedTab);
   } catch (_) {
     refresh(url, '#app');
   }
@@ -250,7 +252,10 @@ document.addEventListener('click', async (event) => {
     const url = button.dataset.jsonDelete || button.dataset.jsonPatch || button.dataset.jsonPost;
     const data = await sendJSON(method, url, method === 'DELETE' ? undefined : body);
     toast('Done', 'success');
-    if (!redirectFrom(button, data)) refresh(button.dataset.refresh, button.dataset.target);
+    if (!redirectFrom(button, data)) {
+      if (button.closest('[data-workflow-id]') && button.dataset.refresh) refreshWorkflowPreservingPhase(button.dataset.refresh);
+      else refresh(button.dataset.refresh, button.dataset.target);
+    }
   } catch (err) {
     showError(err.message || String(err));
     toast(err.message || String(err), 'error');
@@ -364,6 +369,10 @@ function initWorkflowStream(root) {
   const el = root.querySelector?.('[data-workflow-stream]');
   if (!el) return;
   if (workflowSource) { workflowSource.close(); workflowSource = null; }
+  if (currentPhaseDetail?.id) {
+    el.dataset.selectedPhase = String(currentPhaseDetail.id);
+    el.dataset.selectedTab = currentPhaseDetail.kind || el.dataset.selectedTab || 'diff';
+  }
   workflowSource = new EventSource(el.dataset.workflowStream);
   const handle = (ev) => {
     if (!applyWorkflowEvent(el, ev)) refreshWorkflowPreservingPhase(el.dataset.refresh);
