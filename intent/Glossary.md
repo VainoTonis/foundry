@@ -18,6 +18,10 @@ One execution run against one spec.
 
 One bounded unit of agent work inside a workflow.
 
+## Phase Feedback
+
+Structured raw signal stored on a phase for later review and memory proposal generation. It is not approved memory by itself.
+
 ## Agent Work
 
 Attempted implementation, review, or analysis performed by Cerberus or another agent.
@@ -41,3 +45,11 @@ Concrete modification or artifact produced by agent work.
 ## Conversation
 
 Temporary chat used to shape intent or specs. Useful, but not durable by itself.
+
+## Project Memory Namespace
+
+Per-project path inside the configured private memory repo. Approved memory is loaded from Markdown files under this namespace.
+
+## Memory Update Job
+
+Workflow-scoped proposal for durable memory changes. It becomes approved memory only when accepted and written to the private memory repo.
