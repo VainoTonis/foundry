@@ -212,6 +212,23 @@ document.addEventListener('submit', async (event) => {
 });
 
 document.addEventListener('click', async (event) => {
+  const workPhase = event.target.closest('[data-workflow-phase-select]');
+  if (workPhase) {
+    event.preventDefault();
+    currentPhaseDetail = { id: workPhase.dataset.phaseId, kind: 'diff' };
+    setWorkWindowPhase(workPhase, workPhase.dataset.phaseId, 'diff');
+    return;
+  }
+  const workTab = event.target.closest('[data-work-window-tab]');
+  if (workTab) {
+    event.preventDefault();
+    const desk = workTab.closest('[data-workflow-id]');
+    const phaseId = desk?.dataset.selectedPhase;
+    currentPhaseDetail = { id: phaseId, kind: workTab.dataset.workWindowTab };
+    setWorkWindowPhase(workTab, phaseId, workTab.dataset.workWindowTab);
+    return;
+  }
+
   const phaseButton = event.target.closest('[data-phase-detail]');
   if (phaseButton) {
     currentPhaseDetail = { id: phaseButton.dataset.phaseId, kind: phaseButton.dataset.phaseDetail };
@@ -276,6 +293,34 @@ function applyWorkflowStatus(root, status) {
   return setStatusChip(root.querySelector('[data-workflow-status]'), status);
 }
 
+function phaseProgressPercent(status) {
+  if (status === 'done' || status === 'failed') return 100;
+  if (status === 'running') return 40;
+  return 0;
+}
+
+function setWorkWindowPhase(root, phaseId, tab) {
+  const desk = root.closest?.('[data-workflow-id]') || document.querySelector('[data-workflow-id]');
+  const body = document.getElementById('workflow-work-body');
+  if (!desk || !body || !phaseId) return;
+  const nextTab = tab || desk.dataset.selectedTab || 'diff';
+  desk.dataset.selectedPhase = String(phaseId);
+  desk.dataset.selectedTab = nextTab;
+  document.querySelectorAll('[data-workflow-phase-select]').forEach((el) => el.classList.toggle('is-selected', el.dataset.phaseId === String(phaseId)));
+  document.querySelectorAll('[data-work-window-tab]').forEach((el) => el.classList.toggle('is-selected', el.dataset.workWindowTab === nextTab));
+  const tile = document.querySelector(`[data-workflow-phase-select][data-phase-id="${phaseId}"]`);
+  const name = document.querySelector('[data-selected-phase-name]');
+  if (name && tile?.dataset.phaseName) name.textContent = tile.dataset.phaseName;
+  document.querySelectorAll('[data-phase-action]').forEach((button) => {
+    const action = button.dataset.phaseAction;
+    button.dataset.jsonPost = `/api/phases/${phaseId}/${action}`;
+  });
+  body.dataset.phaseDetailPanel = String(phaseId);
+  const kind = nextTab === 'logs' ? 'logs' : 'diff';
+  if (window.htmx) htmx.ajax('GET', `/phases/${phaseId}/${kind}/fragment`, { target: '#workflow-work-body', swap: 'innerHTML' });
+  else location.href = `/phases/${phaseId}/${kind}/fragment`;
+}
+
 function applyPhaseStatus(root, phase) {
   if (!phase) return false;
   const id = phase.phase_id || phase.id;
@@ -288,6 +333,8 @@ function applyPhaseStatus(root, phase) {
   row.classList.add(`phase-row-${status}`);
   row.dataset.phaseStatus = status;
   setStatusChip(chip, status);
+  const fill = root.querySelector(`[data-phase-fill="${id}"]`);
+  if (fill) fill.style.width = `${phaseProgressPercent(status)}%`;
   const started = row.querySelector('[data-phase-started]');
   if (started && phase.started_at) started.textContent = formatSSETime(phase.started_at);
   const finished = row.querySelector('[data-phase-finished]');

@@ -130,6 +130,9 @@ var uiTemplates = template.Must(template.New("ui").Funcs(template.FuncMap{
 	"cleanSessionURL": func(session string) string {
 		return "/api/cerberus/sessions/" + session + "/clean"
 	},
+	"phaseProgress":    phaseProgress,
+	"phaseFillClass":   phaseFillClass,
+	"phaseStatusLabel": phaseStatusLabel,
 }).Parse(`
 {{define "shell"}}
 <!DOCTYPE html>
@@ -278,13 +281,18 @@ What this phase does.</textarea></div>
 {{end}}
 
 {{define "workflowDetail"}}
-<div data-page="backlog" data-workflow-id="{{.Workflow.ID}}" data-workflow-stream="/api/workflows/{{.Workflow.ID}}/stream" data-refresh="/workflows/{{.Workflow.ID}}/fragment">
-  <a class="back" href="/specs/{{.Spec.ID}}" hx-get="/specs/{{.Spec.ID}}/fragment" hx-target="#app" hx-push-url="/specs/{{.Spec.ID}}">← {{.Spec.Title}}</a>
-  <div class="page-header"><div><h2>Workflow #{{.Workflow.ID}}</h2><div class="card-meta">Spec #{{.Spec.ID}} · {{.Workflow.Track}} · created {{datetime .Workflow.CreatedAt}}</div></div><span class="chip chip-{{.Workflow.Status}}" data-workflow-status data-status="{{.Workflow.Status}}">{{.Workflow.Status}}</span></div>
-  <div class="card-actions"><button class="btn" data-json-post="/api/workflows/{{.Workflow.ID}}/resume" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app">Resume</button>{{if eq .Workflow.Status "failed"}}<button class="btn btn-primary" data-json-post="/api/workflows/{{.Workflow.ID}}/follow-up" data-redirect-template="/workflows/{id}">Follow-up run</button>{{end}}<button class="btn btn-danger" data-json-post="/api/workflows/{{.Workflow.ID}}/stop" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app">Stop</button></div>
-  <div class="section"><h3>Approved memory used</h3>{{if .MemoryError}}<div class="empty">{{.MemoryError}}</div>{{else if .Memory.Markdown}}<div class="card-meta">{{len .Memory.Files}} file(s) from {{.Memory.Root}}</div><pre class="doc-box">{{.Memory.Markdown}}</pre>{{else}}<div class="empty">No approved markdown memory found for this workflow's project namespace.</div>{{end}}</div>
-  <div class="section"><h3>Memory update review</h3>{{if .MemoryUpdateError}}<div class="empty">{{.MemoryUpdateError}}</div>{{end}}{{if .MemoryUpdate}}<div class="card"><div class="card-header"><span class="card-title">Memory update #{{.MemoryUpdate.ID}}</span><span class="chip chip-{{.MemoryUpdate.Status}}">{{.MemoryUpdate.Status}}</span></div>{{if .MemoryUpdate.MemoryPath}}<div class="card-meta">written to {{.MemoryUpdate.MemoryPath}}</div>{{end}}{{if .MemoryUpdate.ReviewerComment}}<div class="card-meta">comment: {{.MemoryUpdate.ReviewerComment}}</div>{{end}}<pre class="doc-box">{{.MemoryUpdate.ProposalMarkdown}}</pre><div class="card-actions"><button class="btn btn-primary" data-json-post="/api/workflows/{{.Workflow.ID}}/memory-update/accept" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app">Accept</button><button class="btn btn-danger" data-json-post="/api/workflows/{{.Workflow.ID}}/memory-update/reject" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app">Reject</button></div><form data-json method="post" action="/api/workflows/{{.Workflow.ID}}/memory-update/revise" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app"><div class="field"><label>Revision comment</label><textarea name="comment" required></textarea></div><button class="btn">Revise with comment</button></form></div>{{else}}<form data-json method="post" action="/api/workflows/{{.Workflow.ID}}/memory-update" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app"><div class="field"><label>Feedback for memory</label><textarea name="feedback" placeholder="What durable context should be remembered from this workflow?"></textarea></div><button class="btn btn-primary">Create memory update proposal</button></form>{{end}}</div>
-  <div class="section"><h3>Phases</h3>{{range .Phases}}<article class="phase-row phase-row-{{.Status}}" id="phase-{{.ID}}" data-phase-row="{{.ID}}" data-phase-status="{{.Status}}"><div class="phase-pos">{{.Position}}</div><div class="phase-body"><div class="card-header"><span class="phase-name">{{.Name}}</span>{{if eq .Status "failed"}}<span class="chip chip-{{.Status}}" data-phase-status-chip="{{.ID}}" data-status="{{.Status}}">{{.Status}}</span>{{else if .ReviewVerdict}}<span class="chip chip-{{strptr .ReviewVerdict}}" data-phase-status-chip="{{.ID}}" data-status="{{strptr .ReviewVerdict}}">{{strptr .ReviewVerdict}}</span>{{else}}<span class="chip chip-{{.Status}}" data-phase-status-chip="{{.ID}}" data-status="{{.Status}}">{{.Status}}</span>{{end}}</div><div class="phase-goal">{{.Goal}}</div><div class="card-meta" data-phase-meta="{{.ID}}">cost {{money .CostUSD}} · started <span data-phase-started>{{ptime .StartedAt}}</span> · finished <span data-phase-finished>{{ptime .FinishedAt}}</span></div><div class="card-actions"><button class="btn" data-phase-detail="logs" data-phase-id="{{.ID}}" hx-get="/phases/{{.ID}}/logs/fragment" hx-target="#phase-detail-{{.ID}}" hx-swap="innerHTML">Logs</button><button class="btn" data-phase-detail="diff" data-phase-id="{{.ID}}" hx-get="/phases/{{.ID}}/diff/fragment" hx-target="#phase-detail-{{.ID}}" hx-swap="innerHTML">Diff</button><button class="btn btn-primary" data-json-post="/api/phases/{{.ID}}/approve" data-refresh="/workflows/{{$.Workflow.ID}}/fragment" data-target="#app">Approve</button><button class="btn btn-danger" data-json-post="/api/phases/{{.ID}}/reject" data-refresh="/workflows/{{$.Workflow.ID}}/fragment" data-target="#app">Reject</button><button class="btn" data-json-post="/api/phases/{{.ID}}/clean" data-refresh="/workflows/{{$.Workflow.ID}}/fragment" data-target="#app">Clean</button></div><div id="phase-detail-{{.ID}}" class="phase-detail" data-phase-detail-panel="{{.ID}}"></div></div></article>{{end}}</div>
+<div class="workflow-diffdesk" data-page="backlog" data-workflow-id="{{.Workflow.ID}}" data-workflow-stream="/api/workflows/{{.Workflow.ID}}/stream" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-selected-phase="{{.InitialPhase.ID}}" data-selected-tab="diff">
+  <nav class="workflow-local-nav" aria-label="Workflow context"><a href="/backlog" hx-get="/backlog/fragment" hx-target="#app" hx-push-url="/backlog">Foundry</a><a href="/projects/{{.Project.ID}}" hx-get="/projects/{{.Project.ID}}/fragment" hx-target="#app" hx-push-url="/projects/{{.Project.ID}}">{{.Project.Name}}</a></nav>
+  <header class="workflow-hero">
+    <div><p class="eyebrow">Workflow #{{.Workflow.ID}} / {{.CurrentPhaseName}}</p><h1>{{.Spec.Title}}</h1><div class="workflow-meta">Workflow #{{.Workflow.ID}} / {{.CurrentPhaseName}}</div></div>
+    <span class="chip chip-{{.Workflow.Status}}" data-workflow-status data-status="{{.Workflow.Status}}">{{phaseStatusLabel .Workflow.Status}}</span>
+  </header>
+  <div class="workflow-phase-strip" aria-label="Workflow phases">{{range .Phases}}<button type="button" class="phase-tile phase-row-{{.Status}} {{if eq .ID $.InitialPhase.ID}}is-selected{{end}}" id="phase-{{.ID}}" data-workflow-phase-select data-phase-row="{{.ID}}" data-phase-id="{{.ID}}" data-phase-name="{{.Name}}" data-phase-status="{{.Status}}"><span class="phase-tile-name">{{.Name}}</span>{{if eq .Status "failed"}}<span class="chip chip-{{.Status}}" data-phase-status-chip="{{.ID}}" data-status="{{.Status}}">{{phaseStatusLabel .Status}}</span>{{else if .ReviewVerdict}}<span class="chip chip-{{strptr .ReviewVerdict}}" data-phase-status-chip="{{.ID}}" data-status="{{strptr .ReviewVerdict}}">{{phaseStatusLabel (strptr .ReviewVerdict)}}</span>{{else}}<span class="chip chip-{{.Status}}" data-phase-status-chip="{{.ID}}" data-status="{{.Status}}">{{phaseStatusLabel .Status}}</span>{{end}}<span class="phase-progress" aria-hidden="true"><span class="phase-progress-fill {{phaseFillClass .Status}}" data-phase-fill="{{.ID}}" style="width: {{phaseProgress .Status}}%"></span></span></button>{{else}}<div class="empty empty-action">No phases have been created for this workflow yet.</div>{{end}}</div>
+  <section class="workflow-work-window" aria-label="Workflow work window">
+    <div class="work-window-head"><div><h2>Work window</h2><p class="hint">Select a phase, then inspect changed code or full-width logs.</p></div><div class="work-tabs"><button type="button" class="work-tab is-selected" data-work-window-tab="diff">Diff</button><button type="button" class="work-tab" data-work-window-tab="logs">Logs</button></div></div>
+    {{if .HasInitialPhase}}<div class="selected-phase-actions"><div><strong data-selected-phase-name>{{.InitialPhase.Name}}</strong><div class="card-meta">Phase actions apply to the selected strip item.</div></div><div class="card-actions"><button class="btn btn-primary" data-json-post="/api/phases/{{.InitialPhase.ID}}/approve" data-phase-action="approve" data-refresh="/workflows/{{$.Workflow.ID}}/fragment" data-target="#app">Approve</button><button class="btn btn-danger" data-json-post="/api/phases/{{.InitialPhase.ID}}/reject" data-phase-action="reject" data-refresh="/workflows/{{$.Workflow.ID}}/fragment" data-target="#app">Reject</button><button class="btn" data-json-post="/api/phases/{{.InitialPhase.ID}}/clean" data-phase-action="clean" data-refresh="/workflows/{{$.Workflow.ID}}/fragment" data-target="#app">Clean</button></div></div><div id="workflow-work-body" class="workflow-work-body" data-phase-detail-panel="{{.InitialPhase.ID}}" hx-get="/phases/{{.InitialPhase.ID}}/diff/fragment" hx-trigger="load" hx-swap="innerHTML"></div>{{else}}<div id="workflow-work-body" class="workflow-work-body empty empty-action">No selected phase.</div>{{end}}
+  </section>
+  <details class="workflow-actions"><summary>Workflow actions and evidence</summary><div class="card-actions"><button class="btn" data-json-post="/api/workflows/{{.Workflow.ID}}/resume" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app">Resume</button>{{if eq .Workflow.Status "failed"}}<button class="btn btn-primary" data-json-post="/api/workflows/{{.Workflow.ID}}/follow-up" data-redirect-template="/workflows/{id}">Follow-up run</button>{{end}}<button class="btn btn-danger" data-json-post="/api/workflows/{{.Workflow.ID}}/stop" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app">Stop</button></div><div class="evidence-grid"><section><h3>Approved memory used</h3>{{if .MemoryError}}<div class="empty empty-error">{{.MemoryError}}</div>{{else if .Memory.Markdown}}<div class="card-meta">{{len .Memory.Files}} file(s) from {{.Memory.Root}}</div><pre class="doc-box">{{.Memory.Markdown}}</pre>{{else}}<div class="empty empty-action">No approved markdown memory found for this workflow's project namespace.</div>{{end}}</section><section><h3>Memory update review</h3>{{if .MemoryUpdateError}}<div class="empty empty-error">{{.MemoryUpdateError}}</div>{{end}}{{if .MemoryUpdate}}<div class="card"><div class="card-header"><span class="card-title">Memory update #{{.MemoryUpdate.ID}}</span><span class="chip chip-{{.MemoryUpdate.Status}}">{{.MemoryUpdate.Status}}</span></div>{{if .MemoryUpdate.MemoryPath}}<div class="card-meta">written to {{.MemoryUpdate.MemoryPath}}</div>{{end}}{{if .MemoryUpdate.ReviewerComment}}<div class="card-meta">comment: {{.MemoryUpdate.ReviewerComment}}</div>{{end}}<pre class="doc-box">{{.MemoryUpdate.ProposalMarkdown}}</pre><div class="card-actions"><button class="btn btn-primary" data-json-post="/api/workflows/{{.Workflow.ID}}/memory-update/accept" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app">Accept</button><button class="btn btn-danger" data-json-post="/api/workflows/{{.Workflow.ID}}/memory-update/reject" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app">Reject</button></div><form data-json method="post" action="/api/workflows/{{.Workflow.ID}}/memory-update/revise" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app"><div class="field"><label>Revision comment</label><textarea name="comment" required></textarea></div><button class="btn">Revise with comment</button></form></div>{{else}}<form data-json method="post" action="/api/workflows/{{.Workflow.ID}}/memory-update" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app"><div class="field"><label>Feedback for memory</label><textarea name="feedback" placeholder="What durable context should be remembered from this workflow?"></textarea></div><button class="btn btn-primary">Create memory update proposal</button></form>{{end}}</section></div></details>
 </div>
 {{end}}
 
@@ -347,6 +355,66 @@ What this phase does.</textarea></div>
 </div>
 {{end}}
 `))
+
+func phaseStatusLabel(status string) string {
+	if status == "" {
+		return "unknown"
+	}
+	return strings.ReplaceAll(status, "_", " ")
+}
+
+func phaseProgress(status string) int {
+	switch status {
+	case "done", "failed":
+		return 100
+	case "running":
+		return 40
+	default:
+		return 0
+	}
+}
+
+func phaseFillClass(status string) string {
+	switch status {
+	case "done":
+		return "phase-progress-done"
+	case "running":
+		return "phase-progress-running"
+	case "failed":
+		return "phase-progress-failed"
+	case "awaiting_review":
+		return "phase-progress-review"
+	default:
+		return "phase-progress-muted"
+	}
+}
+
+func selectInitialPhase(phases []db.Phase) (db.Phase, bool) {
+	if len(phases) == 0 {
+		return db.Phase{}, false
+	}
+	for _, ph := range phases {
+		if ph.Status == "running" {
+			return ph, true
+		}
+	}
+	for _, ph := range phases {
+		if ph.Status == "awaiting_review" {
+			return ph, true
+		}
+	}
+	for _, ph := range phases {
+		if ph.Status == "failed" {
+			return ph, true
+		}
+	}
+	for i := len(phases) - 1; i >= 0; i-- {
+		if phases[i].Status == "done" {
+			return phases[i], true
+		}
+	}
+	return phases[0], true
+}
 
 type shellData struct{ Page, Fragment string }
 
@@ -775,16 +843,25 @@ func (s *Server) handleUIWorkflowFragment(w http.ResponseWriter, r *http.Request
 	} else if !errors.Is(err, db.ErrNotFound) {
 		memUpdateErr = err.Error()
 	}
+	initialPhase, hasInitialPhase := selectInitialPhase(phases)
+	currentPhaseName := "no phase"
+	if hasInitialPhase {
+		currentPhaseName = initialPhase.Name
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := uiTemplates.ExecuteTemplate(w, "workflowDetail", struct {
 		Workflow          db.Workflow
 		Spec              db.Spec
+		Project           db.Project
 		Phases            []db.Phase
+		InitialPhase      db.Phase
+		HasInitialPhase   bool
+		CurrentPhaseName  string
 		Memory            memory.Slice
 		MemoryError       string
 		MemoryUpdate      *db.MemoryUpdateJob
 		MemoryUpdateError string
-	}{wf, sp, phases, mem, memErrMsg, memUpdate, memUpdateErr}); err != nil {
+	}{wf, sp, proj, phases, initialPhase, hasInitialPhase, currentPhaseName, mem, memErrMsg, memUpdate, memUpdateErr}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
