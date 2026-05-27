@@ -164,8 +164,12 @@ var uiTemplates = template.Must(template.New("ui").Funcs(template.FuncMap{
 
 {{define "backlog"}}
 <div data-page="backlog">
-  <div class="page-header">
-    <h2>Backlog</h2>
+  <div class="page-header command-header">
+    <div>
+      <p class="eyebrow">Foundry / backlog</p>
+      <h2>Executable intent queue</h2>
+      <p class="hint">Scan status, ownership, and the next safe action without opening each spec.</p>
+    </div>
     <div class="card-actions">
       <a class="btn btn-primary" href="/spec-builder" hx-get="/spec-builder/fragment" hx-target="#app" hx-push-url="/spec-builder">Build with AI</a>
       <button class="btn btn-primary" popovertarget="new-spec">+ Spec</button>
@@ -174,15 +178,17 @@ var uiTemplates = template.Must(template.New("ui").Funcs(template.FuncMap{
   </div>
   <div id="new-project" class="popover-card" popover>
     <h3>New Project</h3>
+    <p class="hint">Register the target repository and its approved-memory namespace.</p>
     <form method="post" action="/backlog/projects" hx-post="/backlog/projects" hx-target="#app" hx-swap="innerHTML">
       <div class="field"><label>Name</label><input name="name" required></div>
-      <div class="field"><label>Repo path</label><input name="repo_path" required></div>
+      <div class="field"><label>Repo path</label><input name="repo_path" required placeholder="/workspace or /home/me/src/app"></div>
       <div class="field"><label>Memory namespace</label><input name="memory_namespace" placeholder="Defaults to project name"><p class="hint">Leave blank to use the project name.</p></div>
-      <button class="btn btn-primary">Create</button>
+      <button class="btn btn-primary">Create project</button>
     </form>
   </div>
   <div id="new-spec" class="popover-card" popover>
     <h3>New Spec</h3>
+    <p class="hint">Specs become runnable when they include <code>## Phase N:</code> sections.</p>
     <form method="post" action="/backlog/specs" hx-post="/backlog/specs" hx-target="#app" hx-swap="innerHTML">
       <div class="field"><label>Title</label><input name="title" required></div>
       <div class="field"><label>Project</label><select name="project_id" required>{{range .Projects}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select></div>
@@ -193,61 +199,70 @@ Global context here.
 ## Phase 1: Bootstrap
 
 What this phase does.</textarea></div>
-      <button class="btn btn-primary">Create</button>
+      <button class="btn btn-primary">Create spec</button>
     </form>
   </div>
-  {{if .SpecsByStatus}}
-    {{range .Statuses}}
-      {{$items := index $.SpecsByStatus .}}
-      {{if $items}}
-        <div class="group-label">{{.}}</div>
-        {{range $items}}
-          <article class="card">
-            <div class="card-header"><a class="card-title" href="/specs/{{.ID}}" hx-get="/specs/{{.ID}}/fragment" hx-target="#app" hx-push-url="/specs/{{.ID}}">{{.Title}}</a><span class="chip chip-{{.Track}}">{{.Track}}</span><span class="chip chip-{{.Status}}">{{.Status}}</span></div>
-            <div class="card-meta">Project #{{.ProjectID}} · {{date .CreatedAt}}</div>
-            <div class="card-actions"><form method="post" action="/backlog/workflows" hx-post="/backlog/workflows"><input type="hidden" name="spec_id" value="{{.ID}}"><button class="btn btn-primary">Run Workflow</button></form></div>
+  {{if .HasSpecs}}
+    <div class="worklist" aria-label="Specs grouped by status">
+    {{range .Groups}}
+      {{if .Items}}
+        <div class="group-label">{{.Label}}</div>
+        {{range .Items}}
+          <article class="work-row work-row-{{.Status}}">
+            <div class="work-main">
+              <a class="work-title" href="/specs/{{.ID}}" hx-get="/specs/{{.ID}}/fragment" hx-target="#app" hx-push-url="/specs/{{.ID}}">{{.Title}}</a>
+              <div class="work-meta"><strong>{{.ProjectName}}</strong> · created {{date .CreatedAt}} · last {{date .UpdatedAt}}</div>
+            </div>
+            <div class="work-signals"><span class="chip chip-{{.Status}}">{{.Status}}</span><span class="chip chip-{{.Track}}">{{.Track}}</span></div>
+            <div class="work-next"><form method="post" action="/backlog/workflows" hx-post="/backlog/workflows"><input type="hidden" name="spec_id" value="{{.ID}}"><button class="btn btn-primary">Run workflow</button></form></div>
           </article>
         {{end}}
       {{end}}
     {{end}}
-  {{else}}<div class="empty">No specs yet. Create one to get started.</div>{{end}}
+    </div>
+  {{else}}<div class="empty empty-action">No specs yet. Create a spec or use Spec Builder to turn intent into executable phases.</div>{{end}}
   {{if .Drafts}}
     <div class="group-label">spec builder drafts</div>
-    {{range .Drafts}}<article class="card"><div class="card-header"><a class="card-title" href="/spec-builder/{{.ID}}" hx-get="/spec-builder/{{.ID}}/fragment" hx-target="#app" hx-push-url="/spec-builder/{{.ID}}">{{.Title}}</a><span class="chip chip-running">{{.Status}}</span></div><div class="card-meta">{{date .CreatedAt}}</div></article>{{end}}
+    {{range .Drafts}}<article class="work-row"><div class="work-main"><a class="work-title" href="/spec-builder/{{.ID}}" hx-get="/spec-builder/{{.ID}}/fragment" hx-target="#app" hx-push-url="/spec-builder/{{.ID}}">{{.Title}}</a><div class="work-meta">draft created {{date .CreatedAt}}</div></div><div class="work-signals"><span class="chip chip-running">{{.Status}}</span></div><div class="work-next"><a class="btn" href="/spec-builder/{{.ID}}" hx-get="/spec-builder/{{.ID}}/fragment" hx-target="#app" hx-push-url="/spec-builder/{{.ID}}">Continue draft</a></div></article>{{end}}
   {{end}}
 </div>
 {{end}}
 
 {{define "projects"}}
 <div data-page="projects">
-  <div class="page-header"><h2>Projects</h2><div class="card-actions"><button class="btn" popovertarget="new-project-page">+ Project</button><button class="btn btn-primary" hx-get="/projects/fragment?discover=1" hx-target="#app" hx-push-url="/projects">Discover repos</button></div></div>
+  <div class="page-header command-header"><div><p class="eyebrow">Foundry / projects</p><h2>Project registry</h2><p class="hint">Each project binds a target repo to one approved-memory namespace.</p></div><div class="card-actions"><button class="btn" popovertarget="new-project-page">+ Project</button><button class="btn btn-primary" hx-get="/projects/fragment?discover=1" hx-target="#app" hx-push-url="/projects">Discover repos</button></div></div>
   <div id="new-project-page" class="popover-card" popover>
     <h3>New Project</h3>
+    <p class="hint">Use repo paths relative to the machine running Foundry.</p>
     <form method="post" action="/projects" hx-post="/projects" hx-target="#app" hx-swap="innerHTML">
       <div class="field"><label>Name</label><input name="name" required></div>
       <div class="field"><label>Target repo path</label><input name="repo_path" required></div>
       <div class="field"><label>Memory namespace</label><input name="memory_namespace" placeholder="Defaults to project name"><p class="hint">Leave blank to use the project name.</p></div>
-      <button class="btn btn-primary">Create</button>
+      <button class="btn btn-primary">Create project</button>
     </form>
   </div>
-  <div class="empty">Memory repo: {{if .MemoryRepoPath}}{{.MemoryRepoPath}}{{else}}not configured{{end}}</div>
-  {{if .Projects}}<div class="group-label">Registered projects</div>{{range .Projects}}<article class="card"><div class="card-header"><a class="card-title" href="/projects/{{.ID}}" hx-get="/projects/{{.ID}}/fragment" hx-target="#app" hx-push-url="/projects/{{.ID}}">{{.Name}}</a></div><div class="card-meta">target: {{.RepoPath}} · namespace: {{if .MemoryNamespace}}{{.MemoryNamespace}}{{else}}—{{end}}</div><div class="card-actions"><a class="btn" href="/projects/{{.ID}}" hx-get="/projects/{{.ID}}/fragment" hx-target="#app" hx-push-url="/projects/{{.ID}}">View / edit</a></div></article>{{end}}{{else}}<div class="empty">No projects yet. Create one or click Discover repos to scan configured git root.</div>{{end}}
-  {{if .DiscoverErr}}<div class="empty">{{.DiscoverErr}}</div>{{end}}
-  {{if .Repos}}<div class="group-label">Discovered repos</div>{{range .Repos}}<article class="card"><div class="card-header"><span class="card-title">{{.Name}}</span>{{if .Imported}}<span class="chip chip-done">imported</span>{{end}}</div><div class="card-meta">target: {{.Path}}{{if .Imported}} · namespace: {{if .MemoryNamespace}}{{.MemoryNamespace}}{{else}}—{{end}}{{end}}</div>{{if not .Imported}}<div class="card-actions"><form method="post" action="/projects?discover=1" hx-post="/projects?discover=1" hx-target="#app" hx-swap="innerHTML"><input type="hidden" name="name" value="{{.Name}}"><input type="hidden" name="repo_path" value="{{.Path}}"><input type="hidden" name="memory_namespace" value="{{.Name}}"><button class="btn btn-primary">Import</button></form></div>{{end}}</article>{{end}}{{end}}
+  <div class="context-slab"><span>Approved memory repo</span><strong>{{if .MemoryRepoPath}}{{.MemoryRepoPath}}{{else}}not configured{{end}}</strong></div>
+  {{if .Projects}}<div class="group-label">Registered projects</div><div class="project-grid">{{range .Projects}}<article class="project-slab"><div class="project-head"><a class="project-title" href="/projects/{{.ID}}" hx-get="/projects/{{.ID}}/fragment" hx-target="#app" hx-push-url="/projects/{{.ID}}">{{.Name}}</a><span class="chip chip-{{.MemoryClass}}">{{.MemoryState}}</span></div><dl class="fact-list"><div><dt>Target repo</dt><dd>{{.RepoPath}}</dd></div><div><dt>Memory namespace</dt><dd>{{if .MemoryNamespace}}{{.MemoryNamespace}}{{else}}—{{end}}</dd></div></dl><div class="card-actions"><a class="btn btn-primary" href="/projects/{{.ID}}" hx-get="/projects/{{.ID}}/fragment" hx-target="#app" hx-push-url="/projects/{{.ID}}">View / edit</a></div></article>{{end}}</div>{{else}}<div class="empty empty-action">No projects yet. Create one manually or discover repositories from the configured git root.</div>{{end}}
+  {{if .DiscoverErr}}<div class="empty empty-error">Discovery failed: {{.DiscoverErr}}</div>{{end}}
+  {{if .Repos}}<div class="group-label">Discovered repos</div>{{range .Repos}}<article class="work-row"><div class="work-main"><span class="work-title">{{.Name}}</span><div class="work-meta">target: {{.Path}}{{if .Imported}} · namespace: {{if .MemoryNamespace}}{{.MemoryNamespace}}{{else}}—{{end}}{{end}}</div></div><div class="work-signals">{{if .Imported}}<span class="chip chip-done">imported</span>{{else}}<span class="chip chip-pending">new</span>{{end}}</div>{{if not .Imported}}<div class="work-next"><form method="post" action="/projects?discover=1" hx-post="/projects?discover=1" hx-target="#app" hx-swap="innerHTML"><input type="hidden" name="name" value="{{.Name}}"><input type="hidden" name="repo_path" value="{{.Path}}"><input type="hidden" name="memory_namespace" value="{{.Name}}"><button class="btn btn-primary">Import project</button></form></div>{{end}}</article>{{end}}{{end}}
 </div>
 {{end}}
 
 {{define "projectDetail"}}
 <div data-page="projects">
-  <a class="back" href="/projects" hx-get="/projects/fragment" hx-target="#app" hx-push-url="/projects">← Projects</a>
-  <div class="page-header"><div><h2>{{.Project.Name}}</h2><div class="card-meta">Project #{{.Project.ID}} · created {{date .Project.CreatedAt}}</div></div><button class="btn btn-danger" hx-delete="/projects/{{.Project.ID}}" hx-confirm="Delete this project and its specs/workflows?">Delete</button></div>
-  <form method="post" action="/projects/{{.Project.ID}}" hx-patch="/projects/{{.Project.ID}}" hx-target="#app" hx-swap="innerHTML">
-    <div class="field"><label>Name</label><input name="name" value="{{.Project.Name}}" required></div>
-    <div class="field"><label>Target repo path</label><input name="repo_path" value="{{.Project.RepoPath}}" required></div>
-    <div class="field"><label>Memory namespace</label><input name="memory_namespace" value="{{.Project.MemoryNamespace}}" placeholder="Defaults to project name"><p class="hint">On create, blank defaults to the project name.</p></div>
-    <button class="btn btn-primary">Save changes</button>
-  </form>
-  <div class="section"><h3>Approved memory</h3>{{if .MemoryError}}<div class="empty">{{.MemoryError}}</div>{{else if .Memory.Markdown}}<div class="card-meta">{{len .Memory.Files}} file(s) from {{.Memory.Root}}</div><pre class="doc-box">{{.Memory.Markdown}}</pre>{{else}}<div class="empty">No approved markdown memory found for this namespace.</div>{{end}}</div>
+  <div class="context-nav"><a class="btn" href="/projects" hx-get="/projects/fragment" hx-target="#app" hx-push-url="/projects">← Projects</a><a class="btn" href="/backlog" hx-get="/backlog/fragment" hx-target="#app" hx-push-url="/backlog">Backlog</a></div>
+  <div class="page-header"><div><p class="eyebrow">Project #{{.Project.ID}}</p><h2>{{.Project.Name}}</h2><div class="card-meta">created {{date .Project.CreatedAt}}</div></div><button class="btn btn-danger" hx-delete="/projects/{{.Project.ID}}" hx-confirm="Delete this project and its specs/workflows?">Delete project</button></div>
+  <div class="project-layout">
+    <form class="panel-form" method="post" action="/projects/{{.Project.ID}}" hx-patch="/projects/{{.Project.ID}}" hx-target="#app" hx-swap="innerHTML">
+      <h3>Edit project</h3>
+      <div class="field"><label>Name</label><input name="name" value="{{.Project.Name}}" required></div>
+      <div class="field"><label>Target repo path</label><input name="repo_path" value="{{.Project.RepoPath}}" required></div>
+      <div class="field"><label>Memory namespace</label><input name="memory_namespace" value="{{.Project.MemoryNamespace}}" placeholder="Defaults to project name"><p class="hint">Namespace is read from the configured private memory repo.</p></div>
+      <button class="btn btn-primary">Save changes</button>
+    </form>
+    <aside class="context-panel"><h3>Project context</h3><dl class="fact-list"><div><dt>Target repo</dt><dd>{{.Project.RepoPath}}</dd></div><div><dt>Memory namespace</dt><dd>{{.Project.MemoryNamespace}}</dd></div><div><dt>Approved memory</dt><dd>{{if .MemoryError}}error{{else if .Memory.Markdown}}{{len .Memory.Files}} file(s) available{{else}}none yet{{end}}</dd></div></dl></aside>
+  </div>
+  <div class="section"><h3>Approved memory</h3>{{if .MemoryError}}<div class="empty empty-error">{{.MemoryError}}</div>{{else if .Memory.Markdown}}<div class="card-meta">{{len .Memory.Files}} file(s) from {{.Memory.Root}}</div><pre class="doc-box">{{.Memory.Markdown}}</pre>{{else}}<div class="empty empty-action">No approved markdown memory found for this namespace. Accepted memory updates will appear here.</div>{{end}}</div>
 </div>
 {{end}}
 
@@ -367,6 +382,16 @@ func (s *Server) handleUISettingsPage(w http.ResponseWriter, r *http.Request) {
 	s.renderShell(w, "settings", "/settings/fragment")
 }
 
+type uiSpecRow struct {
+	db.Spec
+	ProjectName string
+}
+
+type uiSpecGroup struct {
+	Label string
+	Items []uiSpecRow
+}
+
 func (s *Server) handleUIBacklogFragment(w http.ResponseWriter, r *http.Request) {
 	projects, _ := db.ListProjects(r.Context(), s.pool)
 	specs, err := db.ListSpecs(r.Context(), s.pool, db.ListSpecsFilter{})
@@ -381,16 +406,35 @@ func (s *Server) handleUIBacklogFragment(w http.ResponseWriter, r *http.Request)
 			activeDrafts = append(activeDrafts, d)
 		}
 	}
-	byStatus := map[string][]db.Spec{}
+	projectNames := map[int64]string{}
+	for _, p := range projects {
+		projectNames[p.ID] = p.Name
+	}
+	groups := []uiSpecGroup{{Label: "Needs attention"}, {Label: "Running / queued"}, {Label: "Ready to run"}, {Label: "Completed"}, {Label: "Other states"}}
 	for _, sp := range specs {
-		byStatus[sp.Status] = append(byStatus[sp.Status], sp)
+		row := uiSpecRow{Spec: sp, ProjectName: projectNames[sp.ProjectID]}
+		if row.ProjectName == "" {
+			row.ProjectName = fmt.Sprintf("Project #%d", sp.ProjectID)
+		}
+		switch sp.Status {
+		case "failed", "blocked", "awaiting_review", "review", "paused":
+			groups[0].Items = append(groups[0].Items, row)
+		case "running", "queued":
+			groups[1].Items = append(groups[1].Items, row)
+		case "pending", "idle", "draft":
+			groups[2].Items = append(groups[2].Items, row)
+		case "done", "accepted":
+			groups[3].Items = append(groups[3].Items, row)
+		default:
+			groups[4].Items = append(groups[4].Items, row)
+		}
 	}
 	data := struct {
-		Projects      []db.Project
-		SpecsByStatus map[string][]db.Spec
-		Statuses      []string
-		Drafts        []db.SpecDraft
-	}{projects, byStatus, []string{"running", "queued", "paused", "done", "failed", "dumpster"}, activeDrafts}
+		Projects []db.Project
+		Groups   []uiSpecGroup
+		HasSpecs bool
+		Drafts   []db.SpecDraft
+	}{projects, groups, len(specs) > 0, activeDrafts}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := uiTemplates.ExecuteTemplate(w, "backlog", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -490,11 +534,33 @@ type uiRepoItem struct {
 	MemoryNamespace string
 }
 
+type uiProjectRow struct {
+	db.Project
+	MemoryState string
+	MemoryClass string
+}
+
+func projectMemoryState(repoPath string, p db.Project) (string, string) {
+	mem, err := memory.LoadApproved(repoPath, p.MemoryNamespace)
+	if err != nil {
+		return "memory error", "error"
+	}
+	if strings.TrimSpace(mem.Markdown) == "" {
+		return "no approved memory", "pending"
+	}
+	return fmt.Sprintf("%d memory file(s)", len(mem.Files)), "accepted"
+}
+
 func (s *Server) handleUIProjectsFragment(w http.ResponseWriter, r *http.Request) {
 	projects, err := db.ListProjects(r.Context(), s.pool)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	projectRows := make([]uiProjectRow, 0, len(projects))
+	for _, p := range projects {
+		state, class := projectMemoryState(s.memoryRepoPath, p)
+		projectRows = append(projectRows, uiProjectRow{Project: p, MemoryState: state, MemoryClass: class})
 	}
 	var repos []uiRepoItem
 	var discoverErr string
@@ -515,11 +581,11 @@ func (s *Server) handleUIProjectsFragment(w http.ResponseWriter, r *http.Request
 		}
 	}
 	data := struct {
-		Projects       []db.Project
+		Projects       []uiProjectRow
 		Repos          []uiRepoItem
 		DiscoverErr    string
 		MemoryRepoPath string
-	}{projects, repos, discoverErr, s.memoryRepoPath}
+	}{projectRows, repos, discoverErr, s.memoryRepoPath}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := uiTemplates.ExecuteTemplate(w, "projects", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

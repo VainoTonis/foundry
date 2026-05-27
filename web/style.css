@@ -116,6 +116,39 @@ button:disabled, .btn:disabled, [aria-busy="true"] { opacity: .62; cursor: not-a
 .card-meta { color: var(--muted); font-size: .84rem; font-family: var(--mono); overflow-wrap: anywhere; }
 .card-actions { display: flex; gap: .55rem; margin-top: .85rem; flex-wrap: wrap; align-items: center; }
 
+/* --- backlog / project brutalist rows --- */
+.eyebrow { font-family: var(--mono); font-size: .72rem; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin-bottom: .25rem; }
+.command-header { background: var(--paper); border: 3px solid var(--border); box-shadow: var(--shadow); padding: var(--space-4); }
+.worklist { display: flex; flex-direction: column; gap: .6rem; }
+.work-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: .85rem; align-items: center;
+  padding: .85rem; border: 3px solid var(--border); background: var(--paper); box-shadow: 3px 3px 0 var(--border);
+}
+.work-row-running, .work-row-queued { border-left: .7rem solid var(--blue); }
+.work-row-failed, .work-row-blocked { border-left: .7rem solid var(--red); }
+.work-row-awaiting_review, .work-row-review, .work-row-paused { border-left: .7rem solid var(--yellow); }
+.work-row-done, .work-row-accepted { border-left: .7rem solid var(--green); }
+.work-main { min-width: 0; }
+.work-title, .project-title { color: var(--ink); font-weight: 950; text-decoration: none; font-size: 1rem; overflow-wrap: anywhere; }
+.work-title:hover, .project-title:hover { text-decoration: underline; }
+.work-meta { color: var(--muted); font-family: var(--mono); font-size: .8rem; overflow-wrap: anywhere; }
+.work-signals { display: flex; gap: .4rem; flex-wrap: wrap; justify-content: flex-end; }
+.work-next { display: flex; justify-content: flex-end; }
+.work-next form { margin: 0; }
+.context-slab { display: flex; justify-content: space-between; gap: 1rem; align-items: center; padding: .75rem .9rem; margin-bottom: 1rem; border: 3px solid var(--border); background: var(--paper-2); font-family: var(--mono); overflow-wrap: anywhere; }
+.context-slab span { font-weight: 950; text-transform: uppercase; }
+.project-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: .9rem; }
+.project-slab, .panel-form, .context-panel { border: 3px solid var(--border); background: var(--paper); padding: 1rem; box-shadow: 4px 4px 0 var(--border); }
+.project-head { display: flex; align-items: flex-start; justify-content: space-between; gap: .75rem; margin-bottom: .75rem; }
+.fact-list { display: grid; gap: .6rem; }
+.fact-list dt { font-size: .72rem; font-weight: 950; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.fact-list dd { font-family: var(--mono); font-size: .84rem; overflow-wrap: anywhere; }
+.context-nav { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: 1rem; }
+.project-layout { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(260px, .6fr); gap: 1rem; align-items: start; margin-bottom: 1.5rem; }
+.panel-form h3, .context-panel h3 { font-size: .85rem; text-transform: uppercase; letter-spacing: .06em; margin-bottom: .8rem; }
+.empty-action { border: 3px dashed var(--border); background: var(--paper); padding: 1.2rem; color: var(--ink); font-weight: 800; }
+.empty-error { border: 3px solid var(--red); background: #ffe1dd; color: var(--ink); font-weight: 800; }
+
 /* --- groups --- */
 .group-label {
   font-size: .78rem; font-weight: 950; letter-spacing: .09em; text-transform: uppercase;
@@ -228,6 +261,11 @@ button:disabled, .btn:disabled, [aria-busy="true"] { opacity: .62; cursor: not-a
   .field input, .field select, .field textarea { width: 100%; }
   .card-actions, .modal-actions, .chat-input-row { flex-direction: column; align-items: stretch; }
   .card-actions .btn, .card-actions button, .modal-actions .btn, .modal-actions button, .chat-input-row button { width: 100%; }
+  .work-row { grid-template-columns: 1fr; align-items: stretch; }
+  .work-signals, .work-next { justify-content: flex-start; }
+  .work-next .btn, .work-next button, .work-next form { width: 100%; }
+  .context-slab, .project-head { flex-direction: column; align-items: flex-start; }
+  .project-layout { grid-template-columns: 1fr; }
   .modal { padding: 1rem; }
   .phase-row { padding: .65rem; }
   .phase-pos { min-width: 1.25rem; }
