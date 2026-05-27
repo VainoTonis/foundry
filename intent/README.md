@@ -12,6 +12,7 @@ Foundry motto: [[Intent]], [[Agent Work]], [[Evidence]], [[Decision]].
 
 - [[Intent]] defines what Foundry is trying to preserve before work begins.
 - [[Product Model]] defines core product concepts.
+- [[Codebase Map]] maps current repository structure and implementation seams.
 - [[Principles]] records project taste and engineering defaults.
 - [[Constraints]] records limits that should shape generated specs.
 - [[Glossary]] keeps vocabulary consistent.
