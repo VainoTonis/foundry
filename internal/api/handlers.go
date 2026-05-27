@@ -268,11 +268,12 @@ What this phase does.</textarea></div>
 
 {{define "specDetail"}}
 <div data-page="backlog">
-  <a class="back" href="/backlog" hx-get="/backlog/fragment" hx-target="#app" hx-push-url="/backlog">← Backlog</a>
-  <div class="page-header"><div><h2>{{.Spec.Title}}</h2><div class="card-meta">Spec #{{.Spec.ID}} · Project #{{.Spec.ProjectID}} · {{date .Spec.CreatedAt}}</div></div><div class="card-actions"><span class="chip chip-{{.Spec.Track}}">{{.Spec.Track}}</span><span class="chip chip-{{.Spec.Status}}">{{.Spec.Status}}</span></div></div>
-  <div class="card-actions"><button class="btn btn-primary" data-json-post="/api/workflows" data-body='{"spec_id":{{.Spec.ID}}}' data-redirect-template="/workflows/{id}">Run Workflow</button>{{if eq .Spec.Track "poc"}}<button class="btn" data-json-post="/api/specs/{{.Spec.ID}}/promote" data-refresh="/specs/{{.Spec.ID}}/fragment" data-target="#app">Promote to polish</button>{{end}}</div>
-  <div class="section"><h3>Content</h3><pre class="doc-box">{{.Spec.Content}}</pre></div>
-  <div class="section"><h3>Workflows</h3>{{if .Workflows}}{{range .Workflows}}<article class="card"><div class="card-header"><a class="card-title" href="/workflows/{{.ID}}" hx-get="/workflows/{{.ID}}/fragment" hx-target="#app" hx-push-url="/workflows/{{.ID}}">Workflow #{{.ID}}</a><span class="chip chip-{{.Status}}">{{.Status}}</span></div><div class="card-meta">{{.Track}} · budget {{money .MaxCostUSD}} · {{date .CreatedAt}}</div></article>{{end}}{{else}}<div class="empty">No workflows yet.</div>{{end}}</div>
+  <div class="context-nav"><a class="btn" href="/backlog" hx-get="/backlog/fragment" hx-target="#app" hx-push-url="/backlog">← Backlog</a><a class="btn" href="/projects/{{.Project.ID}}" hx-get="/projects/{{.Project.ID}}/fragment" hx-target="#app" hx-push-url="/projects/{{.Project.ID}}">Project: {{.Project.Name}}</a></div>
+  <div class="context-slab spec-context"><span>Executable spec</span><strong>{{.Project.Name}} / Spec #{{.Spec.ID}}</strong><em>Runnable when content contains <code>## Phase N:</code> headings.</em></div>
+  <div class="page-header spec-hero"><div><p class="eyebrow">Spec detail</p><h2>{{.Spec.Title}}</h2><div class="card-meta">Created {{date .Spec.CreatedAt}} · last {{date .Spec.UpdatedAt}}</div></div><div class="status-stack"><span class="chip chip-{{.Spec.Status}}">{{.Spec.Status}}</span><span class="chip chip-{{.Spec.Track}}">{{.Spec.Track}}</span></div></div>
+  <div class="primary-action-slab"><div><strong>Next safe action</strong><p class="hint">Start an auditable workflow from this exact markdown intent.</p></div><div class="card-actions"><button class="btn btn-primary" data-json-post="/api/workflows" data-body='{"spec_id":{{.Spec.ID}}}' data-redirect-template="/workflows/{id}">Run workflow</button>{{if eq .Spec.Track "poc"}}<button class="btn" data-json-post="/api/specs/{{.Spec.ID}}/promote" data-refresh="/specs/{{.Spec.ID}}/fragment" data-target="#app">Promote to polish</button>{{end}}</div></div>
+  <div class="spec-detail-grid"><section class="document-surface"><div class="section-title-row"><h3>Spec content</h3><span class="chip chip-pending">markdown source</span></div><pre class="doc-box spec-doc">{{.Spec.Content}}</pre></section>
+  <aside class="history-panel"><h3>Workflow history</h3>{{if .Workflows}}<div class="history-list">{{range .Workflows}}<a class="history-row" href="/workflows/{{.ID}}" hx-get="/workflows/{{.ID}}/fragment" hx-target="#app" hx-push-url="/workflows/{{.ID}}"><span class="history-id">#{{.ID}}</span><span class="chip chip-{{.Status}}">{{.Status}}</span><span class="history-meta">{{.Track}} · budget {{money .MaxCostUSD}} · {{date .CreatedAt}}</span></a>{{end}}</div>{{else}}<div class="empty empty-action">No workflows yet. Run the workflow to produce logs, diffs, review notes, and decisions.</div>{{end}}</aside></div>
 </div>
 {{end}}
 
@@ -297,13 +298,14 @@ What this phase does.</textarea></div>
 
 {{define "builderStart"}}
 <div data-page="builder">
-  <div class="page-header"><h2>Spec Builder</h2></div>
-  <form data-json method="post" action="/api/spec-drafts" data-redirect-template="/spec-builder/{id}">
-    <div class="field"><label>Project</label><select name="project_id" required>{{range .Projects}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select></div>
-    <div class="field"><label>What should be built?</label><textarea name="description" required placeholder="Describe the feature, constraints, and expected phases."></textarea></div>
+  <div class="page-header command-header"><div><p class="eyebrow">Spec Builder</p><h2>Turn intent into executable phases</h2><p class="hint">Choose a project, describe the change, then review the generated markdown before saving it as a spec.</p></div></div>
+  <div class="builder-start-grid"><form class="panel-form builder-start-form" data-json method="post" action="/api/spec-drafts" data-redirect-template="/spec-builder/{id}">
+    <h3>Start a draft</h3>
+    <div class="field"><label>Project</label><select name="project_id" required>{{range .Projects}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select><p class="hint">Approved memory from this project's namespace is used as context.</p></div>
+    <div class="field"><label>What should be built?</label><textarea name="description" required placeholder="Describe the feature, constraints, evidence needed, and expected phases."></textarea><p class="hint">For runnable work, ask for markdown with visible ## Phase N: headings.</p></div>
     <button class="btn btn-primary">Start builder</button>
-  </form>
-  {{if .Drafts}}<div class="group-label">Resume active drafts</div>{{range .Drafts}}<article class="card"><div class="card-header"><a class="card-title" href="/spec-builder/{{.ID}}" hx-get="/spec-builder/{{.ID}}/fragment" hx-target="#app" hx-push-url="/spec-builder/{{.ID}}">{{.Title}}</a><span class="chip chip-running">{{.Status}}</span></div><div class="card-meta">{{datetime .UpdatedAt}}</div></article>{{end}}{{end}}
+  </form><aside class="context-panel"><h3>What the assistant does</h3><dl class="fact-list"><div><dt>Input</dt><dd>Your project, prompt, and approved memory.</dd></div><div><dt>Output</dt><dd>A reviewable markdown spec preview.</dd></div><div><dt>Safe point</dt><dd>You must save the draft before it becomes executable backlog work.</dd></div></dl></aside></div>
+  {{if .Drafts}}<div class="group-label">Resume active drafts</div><div class="worklist">{{range .Drafts}}<article class="work-row"><div class="work-main"><a class="work-title" href="/spec-builder/{{.ID}}" hx-get="/spec-builder/{{.ID}}/fragment" hx-target="#app" hx-push-url="/spec-builder/{{.ID}}">{{.Title}}</a><div class="work-meta">updated {{datetime .UpdatedAt}}</div></div><div class="work-signals"><span class="chip chip-running">{{.Status}}</span></div><div class="work-next"><a class="btn btn-primary" href="/spec-builder/{{.ID}}" hx-get="/spec-builder/{{.ID}}/fragment" hx-target="#app" hx-push-url="/spec-builder/{{.ID}}">Continue</a></div></article>{{end}}</div>{{else}}<div class="empty empty-action">No active drafts. Start a draft to shape intent before it enters the backlog.</div>{{end}}
 </div>
 {{end}}
 
@@ -311,10 +313,11 @@ What this phase does.</textarea></div>
 
 {{define "builderDetail"}}
 <div data-page="builder" data-draft-stream="/api/spec-drafts/{{.Draft.ID}}/stream" data-draft-id="{{.Draft.ID}}">
-  <a class="back" href="/spec-builder" hx-get="/spec-builder/fragment" hx-target="#app" hx-push-url="/spec-builder">← Spec Builder</a>
-  <div class="page-header"><div><h2>{{.Draft.Title}}</h2><div class="card-meta">Draft #{{.Draft.ID}} · {{.Draft.Status}} · {{datetime .Draft.UpdatedAt}}</div></div><div class="card-actions"><button class="btn btn-primary" data-json-post="/api/spec-drafts/{{.Draft.ID}}/save" data-body='{"title":""}' data-redirect-template="/specs/{spec_id}">Save as spec</button><button class="btn btn-danger" data-json-delete="/api/spec-drafts/{{.Draft.ID}}" data-redirect="/backlog">Abandon</button></div></div>
-  <div class="section"><h3>Approved memory used</h3>{{if .MemoryError}}<div class="empty">{{.MemoryError}}</div>{{else if .Memory.Markdown}}<div class="card-meta">{{len .Memory.Files}} file(s) from {{.Memory.Root}}</div><pre class="doc-box">{{.Memory.Markdown}}</pre>{{else}}<div class="empty">No project memory loaded for this draft.</div>{{end}}</div>
-  <div class="spec-builder-layout"><div class="spec-builder-chat"><div id="draft-messages" class="chat-messages">{{template "draftMessages" .}}</div><div id="draft-stream" class="chat-msg-streaming"></div><form data-json data-draft-message method="post" action="/api/spec-drafts/{{.Draft.ID}}/message"><div class="chat-input-row"><textarea class="chat-textarea" name="content" required placeholder="Reply to the spec builder…"></textarea><button class="btn btn-primary">Send</button></div></form></div><aside class="spec-preview-pane"><h3>Latest spec preview</h3><pre id="draft-preview" class="doc-box">{{if .Preview}}{{.Preview}}{{else}}Ask the builder to call update_spec with the full markdown spec.{{end}}</pre></aside></div>
+  <div class="context-nav"><a class="btn" href="/spec-builder" hx-get="/spec-builder/fragment" hx-target="#app" hx-push-url="/spec-builder">← Spec Builder</a>{{if .HasProject}}<a class="btn" href="/projects/{{.Project.ID}}" hx-get="/projects/{{.Project.ID}}/fragment" hx-target="#app" hx-push-url="/projects/{{.Project.ID}}">Project: {{.Project.Name}}</a>{{end}}</div>
+  <div class="page-header spec-hero"><div><p class="eyebrow">Draft #{{.Draft.ID}}</p><h2>{{.Draft.Title}}</h2><div class="card-meta">{{if .HasProject}}{{.Project.Name}} · {{end}}{{.Draft.Status}} · updated {{datetime .Draft.UpdatedAt}}</div></div><div class="card-actions"><button class="btn btn-primary" data-json-post="/api/spec-drafts/{{.Draft.ID}}/save" data-body='{"title":""}' data-redirect-template="/specs/{spec_id}">Save as spec</button><button class="btn btn-danger" data-json-delete="/api/spec-drafts/{{.Draft.ID}}" data-redirect="/backlog">Abandon</button></div></div>
+  <div class="builder-status-slab"><span class="chip chip-running">{{.Draft.Status}}</span><strong>The assistant is shaping a spec. Review the preview before saving.</strong><span class="hint">Streaming errors remain in the page error region and chat.</span></div>
+  <div class="spec-builder-layout"><section class="spec-builder-chat panel-form"><div class="section-title-row"><h3>Builder conversation</h3><span class="chip chip-streaming">live draft</span></div><div id="draft-messages" class="chat-messages">{{template "draftMessages" .}}</div><div id="draft-stream" class="chat-msg-streaming"></div><form data-json data-draft-message method="post" action="/api/spec-drafts/{{.Draft.ID}}/message"><div class="chat-input-row"><textarea class="chat-textarea" name="content" required placeholder="Reply with constraints, corrections, or ask for clearer phases…"></textarea><button class="btn btn-primary">Send</button></div></form></section><aside class="spec-preview-pane"><div class="section-title-row"><h3>Latest generated spec preview</h3><span class="chip chip-pending">review before save</span></div><pre id="draft-preview" class="doc-box spec-doc">{{if .Preview}}{{.Preview}}{{else}}Ask the builder to call update_spec with the full markdown spec, including ## Phase N: headings for executable work.{{end}}</pre></aside></div>
+  <details class="section memory-details"><summary>Approved memory used</summary>{{if .MemoryError}}<div class="empty empty-error">{{.MemoryError}}</div>{{else if .Memory.Markdown}}<div class="card-meta">{{len .Memory.Files}} file(s) from {{.Memory.Root}}</div><pre class="doc-box">{{.Memory.Markdown}}</pre>{{else}}<div class="empty empty-action">No project memory loaded for this draft.</div>{{end}}</details>
 </div>
 {{end}}
 
@@ -719,11 +722,13 @@ func (s *Server) handleUISpecFragment(w http.ResponseWriter, r *http.Request, id
 		return
 	}
 	wfs, _ := db.ListWorkflowsBySpec(r.Context(), s.pool, id)
+	proj, _ := db.GetProject(r.Context(), s.pool, sp.ProjectID)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := uiTemplates.ExecuteTemplate(w, "specDetail", struct {
 		Spec      db.Spec
+		Project   db.Project
 		Workflows []db.Workflow
-	}{sp, wfs}); err != nil {
+	}{sp, proj, wfs}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -908,8 +913,12 @@ func (s *Server) handleUISpecBuilderDetailFragment(w http.ResponseWriter, r *htt
 	preview := extractFinalSpec(draft.Messages)
 	var mem memory.Slice
 	var memErrMsg string
+	var proj db.Project
+	hasProject := false
 	if draft.ProjectID != nil {
-		if proj, err := db.GetProject(r.Context(), s.pool, *draft.ProjectID); err == nil {
+		if p, err := db.GetProject(r.Context(), s.pool, *draft.ProjectID); err == nil {
+			proj = p
+			hasProject = true
 			if loaded, err := memory.LoadApproved(s.memoryRepoPath, proj.MemoryNamespace); err == nil {
 				mem = loaded
 			} else {
@@ -922,9 +931,11 @@ func (s *Server) handleUISpecBuilderDetailFragment(w http.ResponseWriter, r *htt
 		Draft       db.SpecDraft
 		Messages    []uiChatMessage
 		Preview     string
+		Project     db.Project
+		HasProject  bool
 		Memory      memory.Slice
 		MemoryError string
-	}{draft, msgs, preview, mem, memErrMsg}); err != nil {
+	}{draft, msgs, preview, proj, hasProject, mem, memErrMsg}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
