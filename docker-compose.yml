@@ -24,16 +24,6 @@ services:
         condition: service_healthy
     ports:
       - "8080:8080"
-    environment:
-      FOUNDRY_GIT_ROOT: ${FOUNDRY_GIT_ROOT:-/workspace/git}
-      FOUNDRY_MEMORY_REPO_PATH: ${FOUNDRY_MEMORY_REPO_PATH:-/workspace/foundry-memory}
-    volumes:
-      - type: bind
-        source: ${FOUNDRY_GIT_ROOT:-./git}
-        target: ${FOUNDRY_GIT_ROOT:-/workspace/git}
-      - type: bind
-        source: ${FOUNDRY_MEMORY_REPO_PATH:-./foundry-memory}
-        target: ${FOUNDRY_MEMORY_REPO_PATH:-/workspace/foundry-memory}
     command:
       - sh
       - -c
@@ -41,8 +31,6 @@ services:
         printf '%s\n' \
           'db_url: "postgres://foundry:foundry@postgres:5432/foundry?sslmode=disable"' \
           'server_port: 8080' \
-          "git_root: \"$${FOUNDRY_GIT_ROOT:-/workspace/git}\"" \
-          "memory_repo_path: \"$${FOUNDRY_MEMORY_REPO_PATH:-/workspace/foundry-memory}\"" \
           > /tmp/config.docker.yaml
         exec ./foundry /tmp/config.docker.yaml
 

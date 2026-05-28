@@ -9,6 +9,27 @@ import (
 	"github.com/tonis2/foundry/internal/db"
 )
 
+func TestSettingsPatchSeparatesRuntimeKeys(t *testing.T) {
+	if !isRuntimeSetting("git_root") || !isRuntimeSetting("memory_repo_path") || !isRuntimeSetting("cerberus_profile") {
+		t.Fatalf("runtime settings keys not recognized")
+	}
+	if isRuntimeSetting("server_port") {
+		t.Fatalf("server_port should remain config-backed")
+	}
+}
+
+func TestMergeYAMLRuntimeSettingsOverridesAndAppendsDBValues(t *testing.T) {
+	got := mergeYAMLRuntimeSettings("db_url: old\ngit_root: /old\n", map[string]string{"git_root": "/db/git", "memory_repo_path": "/db/mem", "cerberus_profile": "prof"})
+	for _, want := range []string{"git_root: \"/db/git\"", "memory_repo_path: \"/db/mem\"", "cerberus_profile: \"prof\""} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("merged settings missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "/old") {
+		t.Fatalf("old runtime setting leaked into merged yaml:\n%s", got)
+	}
+}
+
 func TestPhaseStateTransitionHelpers(t *testing.T) {
 	now := time.Date(2026, 5, 25, 12, 0, 0, 0, time.UTC)
 

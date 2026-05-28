@@ -53,11 +53,24 @@ func (r *Runner) SetCerberusProfile(profile string) {
 	r.mu.Unlock()
 }
 
+func (r *Runner) SetMemoryRepoPath(path string) {
+	r.mu.Lock()
+	r.cfg.MemoryRepoPath = strings.TrimSpace(path)
+	r.mu.Unlock()
+}
+
 func (r *Runner) cerberusProfile() string {
 	r.mu.Lock()
 	profile := r.cfg.CerberusProfile
 	r.mu.Unlock()
 	return profile
+}
+
+func (r *Runner) memoryRepoPath() string {
+	r.mu.Lock()
+	path := r.cfg.MemoryRepoPath
+	r.mu.Unlock()
+	return path
 }
 
 func (r *Runner) Stop(workflowID int64) {
@@ -178,7 +191,8 @@ func (r *Runner) runPhase(
 	if phase.AdjustedPrompt != nil && *phase.AdjustedPrompt != "" {
 		prompt = *phase.AdjustedPrompt
 	}
-	if mem, err := memory.LoadApproved(r.cfg.MemoryRepoPath, proj.MemoryNamespace, extractTags(phase.Goal)); err == nil {
+	memoryRepoPath := r.memoryRepoPath()
+	if mem, err := memory.LoadApproved(memoryRepoPath, proj.MemoryNamespace, extractTags(phase.Goal)); err == nil {
 		prompt = memory.Prepend(mem.Markdown, prompt)
 	} else {
 		log.Printf("phase %d: load memory: %v", phase.ID, err)

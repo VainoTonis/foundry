@@ -15,6 +15,7 @@ import (
 	"github.com/tonis2/foundry/internal/api"
 	"github.com/tonis2/foundry/internal/cerberus"
 	"github.com/tonis2/foundry/internal/config"
+	"github.com/tonis2/foundry/internal/db"
 	"github.com/tonis2/foundry/internal/hub"
 	"github.com/tonis2/foundry/internal/workflow"
 )
@@ -53,6 +54,11 @@ func main() {
 		log.Fatalf("db ping: %v", err)
 	}
 
+	runtime, err := seedAndLoadRuntimeSettings(context.Background(), pool, cfg)
+	if err != nil {
+		log.Fatalf("runtime settings: %v", err)
+	}
+
 	// cerberus client — profile is resolved per-session by the runner; pass empty here
 	cerb := cerberus.New(cfg.CerberusBin, cfg.CerberusImage, cfg.CerberusModel, "")
 
@@ -64,9 +70,9 @@ func main() {
 		DefaultPhaseTimeoutSeconds: cfg.DefaultPhaseTimeoutSeconds,
 		DefaultWorkflowBudgetUSD:   cfg.DefaultWorkflowBudgetUSD,
 		MaxConcurrentWorkflows:     cfg.MaxConcurrentWorkflows,
-		CerberusProfile:            cfg.CerberusProfile,
+		CerberusProfile:            runtime.CerberusProfile,
 		CerberusCallbackURL:        fmt.Sprintf("http://localhost:%d/api/cerberus/events", cfg.ServerPort),
-		MemoryRepoPath:             cfg.MemoryRepoPath,
+		MemoryRepoPath:             runtime.MemoryRepoPath,
 	}
 	runner := workflow.NewRunner(pool, cerb, runnerCfg, eventHub)
 
@@ -74,7 +80,7 @@ func main() {
 	go api.RecoverOrphanDrafts(context.Background(), pool, cerb)
 
 	// API server
-	srv := api.NewServer(pool, runner, cerb, eventHub, cfg.DefaultWorkflowBudgetUSD, cfg.GitRoot, cfg.MemoryRepoPath, cfgPath, cfg.CerberusProfile, cfg.ServerPort)
+	srv := api.NewServer(pool, runner, cerb, eventHub, cfg.DefaultWorkflowBudgetUSD, runtime.GitRoot, runtime.MemoryRepoPath, cfgPath, runtime.CerberusProfile, cfg.ServerPort)
 
 	// serve API, server-rendered UI, and static assets
 	mux := http.NewServeMux()
@@ -88,6 +94,41 @@ func main() {
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatalf("server: %v", err)
 	}
+}
+
+type runtimeSettings struct {
+	GitRoot         string
+	MemoryRepoPath  string
+	CerberusProfile string
+}
+
+func seedAndLoadRuntimeSettings(ctx context.Context, pool *pgxpool.Pool, cfg config.Config) (runtimeSettings, error) {
+	defaults := map[string]string{
+		"git_root":         cfg.GitRoot,
+		"memory_repo_path": cfg.MemoryRepoPath,
+		"cerberus_profile": cfg.CerberusProfile,
+	}
+	for k, v := range defaults {
+		if err := db.SeedAppSettingIfMissing(ctx, pool, k, v); err != nil {
+			return runtimeSettings{}, err
+		}
+	}
+	settings, err := db.ListAppSettings(ctx, pool)
+	if err != nil {
+		return runtimeSettings{}, err
+	}
+	runtime := runtimeSettings{GitRoot: cfg.GitRoot, MemoryRepoPath: cfg.MemoryRepoPath, CerberusProfile: cfg.CerberusProfile}
+	for _, s := range settings {
+		switch s.Key {
+		case "git_root":
+			runtime.GitRoot = s.Value
+		case "memory_repo_path":
+			runtime.MemoryRepoPath = s.Value
+		case "cerberus_profile":
+			runtime.CerberusProfile = s.Value
+		}
+	}
+	return runtime, nil
 }
 
 func noCacheMiddleware(next http.Handler) http.Handler {

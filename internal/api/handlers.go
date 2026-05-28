@@ -34,6 +34,7 @@ type Server struct {
 	mux             *http.ServeMux
 	eventHub        *hub.EventHub
 	defaultBudget   float64
+	settingsMu      sync.RWMutex
 	gitRoot         string
 	memoryRepoPath  string
 	cfgPath         string
@@ -53,6 +54,59 @@ func NewServer(pool *pgxpool.Pool, runner *workflow.Runner, cerb *cerberus.Clien
 func (s *Server) callbackURL() string {
 	return fmt.Sprintf("http://localhost:%d/api/cerberus/events", s.serverPort)
 }
+
+func (s *Server) runtimeSettings() (gitRoot, memoryRepoPath, cerberusProfile string) {
+	s.settingsMu.RLock()
+	defer s.settingsMu.RUnlock()
+	return s.gitRoot, s.memoryRepoPath, s.cerberusProfile
+}
+
+func (s *Server) updateRuntimeSettings(values map[string]string) {
+	s.settingsMu.Lock()
+	if v, ok := values["git_root"]; ok {
+		s.gitRoot = strings.TrimSpace(v)
+	}
+	if v, ok := values["memory_repo_path"]; ok {
+		s.memoryRepoPath = strings.TrimSpace(v)
+	}
+	if v, ok := values["cerberus_profile"]; ok {
+		s.cerberusProfile = strings.TrimSpace(v)
+	}
+	memoryRepoPath := s.memoryRepoPath
+	cerberusProfile := s.cerberusProfile
+	s.settingsMu.Unlock()
+	if s.runner != nil {
+		if _, ok := values["memory_repo_path"]; ok {
+			s.runner.SetMemoryRepoPath(memoryRepoPath)
+		}
+		if _, ok := values["cerberus_profile"]; ok {
+			s.runner.SetCerberusProfile(cerberusProfile)
+		}
+	}
+}
+
+func (s *Server) loadRuntimeSettings(ctx context.Context) (map[string]string, error) {
+	gitRoot, memoryRepoPath, cerberusProfile := s.runtimeSettings()
+	values := map[string]string{"git_root": gitRoot, "memory_repo_path": memoryRepoPath, "cerberus_profile": cerberusProfile}
+	for key := range runtimeSettingKeys() {
+		setting, err := db.GetAppSetting(ctx, s.pool, key)
+		if err == db.ErrNotFound {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		values[key] = setting.Value
+	}
+	s.updateRuntimeSettings(values)
+	return values, nil
+}
+
+func runtimeSettingKeys() map[string]bool {
+	return map[string]bool{"git_root": true, "memory_repo_path": true, "cerberus_profile": true}
+}
+
+func isRuntimeSetting(key string) bool { return runtimeSettingKeys()[key] }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mux.ServeHTTP(w, r)
@@ -338,14 +392,14 @@ What this phase does.</textarea></div>
   <div class="page-header command-header"><div><p class="eyebrow">Foundry / settings</p><h2>Runtime controls</h2><p class="hint">Edit config, inspect Cerberus sessions, and manage execution profiles. Errors remain in the page alert region above.</p></div></div>
   <section class="settings-grid" aria-label="Settings workbench">
     <form class="panel-form settings-config" data-settings action="/api/settings" data-refresh="/settings/fragment" data-target="#app">
-      <div class="section-title-row"><h3>Config file</h3><span class="chip chip-warning">restart may be required</span></div>
-      {{range .Settings}}{{if and (not .IsVerbosity) (not .IsCerberusProfile)}}<div class="field"><label>{{.Key}}</label><input name="{{.Key}}" value="{{.Value}}"><p class="hint">config.yaml key: {{.Key}}</p></div>{{end}}{{end}}
-      <div class="field"><label for="cerberus-profile">Profiles</label><select id="cerberus-profile" name="cerberus_profile" data-include-empty><option value="" {{if eq .CerberusProfile ""}}selected{{end}}>No profile</option>{{if and .CerberusProfile (not .CerberusProfileExists)}}<option value="{{.CerberusProfile}}" selected>{{.CerberusProfile}} (configured)</option>{{end}}{{range .Profiles}}<option value="{{.Name}}" {{if eq .Name $.CerberusProfile}}selected{{end}}>{{.Name}}</option>{{end}}</select><p class="hint">config.yaml key: cerberus_profile. Select a saved execution profile or choose no profile.</p></div>
+      <div class="section-title-row"><h3>Settings</h3><span class="chip chip-warning">non-runtime changes may require restart</span></div>
+      {{range .Settings}}{{if and (not .IsVerbosity) (not .IsCerberusProfile)}}<div class="field"><label>{{.Key}}</label><input name="{{.Key}}" value="{{.Value}}"><p class="hint">{{if .IsRuntime}}DB runtime setting{{else}}config.yaml key{{end}}: {{.Key}}</p></div>{{end}}{{end}}
+      <div class="field"><label for="cerberus-profile">Profiles</label><select id="cerberus-profile" name="cerberus_profile" data-include-empty><option value="" {{if eq .CerberusProfile ""}}selected{{end}}>No profile</option>{{if and .CerberusProfile (not .CerberusProfileExists)}}<option value="{{.CerberusProfile}}" selected>{{.CerberusProfile}} (configured)</option>{{end}}{{range .Profiles}}<option value="{{.Name}}" {{if eq .Name $.CerberusProfile}}selected{{end}}>{{.Name}}</option>{{end}}</select><p class="hint">DB runtime setting: cerberus_profile. Select a saved execution profile or choose no profile.</p></div>
       <div class="field"><label for="verbosity-level">Verbosity level</label>{{if .HasVerbosity}}<select id="verbosity-level" name="{{.VerbosityKey}}"><option value="quiet" {{if eq .VerbosityValue "quiet"}}selected{{end}}>Quiet</option><option value="normal" {{if eq .VerbosityValue "normal"}}selected{{end}}>Normal</option><option value="verbose" {{if eq .VerbosityValue "verbose"}}selected{{end}}>Verbose</option></select>{{else}}<select id="verbosity-level" disabled><option>Normal</option></select><p class="hint">Static UI placeholder: this install has no verbosity key in config.yaml yet.</p>{{end}}</div>
-      <p class="hint">Changes are written to config.yaml. Restart the server for most changes to take effect.</p>
-      <button class="btn btn-primary">Save config</button>
+      <p class="hint">Runtime settings are saved in the database and take effect immediately. Only non-runtime keys are written to config.yaml and may require a restart.</p>
+      <button class="btn btn-primary">Save settings</button>
     </form>
-    <aside class="context-panel settings-help"><h3>Safe operation</h3><dl class="fact-list"><div><dt>Primary action</dt><dd>Save config or save one profile at a time.</dd></div><div><dt>Danger action</dt><dd>Deleting profiles is explicit and red. Protected sessions cannot be cleaned.</dd></div><div><dt>Failure handling</dt><dd>Request failures stay visible in the alert region and also appear as a toast.</dd></div></dl></aside>
+    <aside class="context-panel settings-help"><h3>Safe operation</h3><dl class="fact-list"><div><dt>Primary action</dt><dd>Save runtime DB settings, non-runtime config, or one profile at a time.</dd></div><div><dt>Danger action</dt><dd>Deleting profiles is explicit and red. Protected sessions cannot be cleaned.</dd></div><div><dt>Failure handling</dt><dd>Request failures stay visible in the alert region and also appear as a toast.</dd></div></dl></aside>
   </section>
   <section class="settings-section"><div class="section-title-row"><h3>Cerberus sessions</h3><span class="chip chip-pending">cleanup audit</span></div>{{if .SessionError}}<div class="empty empty-error">{{.SessionError}}</div>{{end}}
   {{if .Sessions}}<div class="worklist">{{range .Sessions}}<article class="work-row"><div class="work-main"><span class="work-title">{{.Session}}</span><div class="work-meta">{{.Type}}{{if .ProjectName}} · {{.ProjectName}}{{end}}{{if .SpecTitle}} · spec: {{.SpecTitle}}{{end}}{{if .PhaseName}} · phase: {{.PhaseName}}{{end}}{{if .DraftTitle}} · draft: {{.DraftTitle}}{{end}} · updated {{datetime .LastUpdatedAt}}</div><div class="work-meta">Cerberus: {{if .CerberusStatus}}{{.CerberusStatus}}{{else}}unknown{{end}}{{if .CerberusError}} · {{.CerberusError}}{{end}}{{if .UnsafeReason}} · {{.UnsafeReason}}{{end}}</div></div><div class="work-signals"><span class="chip chip-{{.FoundryStatus}}">{{.FoundryStatus}}</span>{{if .SafeToClean}}<span class="chip chip-done">safe cleanup</span>{{else}}<span class="chip chip-running">active / protected</span>{{end}}</div><div class="work-next"><button class="btn" data-json-post="{{cleanSessionURL .Session}}" data-refresh="/settings/fragment" data-target="#app" {{if not .SafeToClean}}disabled title="{{.UnsafeReason}}"{{end}}>Clean session</button></div></article>{{end}}</div>{{else}}<div class="empty empty-action">No Foundry-known Cerberus sessions. Active work will appear here when workflows or drafts use Cerberus.</div>{{end}}</section>
@@ -762,17 +816,18 @@ func (s *Server) handleUIProjectsFragment(w http.ResponseWriter, r *http.Request
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	gitRoot, memoryRepoPath, _ := s.runtimeSettings()
 	projectRows := make([]uiProjectRow, 0, len(projects))
 	for _, p := range projects {
-		state, class := projectMemoryState(s.memoryRepoPath, p)
+		state, class := projectMemoryState(memoryRepoPath, p)
 		projectRows = append(projectRows, uiProjectRow{Project: p, MemoryState: state, MemoryClass: class})
 	}
 	var repos []uiRepoItem
 	var discoverErr string
 	if r.URL.Query().Get("discover") == "1" {
-		if s.gitRoot == "" {
+		if gitRoot == "" {
 			discoverErr = "git_root not configured"
-		} else if found, err := discover.FindRepos(s.gitRoot); err != nil {
+		} else if found, err := discover.FindRepos(gitRoot); err != nil {
 			discoverErr = err.Error()
 		} else {
 			byPath := map[string]db.Project{}
@@ -790,7 +845,7 @@ func (s *Server) handleUIProjectsFragment(w http.ResponseWriter, r *http.Request
 		Repos          []uiRepoItem
 		DiscoverErr    string
 		MemoryRepoPath string
-	}{projectRows, repos, discoverErr, s.memoryRepoPath}
+	}{projectRows, repos, discoverErr, memoryRepoPath}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := uiTemplates.ExecuteTemplate(w, "projects", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -885,7 +940,8 @@ func (s *Server) handleUIProjectFragment(w http.ResponseWriter, r *http.Request,
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	mem, memErr := memory.LoadApproved(s.memoryRepoPath, p.MemoryNamespace, nil)
+	_, memoryRepoPath, _ := s.runtimeSettings()
+	mem, memErr := memory.LoadApproved(memoryRepoPath, p.MemoryNamespace, nil)
 	memErrMsg := ""
 	if memErr != nil {
 		memErrMsg = memErr.Error()
@@ -960,7 +1016,8 @@ func (s *Server) handleUIWorkflowFragment(w http.ResponseWriter, r *http.Request
 	}
 	sp, _ := db.GetSpec(r.Context(), s.pool, wf.SpecID)
 	proj, _ := db.GetProject(r.Context(), s.pool, sp.ProjectID)
-	mem, memErr := memory.LoadApproved(s.memoryRepoPath, proj.MemoryNamespace, nil)
+	_, memoryRepoPath, _ := s.runtimeSettings()
+	mem, memErr := memory.LoadApproved(memoryRepoPath, proj.MemoryNamespace, nil)
 	memErrMsg := ""
 	if memErr != nil {
 		memErrMsg = memErr.Error()
@@ -1130,7 +1187,8 @@ func (s *Server) handleUISpecBuilderDetailFragment(w http.ResponseWriter, r *htt
 		if p, err := db.GetProject(r.Context(), s.pool, *draft.ProjectID); err == nil {
 			proj = p
 			hasProject = true
-			if loaded, err := memory.LoadApproved(s.memoryRepoPath, proj.MemoryNamespace, nil); err == nil {
+			_, memoryRepoPath, _ := s.runtimeSettings()
+			if loaded, err := memory.LoadApproved(memoryRepoPath, proj.MemoryNamespace, nil); err == nil {
 				mem = loaded
 			} else {
 				memErrMsg = err.Error()
@@ -1163,6 +1221,13 @@ func (s *Server) handleUISettingsFragment(w http.ResponseWriter, r *http.Request
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	runtimeValues, err := s.loadRuntimeSettings(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	cerberusProfile := runtimeValues["cerberus_profile"]
+	mergedConfig := mergeYAMLRuntimeSettings(string(data), runtimeValues)
 	profiles, _ := db.ListProfiles(r.Context(), s.pool)
 	sessions, sessionErr := s.knownCerberusSessionViews(r.Context(), true)
 	sessionErrMsg := ""
@@ -1173,12 +1238,12 @@ func (s *Server) handleUISettingsFragment(w http.ResponseWriter, r *http.Request
 		Key, Value        string
 		IsVerbosity       bool
 		IsCerberusProfile bool
+		IsRuntime         bool
 	}
 	var settings []setting
 	var verbosityKey, verbosityValue string
-	cerberusProfile := s.cerberusProfile
 	foundCerberusProfile := false
-	for _, line := range strings.Split(string(data), "\n") {
+	for _, line := range strings.Split(mergedConfig, "\n") {
 		parts := strings.SplitN(line, ":", 2)
 		if len(parts) == 2 && strings.TrimSpace(parts[0]) != "" {
 			key := strings.TrimSpace(parts[0])
@@ -1192,10 +1257,10 @@ func (s *Server) handleUISettingsFragment(w http.ResponseWriter, r *http.Request
 				cerberusProfile = value
 				foundCerberusProfile = true
 			}
-			settings = append(settings, setting{Key: key, Value: value, IsVerbosity: isVerbosity, IsCerberusProfile: isCerberusProfile})
+			settings = append(settings, setting{Key: key, Value: value, IsVerbosity: isVerbosity, IsCerberusProfile: isCerberusProfile, IsRuntime: isRuntimeSetting(key)})
 		}
 	}
-	if !foundCerberusProfile && s.cerberusProfile == "" {
+	if !foundCerberusProfile && cerberusProfile == "" {
 		cerberusProfile = ""
 	}
 	cerberusProfileExists := cerberusProfile == ""
@@ -1439,11 +1504,12 @@ func (s *Server) handleDiscover(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if s.gitRoot == "" {
+	gitRoot, _, _ := s.runtimeSettings()
+	if gitRoot == "" {
 		jsonErr(w, "git_root not configured", http.StatusConflict)
 		return
 	}
-	repos, err := discover.FindRepos(s.gitRoot)
+	repos, err := discover.FindRepos(gitRoot)
 	if err != nil {
 		jsonErr(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -1998,7 +2064,8 @@ func (s *Server) handleWorkflowMemoryUpdate(w http.ResponseWriter, r *http.Reque
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		path, err := memory.WriteApprovedUpdate(s.memoryRepoPath, proj.MemoryNamespace, workflowID, job.ProposalMarkdown)
+		_, memoryRepoPath, _ := s.runtimeSettings()
+		path, err := memory.WriteApprovedUpdate(memoryRepoPath, proj.MemoryNamespace, workflowID, job.ProposalMarkdown)
 		if err != nil {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -2104,7 +2171,8 @@ func (s *Server) handleMemoryUpdate(w http.ResponseWriter, r *http.Request) {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		path, err := memory.WriteApprovedUpdate(s.memoryRepoPath, proj.MemoryNamespace, job.WorkflowID, job.ProposalMarkdown)
+		_, memoryRepoPath, _ := s.runtimeSettings()
+		path, err := memory.WriteApprovedUpdate(memoryRepoPath, proj.MemoryNamespace, job.WorkflowID, job.ProposalMarkdown)
 		if err != nil {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -2190,7 +2258,8 @@ func (s *Server) generateWorkflowMemoryProposal(ctx context.Context, workflowID 
 }
 
 func (s *Server) generateMemoryProposalMarkdown(ctx context.Context, workflowID int64, contextMarkdown, comment, previousProposal string) (string, error) {
-	if strings.TrimSpace(s.memoryRepoPath) == "" {
+	_, memoryRepoPath, _ := s.runtimeSettings()
+	if strings.TrimSpace(memoryRepoPath) == "" {
 		return "", fmt.Errorf("memory repo path not configured")
 	}
 	if s.cerb == nil {
@@ -2203,7 +2272,7 @@ func (s *Server) generateMemoryProposalMarkdown(ctx context.Context, workflowID 
 	}
 	defer removeProfileFile(session)
 	s.cerb.SetProfile(profilePath)
-	s.cerb.SetRepoPath(s.memoryRepoPath)
+	s.cerb.SetRepoPath(memoryRepoPath)
 	out, err := s.cerb.Generate(ctx, session, memoryProposalPrompt(contextMarkdown, comment, previousProposal))
 	if cleanErr := s.cerb.Clean(ctx, session); cleanErr != nil {
 		log.Printf("memory update proposal: clean session %s: %v", session, cleanErr)
@@ -2772,7 +2841,8 @@ func (s *Server) handleSpecDrafts(w http.ResponseWriter, r *http.Request) {
 		}
 		jsonOK(w, list, http.StatusOK)
 	case http.MethodPost:
-		if strings.TrimSpace(s.memoryRepoPath) == "" {
+		_, memoryRepoPath, _ := s.runtimeSettings()
+		if strings.TrimSpace(memoryRepoPath) == "" {
 			jsonErr(w, "memory repo path is not configured", http.StatusUnprocessableEntity)
 			return
 		}
@@ -2819,7 +2889,7 @@ func (s *Server) handleSpecDrafts(w http.ResponseWriter, r *http.Request) {
 			initialPrompt += "\n\nThe user's request:\n" + body.Description
 		}
 		initialPrompt += "\n\nProject name: " + proj.Name + "\nThe selected project's repository is mounted at /workspace inside your container. Use project memory namespace " + proj.MemoryNamespace + "."
-		if mem, err := memory.LoadApproved(s.memoryRepoPath, proj.MemoryNamespace, nil); err == nil {
+		if mem, err := memory.LoadApproved(memoryRepoPath, proj.MemoryNamespace, nil); err == nil {
 			initialPrompt = memory.Prepend(mem.Markdown, initialPrompt)
 		} else {
 			log.Printf("spec-builder draft %d: load memory: %v", draft.ID, err)
@@ -3007,7 +3077,8 @@ func (s *Server) handleSpecDraft(w http.ResponseWriter, r *http.Request) {
 			title = draft.Title
 		}
 		if proj != nil {
-			if _, err := writeSpecMarkdownToMemory(s.memoryRepoPath, proj.MemoryNamespace, draft.ID, title, specContent); err != nil {
+			_, memoryRepoPath, _ := s.runtimeSettings()
+			if _, err := writeSpecMarkdownToMemory(memoryRepoPath, proj.MemoryNamespace, draft.ID, title, specContent); err != nil {
 				jsonErr(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
@@ -3346,36 +3417,62 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			jsonErr(w, "cannot read config: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
+		runtimeValues, err := s.loadRuntimeSettings(r.Context())
+		if err != nil {
+			jsonErr(w, "cannot read runtime settings: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		merged := mergeYAMLRuntimeSettings(string(data), runtimeValues)
 		w.Header().Set("Content-Type", "application/x-yaml")
-		w.Write(data)
+		w.Write([]byte(merged))
 	case http.MethodPatch:
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			jsonErr(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		// read current yaml as text, update matching key: value lines
-		data, err := os.ReadFile(s.cfgPath)
-		if err != nil {
-			jsonErr(w, "cannot read config: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		updated := applyYAMLPatch(string(data), body)
-		if err := os.WriteFile(s.cfgPath, []byte(updated), 0644); err != nil {
-			jsonErr(w, "cannot write config: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if v, ok := body["cerberus_profile"]; ok {
-			profile := strings.TrimSpace(fmt.Sprint(v))
-			s.cerberusProfile = profile
-			if s.runner != nil {
-				s.runner.SetCerberusProfile(profile)
+		runtimePatch := map[string]string{}
+		configPatch := map[string]any{}
+		for k, v := range body {
+			if isRuntimeSetting(k) {
+				runtimePatch[k] = strings.TrimSpace(fmt.Sprint(v))
+			} else {
+				configPatch[k] = v
 			}
+		}
+		if len(configPatch) > 0 {
+			data, err := os.ReadFile(s.cfgPath)
+			if err != nil {
+				jsonErr(w, "cannot read config: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			updated := applyYAMLPatch(string(data), configPatch)
+			if err := os.WriteFile(s.cfgPath, []byte(updated), 0644); err != nil {
+				jsonErr(w, "cannot write config: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+		for k, v := range runtimePatch {
+			if _, err := db.UpsertAppSetting(r.Context(), s.pool, k, v); err != nil {
+				jsonErr(w, "cannot write setting "+k+": "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+		if len(runtimePatch) > 0 {
+			s.updateRuntimeSettings(runtimePatch)
 		}
 		jsonOK(w, map[string]bool{"success": true}, http.StatusOK)
 	default:
 		jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func mergeYAMLRuntimeSettings(yaml string, values map[string]string) string {
+	patch := make(map[string]any, len(values))
+	for k, v := range values {
+		patch[k] = v
+	}
+	return applyYAMLPatch(yaml, patch)
 }
 
 // applyYAMLPatch does a naive line-by-line replacement of top-level YAML keys.
@@ -3425,15 +3522,16 @@ func profileFilePath(session string) string {
 // profile is configured or the profile is not found. The file persists until
 // removeProfileFile is called at session cleanup.
 func (s *Server) writeProfileFile(ctx context.Context, session string) (string, error) {
-	if s.cerberusProfile == "" {
+	_, _, cerberusProfile := s.runtimeSettings()
+	if cerberusProfile == "" {
 		return "", nil
 	}
-	p, err := db.GetProfileByName(ctx, s.pool, s.cerberusProfile)
+	p, err := db.GetProfileByName(ctx, s.pool, cerberusProfile)
 	if err == db.ErrNotFound {
 		return "", nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("lookup profile %q: %w", s.cerberusProfile, err)
+		return "", fmt.Errorf("lookup profile %q: %w", cerberusProfile, err)
 	}
 	payload := map[string]any{}
 	if p.DefaultModel != "" {
