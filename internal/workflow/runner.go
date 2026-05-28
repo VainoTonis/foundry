@@ -165,7 +165,7 @@ func (r *Runner) runPhase(
 	if phase.AdjustedPrompt != nil && *phase.AdjustedPrompt != "" {
 		prompt = *phase.AdjustedPrompt
 	}
-	if mem, err := memory.LoadApproved(r.cfg.MemoryRepoPath, proj.MemoryNamespace, nil); err == nil {
+	if mem, err := memory.LoadApproved(r.cfg.MemoryRepoPath, proj.MemoryNamespace, extractTags(phase.Goal)); err == nil {
 		prompt = memory.Prepend(mem.Markdown, prompt)
 	} else {
 		log.Printf("phase %d: load memory: %v", phase.ID, err)
@@ -467,6 +467,30 @@ func (r *Runner) publishWorkflowUpdate(workflowID int64, status string) {
 }
 
 func strPtr(s string) *string { return &s }
+
+func extractTags(goal string) []string {
+	goal = strings.ToLower(goal)
+	goal = strings.NewReplacer(
+		",", " ",
+		".", " ",
+		";", " ",
+		":", " ",
+		"(", " ",
+		")", " ",
+		"!", " ",
+	).Replace(goal)
+
+	seen := make(map[string]bool)
+	var tags []string
+	for _, word := range strings.Fields(goal) {
+		if seen[word] {
+			continue
+		}
+		seen[word] = true
+		tags = append(tags, word)
+	}
+	return tags
+}
 
 const repoRootPromptHeader = `## Target Repository Root
 
