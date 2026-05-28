@@ -10,10 +10,29 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U foundry"]
+      test: ["CMD-SHELL", "pg_isready -U foundry -d foundry"]
       interval: 5s
       timeout: 5s
       retries: 5
+
+  foundry:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    command:
+      - sh
+      - -c
+      - |
+        printf '%s\n' \
+          'db_url: "postgres://foundry:foundry@postgres:5432/foundry?sslmode=disable"' \
+          'server_port: 8080' \
+          > /tmp/config.docker.yaml
+        exec ./foundry /tmp/config.docker.yaml
 
 volumes:
   pgdata:
