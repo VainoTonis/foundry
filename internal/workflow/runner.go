@@ -47,6 +47,19 @@ func NewRunner(pool *pgxpool.Pool, cerb *cerberus.Client, cfg Config, eventHub *
 	}
 }
 
+func (r *Runner) SetCerberusProfile(profile string) {
+	r.mu.Lock()
+	r.cfg.CerberusProfile = strings.TrimSpace(profile)
+	r.mu.Unlock()
+}
+
+func (r *Runner) cerberusProfile() string {
+	r.mu.Lock()
+	profile := r.cfg.CerberusProfile
+	r.mu.Unlock()
+	return profile
+}
+
 func (r *Runner) Stop(workflowID int64) {
 	r.mu.Lock()
 	cancel, ok := r.cancels[workflowID]
@@ -212,7 +225,7 @@ func (r *Runner) execPhase(
 	phaseCtx, cancel := context.WithTimeout(ctx, time.Duration(phase.TimeoutSeconds)*time.Second)
 	defer cancel()
 
-	profilePath, err := r.writeProfileFile(ctx, r.cfg.CerberusProfile, sessionName)
+	profilePath, err := r.writeProfileFile(ctx, r.cerberusProfile(), sessionName)
 	if err != nil {
 		log.Printf("phase %d: write profile file: %v (proceeding without profile)", phase.ID, err)
 	}

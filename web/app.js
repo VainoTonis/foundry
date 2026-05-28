@@ -5,7 +5,8 @@ function formJSON(form) {
   const data = {};
   const includeEmpty = form.hasAttribute('data-include-empty');
   for (const [key, value] of new FormData(form).entries()) {
-    if (value === '' && !includeEmpty) continue;
+    const fieldIncludesEmpty = Array.from(form.elements).some((el) => el.name === key && el.hasAttribute('data-include-empty'));
+    if (value === '' && !includeEmpty && !fieldIncludesEmpty) continue;
     if (key === 'extra_env') data[key] = value.trim() ? JSON.parse(value) : {};
     else if (/^-?\d+(\.\d+)?$/.test(value)) data[key] = Number(value);
     else data[key] = value;
