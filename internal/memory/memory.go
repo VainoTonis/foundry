@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Slice is the approved markdown memory loaded for a project namespace.
@@ -18,15 +20,22 @@ type Slice struct {
 	Markdown  string
 }
 
+type Frontmatter struct {
+	Title  string   `yaml:"title"`
+	Tags   []string `yaml:"tags"`
+	Always bool     `yaml:"always"`
+}
+
 type File struct {
-	Path    string
-	Content string
+	Path        string
+	Frontmatter Frontmatter
+	Content     string
 }
 
 // LoadApproved loads the markdown memory for a project namespace from the
 // configured memory repo. The namespace maps to a directory inside repoPath;
 // all non-hidden .md files under that directory are considered approved memory.
-func LoadApproved(repoPath, namespace string) (Slice, error) {
+func LoadApproved(repoPath, namespace string, tags []string) (Slice, error) {
 	repoPath = strings.TrimSpace(repoPath)
 	namespace, nsErr := cleanNamespace(namespace)
 	out := Slice{RepoPath: repoPath, Namespace: namespace}
@@ -84,7 +93,11 @@ func LoadApproved(repoPath, namespace string) (Slice, error) {
 		if err != nil {
 			return err
 		}
-		out.Files = append(out.Files, File{Path: filepath.ToSlash(rel), Content: strings.TrimSpace(string(data))})
+		frontmatter, body := parseFrontmatter(strings.TrimSpace(string(data)))
+		if !matchesTags(frontmatter, tags) {
+			return nil
+		}
+		out.Files = append(out.Files, File{Path: filepath.ToSlash(rel), Frontmatter: frontmatter, Content: body})
 		return nil
 	})
 	if err != nil {
@@ -93,6 +106,42 @@ func LoadApproved(repoPath, namespace string) (Slice, error) {
 	sort.Slice(out.Files, func(i, j int) bool { return out.Files[i].Path < out.Files[j].Path })
 	out.Markdown = format(out)
 	return out, nil
+}
+
+func parseFrontmatter(raw string) (Frontmatter, string) {
+	if !strings.HasPrefix(raw, "---\n") {
+		return Frontmatter{}, raw
+	}
+	idx := strings.Index(raw[4:], "\n---")
+	if idx < 0 {
+		return Frontmatter{}, raw
+	}
+	closingStart := 4 + idx
+	closingEnd := closingStart + len("\n---")
+	if closingEnd < len(raw) && raw[closingEnd] != '\n' {
+		return Frontmatter{}, raw
+	}
+	yamlBlock := raw[4:closingStart]
+	body := strings.TrimSpace(raw[closingEnd:])
+	var fm Frontmatter
+	if err := yaml.Unmarshal([]byte(yamlBlock), &fm); err != nil {
+		return Frontmatter{}, body
+	}
+	return fm, body
+}
+
+func matchesTags(fm Frontmatter, tags []string) bool {
+	if fm.Always || len(tags) == 0 {
+		return true
+	}
+	for _, want := range tags {
+		for _, have := range fm.Tags {
+			if strings.EqualFold(want, have) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func format(s Slice) string {
@@ -109,7 +158,11 @@ func format(s Slice) string {
 			b.WriteString("\n\n---\n\n")
 		}
 		b.WriteString("### ")
-		b.WriteString(f.Path)
+		title := f.Frontmatter.Title
+		if title == "" {
+			title = f.Path
+		}
+		b.WriteString(title)
 		b.WriteString("\n\n")
 		b.WriteString(f.Content)
 	}

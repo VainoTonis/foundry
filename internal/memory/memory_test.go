@@ -19,7 +19,7 @@ func TestLoadApprovedMapsNamespaceToMemoryRepoDirectory(t *testing.T) {
 	mustWriteFile(t, filepath.Join(root, ".secret", "notes.md"), "hidden dir")
 	mustWriteFile(t, filepath.Join(repo, "other-project", "overview.md"), "wrong namespace")
 
-	slice, err := LoadApproved(repo, " team/project ")
+	slice, err := LoadApproved(repo, " team/project ", nil)
 	if err != nil {
 		t.Fatalf("LoadApproved returned error: %v", err)
 	}
@@ -47,6 +47,35 @@ func TestLoadApprovedMapsNamespaceToMemoryRepoDirectory(t *testing.T) {
 	}
 	if !strings.Contains(slice.Markdown, "Memory namespace: team/project") || strings.Contains(slice.Markdown, "wrong namespace") || strings.Contains(slice.Markdown, "hidden") {
 		t.Fatalf("formatted markdown did not stay within approved namespace/files:\n%s", slice.Markdown)
+	}
+}
+
+func TestLoadApprovedParsesFrontmatterAndFiltersByTags(t *testing.T) {
+	repo := t.TempDir()
+	root := filepath.Join(repo, "project")
+	mustWriteFile(t, filepath.Join(root, "go.md"), "---\ntitle: Go Notes\ntags: [Go, Backend]\n---\n\nuse goroutines")
+	mustWriteFile(t, filepath.Join(root, "always.md"), "---\ntitle: Always\nalways: true\n---\n\nalways include")
+	mustWriteFile(t, filepath.Join(root, "frontend.md"), "---\ntags: [frontend]\n---\n\nskip me")
+	mustWriteFile(t, filepath.Join(root, "plain.md"), "plain memory")
+
+	slice, err := LoadApproved(repo, "project", []string{"go"})
+	if err != nil {
+		t.Fatalf("LoadApproved returned error: %v", err)
+	}
+
+	gotPaths := make([]string, 0, len(slice.Files))
+	for _, f := range slice.Files {
+		gotPaths = append(gotPaths, f.Path)
+	}
+	wantPaths := []string{"always.md", "go.md"}
+	if !reflect.DeepEqual(gotPaths, wantPaths) {
+		t.Fatalf("loaded paths = %#v, want %#v", gotPaths, wantPaths)
+	}
+	if slice.Files[1].Frontmatter.Title != "Go Notes" || slice.Files[1].Content != "use goroutines" {
+		t.Fatalf("frontmatter/body not parsed: %#v", slice.Files[1])
+	}
+	if !strings.Contains(slice.Markdown, "### Go Notes") || strings.Contains(slice.Markdown, "plain memory") || strings.Contains(slice.Markdown, "skip me") {
+		t.Fatalf("formatted markdown did not use title/filter tags:\n%s", slice.Markdown)
 	}
 }
 
@@ -99,7 +128,7 @@ func TestLoadApprovedDoesNotFollowSymlinkedMarkdownOutsideNamespace(t *testing.T
 		t.Skipf("symlink not available: %v", err)
 	}
 
-	slice, err := LoadApproved(repo, "project")
+	slice, err := LoadApproved(repo, "project", nil)
 	if err != nil {
 		t.Fatalf("LoadApproved returned error: %v", err)
 	}
@@ -119,7 +148,7 @@ func TestMemoryNamespaceRootSymlinkDoesNotEscapeRepo(t *testing.T) {
 		t.Skipf("symlink not available: %v", err)
 	}
 
-	if _, err := LoadApproved(repo, "project"); err == nil {
+	if _, err := LoadApproved(repo, "project", nil); err == nil {
 		t.Fatalf("LoadApproved followed symlinked namespace root, want boundary error")
 	}
 	if _, err := WriteApprovedUpdate(repo, "project", 7, "inside"); err == nil {
@@ -170,7 +199,7 @@ func TestMemoryNamespaceTraversalIsRejected(t *testing.T) {
 	}
 	for _, namespace := range badNamespaces {
 		t.Run(namespace, func(t *testing.T) {
-			if _, err := LoadApproved(repo, namespace); err == nil {
+			if _, err := LoadApproved(repo, namespace, nil); err == nil {
 				t.Fatalf("LoadApproved(%q) succeeded, want traversal/relative component error", namespace)
 			}
 			if _, err := WriteApprovedUpdate(repo, namespace, 7, "body"); err == nil {

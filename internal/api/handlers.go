@@ -745,7 +745,7 @@ type uiProjectRow struct {
 }
 
 func projectMemoryState(repoPath string, p db.Project) (string, string) {
-	mem, err := memory.LoadApproved(repoPath, p.MemoryNamespace)
+	mem, err := memory.LoadApproved(repoPath, p.MemoryNamespace, nil)
 	if err != nil {
 		return "memory error", "error"
 	}
@@ -884,7 +884,7 @@ func (s *Server) handleUIProjectFragment(w http.ResponseWriter, r *http.Request,
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	mem, memErr := memory.LoadApproved(s.memoryRepoPath, p.MemoryNamespace)
+	mem, memErr := memory.LoadApproved(s.memoryRepoPath, p.MemoryNamespace, nil)
 	memErrMsg := ""
 	if memErr != nil {
 		memErrMsg = memErr.Error()
@@ -959,7 +959,7 @@ func (s *Server) handleUIWorkflowFragment(w http.ResponseWriter, r *http.Request
 	}
 	sp, _ := db.GetSpec(r.Context(), s.pool, wf.SpecID)
 	proj, _ := db.GetProject(r.Context(), s.pool, sp.ProjectID)
-	mem, memErr := memory.LoadApproved(s.memoryRepoPath, proj.MemoryNamespace)
+	mem, memErr := memory.LoadApproved(s.memoryRepoPath, proj.MemoryNamespace, nil)
 	memErrMsg := ""
 	if memErr != nil {
 		memErrMsg = memErr.Error()
@@ -1129,7 +1129,7 @@ func (s *Server) handleUISpecBuilderDetailFragment(w http.ResponseWriter, r *htt
 		if p, err := db.GetProject(r.Context(), s.pool, *draft.ProjectID); err == nil {
 			proj = p
 			hasProject = true
-			if loaded, err := memory.LoadApproved(s.memoryRepoPath, proj.MemoryNamespace); err == nil {
+			if loaded, err := memory.LoadApproved(s.memoryRepoPath, proj.MemoryNamespace, nil); err == nil {
 				mem = loaded
 			} else {
 				memErrMsg = err.Error()
@@ -2798,7 +2798,7 @@ func (s *Server) handleSpecDrafts(w http.ResponseWriter, r *http.Request) {
 			initialPrompt += "\n\nThe user's request:\n" + body.Description
 		}
 		initialPrompt += "\n\nProject name: " + proj.Name + "\nThe selected project's repository is mounted at /workspace inside your container. Use project memory namespace " + proj.MemoryNamespace + "."
-		if mem, err := memory.LoadApproved(s.memoryRepoPath, proj.MemoryNamespace); err == nil {
+		if mem, err := memory.LoadApproved(s.memoryRepoPath, proj.MemoryNamespace, nil); err == nil {
 			initialPrompt = memory.Prepend(mem.Markdown, initialPrompt)
 		} else {
 			log.Printf("spec-builder draft %d: load memory: %v", draft.ID, err)

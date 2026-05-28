@@ -165,7 +165,7 @@ func (r *Runner) runPhase(
 	if phase.AdjustedPrompt != nil && *phase.AdjustedPrompt != "" {
 		prompt = *phase.AdjustedPrompt
 	}
-	if mem, err := memory.LoadApproved(r.cfg.MemoryRepoPath, proj.MemoryNamespace); err == nil {
+	if mem, err := memory.LoadApproved(r.cfg.MemoryRepoPath, proj.MemoryNamespace, nil); err == nil {
 		prompt = memory.Prepend(mem.Markdown, prompt)
 	} else {
 		log.Printf("phase %d: load memory: %v", phase.ID, err)
