@@ -39,8 +39,14 @@ func (s *Server) handleCompactCerberusEvent(ctx context.Context, raw []byte) err
 		if content == "" {
 			return nil
 		}
-		s.bufferCerberusText(evt.Session, content)
-		return nil
+		if _, err := db.GetPhaseByCerberusSession(ctx, s.pool, evt.Session); err == nil {
+			s.bufferCerberusText(evt.Session, content)
+			return nil
+		} else if !errors.Is(err, db.ErrNotFound) {
+			return err
+		}
+		payload, _ := json.Marshal(map[string]string{"content": content})
+		return s.storeAndPublishCerberusEvent(ctx, evt.Session, evt.Type, payload)
 
 	case "message_end", "turn_complete":
 		if err := s.flushCerberusText(ctx, evt.Session); err != nil {

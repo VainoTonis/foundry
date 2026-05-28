@@ -150,7 +150,7 @@ func DraftSessionName(draftID int64) string {
 }
 
 // Chat starts an interactive cerberus session (first turn). Blocking — run in a goroutine.
-// When callbackURL is set, events are POSTed there and stdout is not parsed for message content.
+// When callbackURL is set, cerberus POSTs incremental JSONL events there.
 // When callbackURL is empty, falls back to stdout parsing (legacy).
 func (c *Client) Chat(ctx context.Context, session, prompt, callbackURL string) error {
 	args := []string{"chat", "--name", session, "--prompt", specBuilderSystemPrompt + "\n\n" + prompt}
@@ -164,7 +164,7 @@ func (c *Client) Chat(ctx context.Context, session, prompt, callbackURL string) 
 		args = append(args, "--profile-file", c.profile)
 	}
 	if callbackURL != "" {
-		args = append(args, "--callback", callbackURL)
+		args = append(args, "--callback", callbackURL, "--output", "jsonl")
 	}
 	return c.run(ctx, args...)
 }
@@ -179,12 +179,12 @@ When writing specs, never reference the project by its host path (e.g. "personal
 Respond conversationally. Ask clarifying questions when needed. When you have enough information, produce the spec.`
 
 // Message sends a follow-up message in an existing interactive session.
-// When callbackURL is set, events are POSTed there and stdout is not parsed.
+// When callbackURL is set, cerberus POSTs incremental JSONL events there.
 // cerberus message --name <session> --message <msg>
 func (c *Client) Message(ctx context.Context, session, msg, callbackURL string) error {
 	args := []string{"message", "--name", session, "--message", msg}
 	if callbackURL != "" {
-		args = append(args, "--callback", callbackURL)
+		args = append(args, "--callback", callbackURL, "--output", "jsonl")
 	}
 	return c.run(ctx, args...)
 }
