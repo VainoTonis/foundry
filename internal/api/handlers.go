@@ -337,9 +337,10 @@ What this phase does.</textarea></div>
   <div class="context-nav"><a class="btn" href="/backlog" hx-get="/backlog/fragment" hx-target="#app" hx-push-url="/backlog">← Backlog</a><a class="btn" href="/projects" hx-get="/projects/fragment" hx-target="#app" hx-push-url="/projects">Projects</a><a class="btn" href="/spec-builder" hx-get="/spec-builder/fragment" hx-target="#app" hx-push-url="/spec-builder">Draft Studio</a></div>
   <div class="page-header command-header"><div><p class="eyebrow">Foundry / settings</p><h2>Runtime controls</h2><p class="hint">Edit config, inspect Cerberus sessions, and manage execution profiles. Errors remain in the page alert region above.</p></div></div>
   <section class="settings-grid" aria-label="Settings workbench">
-    <form class="panel-form settings-config" data-settings action="/api/settings" data-refresh="/settings/fragment" data-target="#app">
+    <form class="panel-form settings-config" data-settings data-include-empty action="/api/settings" data-refresh="/settings/fragment" data-target="#app">
       <div class="section-title-row"><h3>Config file</h3><span class="chip chip-warning">restart may be required</span></div>
-      {{range .Settings}}{{if not .IsVerbosity}}<div class="field"><label>{{.Key}}</label><input name="{{.Key}}" value="{{.Value}}"><p class="hint">config.yaml key: {{.Key}}</p></div>{{end}}{{end}}
+      {{range .Settings}}{{if and (not .IsVerbosity) (not .IsCerberusProfile)}}<div class="field"><label>{{.Key}}</label><input name="{{.Key}}" value="{{.Value}}"><p class="hint">config.yaml key: {{.Key}}</p></div>{{end}}{{end}}
+      <div class="field"><label for="cerberus-profile">Profiles</label><select id="cerberus-profile" name="cerberus_profile"><option value="" {{if eq .CerberusProfile ""}}selected{{end}}>No profile</option>{{if and .CerberusProfile (not .CerberusProfileExists)}}<option value="{{.CerberusProfile}}" selected>{{.CerberusProfile}} (configured)</option>{{end}}{{range .Profiles}}<option value="{{.Name}}" {{if eq .Name $.CerberusProfile}}selected{{end}}>{{.Name}}</option>{{end}}</select><p class="hint">config.yaml key: cerberus_profile. Select a saved execution profile or choose no profile.</p></div>
       <div class="field"><label for="verbosity-level">Verbosity level</label>{{if .HasVerbosity}}<select id="verbosity-level" name="{{.VerbosityKey}}"><option value="quiet" {{if eq .VerbosityValue "quiet"}}selected{{end}}>Quiet</option><option value="normal" {{if eq .VerbosityValue "normal"}}selected{{end}}>Normal</option><option value="verbose" {{if eq .VerbosityValue "verbose"}}selected{{end}}>Verbose</option></select>{{else}}<select id="verbosity-level" disabled><option>Normal</option></select><p class="hint">Static UI placeholder: this install has no verbosity key in config.yaml yet.</p>{{end}}</div>
       <p class="hint">Changes are written to config.yaml. Restart the server for most changes to take effect.</p>
       <button class="btn btn-primary">Save config</button>
@@ -1169,33 +1170,53 @@ func (s *Server) handleUISettingsFragment(w http.ResponseWriter, r *http.Request
 		sessionErrMsg = sessionErr.Error()
 	}
 	type setting struct {
-		Key, Value  string
-		IsVerbosity bool
+		Key, Value        string
+		IsVerbosity       bool
+		IsCerberusProfile bool
 	}
 	var settings []setting
 	var verbosityKey, verbosityValue string
+	cerberusProfile := s.cerberusProfile
+	foundCerberusProfile := false
 	for _, line := range strings.Split(string(data), "\n") {
 		parts := strings.SplitN(line, ":", 2)
 		if len(parts) == 2 && strings.TrimSpace(parts[0]) != "" {
 			key := strings.TrimSpace(parts[0])
 			value := strings.Trim(strings.TrimSpace(parts[1]), "\"")
 			isVerbosity := key == "verbosity" || key == "ui_verbosity" || key == "log_verbosity"
+			isCerberusProfile := key == "cerberus_profile"
 			if isVerbosity && verbosityKey == "" {
 				verbosityKey, verbosityValue = key, value
 			}
-			settings = append(settings, setting{Key: key, Value: value, IsVerbosity: isVerbosity})
+			if isCerberusProfile {
+				cerberusProfile = value
+				foundCerberusProfile = true
+			}
+			settings = append(settings, setting{Key: key, Value: value, IsVerbosity: isVerbosity, IsCerberusProfile: isCerberusProfile})
+		}
+	}
+	if !foundCerberusProfile && s.cerberusProfile == "" {
+		cerberusProfile = ""
+	}
+	cerberusProfileExists := cerberusProfile == ""
+	for _, p := range profiles {
+		if p.Name == cerberusProfile {
+			cerberusProfileExists = true
+			break
 		}
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := uiTemplates.ExecuteTemplate(w, "settings", struct {
-		Settings       []setting
-		Profiles       []db.Profile
-		Sessions       []cerberusSessionView
-		SessionError   string
-		HasVerbosity   bool
-		VerbosityKey   string
-		VerbosityValue string
-	}{settings, profiles, sessions, sessionErrMsg, verbosityKey != "", verbosityKey, verbosityValue}); err != nil {
+		Settings              []setting
+		Profiles              []db.Profile
+		Sessions              []cerberusSessionView
+		SessionError          string
+		HasVerbosity          bool
+		VerbosityKey          string
+		VerbosityValue        string
+		CerberusProfile       string
+		CerberusProfileExists bool
+	}{settings, profiles, sessions, sessionErrMsg, verbosityKey != "", verbosityKey, verbosityValue, cerberusProfile, cerberusProfileExists}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -3343,6 +3364,9 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		if err := os.WriteFile(s.cfgPath, []byte(updated), 0644); err != nil {
 			jsonErr(w, "cannot write config: "+err.Error(), http.StatusInternalServerError)
 			return
+		}
+		if v, ok := body["cerberus_profile"]; ok {
+			s.cerberusProfile = strings.TrimSpace(fmt.Sprint(v))
 		}
 		jsonOK(w, map[string]bool{"success": true}, http.StatusOK)
 	default:
