@@ -158,7 +158,7 @@ var uiTemplates = template.Must(template.New("ui").Funcs(template.FuncMap{
     <nav class="nav-slabs" aria-label="Primary navigation">
       <a href="/backlog" data-nav="backlog" hx-get="/backlog/fragment" hx-target="#app" hx-push-url="/backlog">Foundry / backlog</a>
       <a href="/projects" data-nav="projects" hx-get="/projects/fragment" hx-target="#app" hx-push-url="/projects">Projects</a>
-      <a href="/spec-builder" data-nav="builder" hx-get="/spec-builder/fragment" hx-target="#app" hx-push-url="/spec-builder">Spec Builder</a>
+      <a href="/spec-builder" data-nav="builder" hx-get="/spec-builder/fragment" hx-target="#app" hx-push-url="/spec-builder">Draft Studio</a>
       <a href="/settings" data-nav="settings" hx-get="/settings/fragment" hx-target="#app" hx-push-url="/settings">Settings</a>
     </nav>
   </header>
@@ -177,7 +177,7 @@ var uiTemplates = template.Must(template.New("ui").Funcs(template.FuncMap{
       <p class="hint">Scan status, ownership, and the next safe action without opening each spec.</p>
     </div>
     <div class="card-actions">
-      <a class="btn btn-primary" href="/spec-builder" hx-get="/spec-builder/fragment" hx-target="#app" hx-push-url="/spec-builder">Build with AI</a>
+      <a class="btn btn-primary" href="/spec-builder" hx-get="/spec-builder/fragment" hx-target="#app" hx-push-url="/spec-builder">Open Draft Studio</a>
       <button class="btn btn-primary" popovertarget="new-spec">+ Spec</button>
       <button class="btn" popovertarget="new-project">+ Project</button>
     </div>
@@ -226,9 +226,9 @@ What this phase does.</textarea></div>
       {{end}}
     {{end}}
     </div>
-  {{else}}<div class="empty empty-action">No specs yet. Create a spec or use Spec Builder to turn intent into executable phases.</div>{{end}}
+  {{else}}<div class="empty empty-action">No specs yet. Create a spec or use Draft Studio to explore intent before saving executable work.</div>{{end}}
   {{if .Drafts}}
-    <div class="group-label">spec builder drafts</div>
+    <div class="group-label">draft studio drafts</div>
     {{range .Drafts}}<article class="work-row"><div class="work-main"><a class="work-title" href="/spec-builder/{{.ID}}" hx-get="/spec-builder/{{.ID}}/fragment" hx-target="#app" hx-push-url="/spec-builder/{{.ID}}">{{.Title}}</a><div class="work-meta">draft created {{date .CreatedAt}}</div></div><div class="work-signals"><span class="chip chip-{{.Status}}">{{.Status}}</span></div><div class="work-next"><a class="btn" href="/spec-builder/{{.ID}}" hx-get="/spec-builder/{{.ID}}/fragment" hx-target="#app" hx-push-url="/spec-builder/{{.ID}}">Continue draft</a></div></article>{{end}}
   {{end}}
 </div>
@@ -309,14 +309,14 @@ What this phase does.</textarea></div>
 
 {{define "builderStart"}}
 <div data-page="builder">
-  <div class="page-header command-header"><div><p class="eyebrow">Spec Builder</p><h2>Turn intent into executable phases</h2><p class="hint">Choose a project, describe the change, then review the generated markdown before saving it as a spec.</p></div></div>
+  <div class="page-header command-header"><div><p class="eyebrow">Draft Studio</p><h2>Explore intent before it becomes a spec</h2><p class="hint">Choose a project, steer the assistant through goals, constraints, and phase shape, then save only when the markdown matches your intent.</p></div></div>
   <div class="builder-start-grid"><form class="panel-form builder-start-form" data-json method="post" action="/api/spec-drafts" data-redirect-template="/spec-builder/{id}">
     <h3>Start a draft</h3>
     <div class="field"><label>Project</label><select name="project_id" required>{{range .Projects}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select><p class="hint">Approved memory from this project's namespace is used as context.</p></div>
-    <div class="field"><label>What should be built?</label><textarea name="description" required placeholder="Describe the feature, constraints, evidence needed, and expected phases."></textarea><p class="hint">For runnable work, ask for markdown with visible ## Phase N: headings.</p></div>
-    <button class="btn btn-primary">Start builder</button>
-  </form><aside class="context-panel"><h3>What the assistant does</h3><dl class="fact-list"><div><dt>Input</dt><dd>Your project, prompt, and approved memory.</dd></div><div><dt>Output</dt><dd>A reviewable markdown spec preview.</dd></div><div><dt>Safe point</dt><dd>You must save the draft before it becomes executable backlog work.</dd></div></dl></aside></div>
-  {{if .Drafts}}<div class="group-label">Resume active drafts</div><div class="worklist">{{range .Drafts}}<article class="work-row"><div class="work-main"><a class="work-title" href="/spec-builder/{{.ID}}" hx-get="/spec-builder/{{.ID}}/fragment" hx-target="#app" hx-push-url="/spec-builder/{{.ID}}">{{.Title}}</a><div class="work-meta">updated {{datetime .UpdatedAt}}</div></div><div class="work-signals"><span class="chip chip-{{.Status}}">{{.Status}}</span></div><div class="work-next"><a class="btn btn-primary" href="/spec-builder/{{.ID}}" hx-get="/spec-builder/{{.ID}}/fragment" hx-target="#app" hx-push-url="/spec-builder/{{.ID}}">Continue</a></div></article>{{end}}</div>{{else}}<div class="empty empty-action">No active drafts. Start a draft to shape intent before it enters the backlog.</div>{{end}}
+    <div class="field"><label>What intent should we explore?</label><textarea name="description" required placeholder="Describe the goal, constraints, open questions, evidence needed, and possible phases."></textarea><p class="hint">Use the conversation to steer the draft; for runnable work, ask for visible ## Phase N: headings before saving.</p></div>
+    <button class="btn btn-primary">Start draft</button>
+  </form><aside class="context-panel"><h3>How Draft Studio helps</h3><dl class="fact-list"><div><dt>Input</dt><dd>Your project, initial intent, and approved memory.</dd></div><div><dt>Exploration</dt><dd>Steer goals, scope, constraints, evidence, and phase boundaries in conversation.</dd></div><div><dt>Safe point</dt><dd>The draft is not executable backlog work until you save it as a spec.</dd></div></dl></aside></div>
+  {{if .Drafts}}<div class="group-label">Resume active drafts</div><div class="worklist">{{range .Drafts}}<article class="work-row"><div class="work-main"><a class="work-title" href="/spec-builder/{{.ID}}" hx-get="/spec-builder/{{.ID}}/fragment" hx-target="#app" hx-push-url="/spec-builder/{{.ID}}">{{.Title}}</a><div class="work-meta">updated {{datetime .UpdatedAt}}</div></div><div class="work-signals"><span class="chip chip-{{.Status}}">{{.Status}}</span></div><div class="work-next"><a class="btn btn-primary" href="/spec-builder/{{.ID}}" hx-get="/spec-builder/{{.ID}}/fragment" hx-target="#app" hx-push-url="/spec-builder/{{.ID}}">Continue</a></div></article>{{end}}</div>{{else}}<div class="empty empty-action">No active drafts. Start in Draft Studio to explore and refine intent before it enters the backlog.</div>{{end}}
 </div>
 {{end}}
 
@@ -324,17 +324,17 @@ What this phase does.</textarea></div>
 
 {{define "builderDetail"}}
 <div data-page="builder" data-draft-stream="/api/spec-drafts/{{.Draft.ID}}/stream" data-draft-id="{{.Draft.ID}}">
-  <div class="context-nav"><a class="btn" href="/spec-builder" hx-get="/spec-builder/fragment" hx-target="#app" hx-push-url="/spec-builder">← Spec Builder</a>{{if .HasProject}}<a class="btn" href="/projects/{{.Project.ID}}" hx-get="/projects/{{.Project.ID}}/fragment" hx-target="#app" hx-push-url="/projects/{{.Project.ID}}">Project: {{.Project.Name}}</a>{{end}}</div>
+  <div class="context-nav"><a class="btn" href="/spec-builder" hx-get="/spec-builder/fragment" hx-target="#app" hx-push-url="/spec-builder">← Draft Studio</a>{{if .HasProject}}<a class="btn" href="/projects/{{.Project.ID}}" hx-get="/projects/{{.Project.ID}}/fragment" hx-target="#app" hx-push-url="/projects/{{.Project.ID}}">Project: {{.Project.Name}}</a>{{end}}</div>
   <div class="page-header spec-hero"><div><p class="eyebrow">Draft #{{.Draft.ID}}</p><h2>{{.Draft.Title}}</h2><div class="card-meta">{{if .HasProject}}{{.Project.Name}} · {{end}}{{.Draft.Status}} · updated {{datetime .Draft.UpdatedAt}}</div></div><div class="card-actions"><button class="btn btn-primary" data-json-post="/api/spec-drafts/{{.Draft.ID}}/save" data-body='{"title":""}' data-redirect-template="/specs/{spec_id}">Save as spec</button><button class="btn btn-danger" data-json-delete="/api/spec-drafts/{{.Draft.ID}}" data-redirect="/backlog">Abandon</button></div></div>
-  <div class="builder-status-slab"><span class="chip chip-{{.Draft.Status}}">{{.Draft.Status}}</span><strong>The assistant is shaping a spec. Review the preview before saving.</strong><span class="hint">Streaming errors remain in the page error region and chat.</span></div>
-  <div class="spec-builder-layout"><section class="spec-builder-chat panel-form"><div class="section-title-row"><h3>Builder conversation</h3><span class="chip chip-streaming">live draft</span></div><div id="draft-messages" class="chat-messages">{{template "draftMessages" .}}</div><div id="draft-stream" class="chat-msg-streaming"></div><form data-json data-draft-message method="post" action="/api/spec-drafts/{{.Draft.ID}}/message"><div class="chat-input-row"><textarea class="chat-textarea" name="content" required placeholder="Reply with constraints, corrections, or ask for clearer phases…"></textarea><button class="btn btn-primary">Send</button></div></form></section><aside class="spec-preview-pane"><div class="section-title-row"><h3>Latest generated spec preview</h3><span class="chip chip-pending">review before save</span></div><pre id="draft-preview" class="doc-box spec-doc">{{if .Preview}}{{.Preview}}{{else}}Ask the builder to call update_spec with the full markdown spec, including ## Phase N: headings for executable work.{{end}}</pre></aside></div>
+  <div class="builder-status-slab"><span class="chip chip-{{.Draft.Status}}">{{.Draft.Status}}</span><strong>Steer the assistant until the intent, scope, and phases are ready to save as a spec.</strong><span class="hint">Streaming errors remain in the page error region and chat.</span></div>
+  <div class="spec-builder-layout"><section class="spec-builder-chat panel-form"><div class="section-title-row"><h3>Draft Studio conversation</h3><span class="chip chip-streaming">live draft</span></div><div id="draft-messages" class="chat-messages">{{template "draftMessages" .}}</div><div id="draft-stream" class="chat-msg-streaming"></div><form data-json data-draft-message method="post" action="/api/spec-drafts/{{.Draft.ID}}/message"><div class="chat-input-row"><textarea class="chat-textarea" name="content" required placeholder="Steer the draft with goals, constraints, corrections, or clearer phases…"></textarea><button class="btn btn-primary">Send</button></div></form></section><aside class="spec-preview-pane"><div class="section-title-row"><h3>Latest generated spec preview</h3><span class="chip chip-pending">review before save</span></div><pre id="draft-preview" class="doc-box spec-doc">{{if .Preview}}{{.Preview}}{{else}}Steer Draft Studio to produce a full markdown spec preview. Include ## Phase N: headings when the work should become executable.{{end}}</pre></aside></div>
   <details class="section memory-details"><summary>Approved memory used</summary>{{if .MemoryError}}<div class="empty empty-error">{{.MemoryError}}</div>{{else if .Memory.Markdown}}<div class="card-meta">{{len .Memory.Files}} file(s) from {{.Memory.Root}}</div><pre class="doc-box">{{.Memory.Markdown}}</pre>{{else}}<div class="empty empty-action">No project memory loaded for this draft.</div>{{end}}</details>
 </div>
 {{end}}
 
 {{define "settings"}}
 <div data-page="settings">
-  <div class="context-nav"><a class="btn" href="/backlog" hx-get="/backlog/fragment" hx-target="#app" hx-push-url="/backlog">← Backlog</a><a class="btn" href="/projects" hx-get="/projects/fragment" hx-target="#app" hx-push-url="/projects">Projects</a><a class="btn" href="/spec-builder" hx-get="/spec-builder/fragment" hx-target="#app" hx-push-url="/spec-builder">Spec Builder</a></div>
+  <div class="context-nav"><a class="btn" href="/backlog" hx-get="/backlog/fragment" hx-target="#app" hx-push-url="/backlog">← Backlog</a><a class="btn" href="/projects" hx-get="/projects/fragment" hx-target="#app" hx-push-url="/projects">Projects</a><a class="btn" href="/spec-builder" hx-get="/spec-builder/fragment" hx-target="#app" hx-push-url="/spec-builder">Draft Studio</a></div>
   <div class="page-header command-header"><div><p class="eyebrow">Foundry / settings</p><h2>Runtime controls</h2><p class="hint">Edit config, inspect Cerberus sessions, and manage execution profiles. Errors remain in the page alert region above.</p></div></div>
   <section class="settings-grid" aria-label="Settings workbench">
     <form class="panel-form settings-config" data-settings action="/api/settings" data-refresh="/settings/fragment" data-target="#app">
