@@ -1,0 +1,48 @@
+# Git metadata
+.git
+.git/
+.gitmodules
+.gitignore
+
+# Local agent / Cerberus session state
+.cerberus/
+**/.cerberus/
+cerberus-sessions/
+.pi/
+
+# Editor, OS, cache, and temporary files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+.cache/
+**/.cache/
+tmp/
+temp/
+*.tmp
+*.log
+
+# Local env / secrets
+.env
+*.env
+
+# Local build and test outputs
+/server
+/foundry
+*.test
+*.out
+coverage.out
+bin/
+dist/
+build/
+
+# Documentation and mockup-only artifacts not needed by the Go build/runtime image
+docs/
+design/
+intent/
+specs/
+README.md
+SPEC.md
