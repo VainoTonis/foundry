@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -39,6 +40,89 @@ func Load(path string) (Config, error) {
 	}
 	setDefaults(&cfg)
 	return cfg, nil
+}
+
+func RuntimeSettingKeys() map[string]bool {
+	return map[string]bool{
+		"cerberus_bin":                  true,
+		"cerberus_image":                true,
+		"cerberus_model":                true,
+		"cerberus_profile":              true,
+		"ui_verbosity":                  true,
+		"max_concurrent_workflows":      true,
+		"default_workflow_budget_usd":   true,
+		"default_phase_timeout_seconds": true,
+		"review_base_url":               true,
+		"review_api_key":                true,
+		"review_model":                  true,
+		"git_root":                      true,
+		"memory_repo_path":              true,
+	}
+}
+
+func RuntimeDefaults(c Config) map[string]string {
+	return map[string]string{
+		"cerberus_bin":                  c.CerberusBin,
+		"cerberus_image":                c.CerberusImage,
+		"cerberus_model":                c.CerberusModel,
+		"cerberus_profile":              c.CerberusProfile,
+		"ui_verbosity":                  c.UIVerbosity,
+		"max_concurrent_workflows":      strconv.Itoa(c.MaxConcurrentWorkflows),
+		"default_workflow_budget_usd":   strconv.FormatFloat(c.DefaultWorkflowBudgetUSD, 'f', -1, 64),
+		"default_phase_timeout_seconds": strconv.Itoa(c.DefaultPhaseTimeoutSeconds),
+		"review_base_url":               c.ReviewBaseURL,
+		"review_api_key":                c.ReviewAPIKey,
+		"review_model":                  c.ReviewModel,
+		"git_root":                      c.GitRoot,
+		"memory_repo_path":              c.MemoryRepoPath,
+	}
+}
+
+func ApplyRuntimeSettings(c *Config, values map[string]string) error {
+	for k, v := range values {
+		switch k {
+		case "cerberus_bin":
+			c.CerberusBin = v
+		case "cerberus_image":
+			c.CerberusImage = v
+		case "cerberus_model":
+			c.CerberusModel = v
+		case "cerberus_profile":
+			c.CerberusProfile = v
+		case "ui_verbosity":
+			c.UIVerbosity = v
+		case "max_concurrent_workflows":
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				return fmt.Errorf("parse %s: %w", k, err)
+			}
+			c.MaxConcurrentWorkflows = n
+		case "default_workflow_budget_usd":
+			f, err := strconv.ParseFloat(v, 64)
+			if err != nil {
+				return fmt.Errorf("parse %s: %w", k, err)
+			}
+			c.DefaultWorkflowBudgetUSD = f
+		case "default_phase_timeout_seconds":
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				return fmt.Errorf("parse %s: %w", k, err)
+			}
+			c.DefaultPhaseTimeoutSeconds = n
+		case "review_base_url":
+			c.ReviewBaseURL = v
+		case "review_api_key":
+			c.ReviewAPIKey = v
+		case "review_model":
+			c.ReviewModel = v
+		case "git_root":
+			c.GitRoot = expandHome(v)
+		case "memory_repo_path":
+			c.MemoryRepoPath = expandHome(v)
+		}
+	}
+	setDefaults(c)
+	return nil
 }
 
 func setDefaults(c *Config) {

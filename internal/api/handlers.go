@@ -19,6 +19,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tonis2/foundry/internal/cerberus"
+	"github.com/tonis2/foundry/internal/config"
 	"github.com/tonis2/foundry/internal/db"
 	"github.com/tonis2/foundry/internal/discover"
 	"github.com/tonis2/foundry/internal/hub"
@@ -103,7 +104,7 @@ func (s *Server) loadRuntimeSettings(ctx context.Context) (map[string]string, er
 }
 
 func runtimeSettingKeys() map[string]bool {
-	return map[string]bool{"git_root": true, "memory_repo_path": true, "cerberus_profile": true}
+	return config.RuntimeSettingKeys()
 }
 
 func isRuntimeSetting(key string) bool { return runtimeSettingKeys()[key] }

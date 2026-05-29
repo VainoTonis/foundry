@@ -60,16 +60,16 @@ func main() {
 	}
 
 	// cerberus client — profile is resolved per-session by the runner; pass empty here
-	cerb := cerberus.New(cfg.CerberusBin, cfg.CerberusImage, cfg.CerberusModel, "")
+	cerb := cerberus.New(runtime.CerberusBin, runtime.CerberusImage, runtime.CerberusModel, "")
 
 	// shared event hub for real-time streaming
 	eventHub := hub.New()
 
 	// workflow runner
 	runnerCfg := workflow.Config{
-		DefaultPhaseTimeoutSeconds: cfg.DefaultPhaseTimeoutSeconds,
-		DefaultWorkflowBudgetUSD:   cfg.DefaultWorkflowBudgetUSD,
-		MaxConcurrentWorkflows:     cfg.MaxConcurrentWorkflows,
+		DefaultPhaseTimeoutSeconds: runtime.DefaultPhaseTimeoutSeconds,
+		DefaultWorkflowBudgetUSD:   runtime.DefaultWorkflowBudgetUSD,
+		MaxConcurrentWorkflows:     runtime.MaxConcurrentWorkflows,
 		CerberusProfile:            runtime.CerberusProfile,
 		CerberusCallbackURL:        fmt.Sprintf("http://localhost:%d/api/cerberus/events", cfg.ServerPort),
 		MemoryRepoPath:             runtime.MemoryRepoPath,
@@ -80,7 +80,7 @@ func main() {
 	go api.RecoverOrphanDrafts(context.Background(), pool, cerb)
 
 	// API server
-	srv := api.NewServer(pool, runner, cerb, eventHub, cfg.DefaultWorkflowBudgetUSD, runtime.GitRoot, runtime.MemoryRepoPath, cfgPath, runtime.CerberusProfile, cfg.ServerPort)
+	srv := api.NewServer(pool, runner, cerb, eventHub, runtime.DefaultWorkflowBudgetUSD, runtime.GitRoot, runtime.MemoryRepoPath, cfgPath, runtime.CerberusProfile, cfg.ServerPort)
 
 	// serve API, server-rendered UI, and static assets
 	mux := http.NewServeMux()
@@ -96,19 +96,10 @@ func main() {
 	}
 }
 
-type runtimeSettings struct {
-	GitRoot         string
-	MemoryRepoPath  string
-	CerberusProfile string
-}
+type runtimeSettings = config.Config
 
 func seedAndLoadRuntimeSettings(ctx context.Context, pool *pgxpool.Pool, cfg config.Config) (runtimeSettings, error) {
-	defaults := map[string]string{
-		"git_root":         cfg.GitRoot,
-		"memory_repo_path": cfg.MemoryRepoPath,
-		"cerberus_profile": cfg.CerberusProfile,
-	}
-	for k, v := range defaults {
+	for k, v := range config.RuntimeDefaults(cfg) {
 		if err := db.SeedAppSettingIfMissing(ctx, pool, k, v); err != nil {
 			return runtimeSettings{}, err
 		}
@@ -117,16 +108,15 @@ func seedAndLoadRuntimeSettings(ctx context.Context, pool *pgxpool.Pool, cfg con
 	if err != nil {
 		return runtimeSettings{}, err
 	}
-	runtime := runtimeSettings{GitRoot: cfg.GitRoot, MemoryRepoPath: cfg.MemoryRepoPath, CerberusProfile: cfg.CerberusProfile}
+	values := map[string]string{}
 	for _, s := range settings {
-		switch s.Key {
-		case "git_root":
-			runtime.GitRoot = s.Value
-		case "memory_repo_path":
-			runtime.MemoryRepoPath = s.Value
-		case "cerberus_profile":
-			runtime.CerberusProfile = s.Value
+		if config.RuntimeSettingKeys()[s.Key] {
+			values[s.Key] = s.Value
 		}
+	}
+	runtime := cfg
+	if err := config.ApplyRuntimeSettings(&runtime, values); err != nil {
+		return runtimeSettings{}, err
 	}
 	return runtime, nil
 }

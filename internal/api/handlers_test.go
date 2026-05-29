@@ -10,11 +10,11 @@ import (
 )
 
 func TestSettingsPatchSeparatesRuntimeKeys(t *testing.T) {
-	if !isRuntimeSetting("git_root") || !isRuntimeSetting("memory_repo_path") || !isRuntimeSetting("cerberus_profile") {
+	if !isRuntimeSetting("git_root") || !isRuntimeSetting("memory_repo_path") || !isRuntimeSetting("cerberus_profile") || !isRuntimeSetting("cerberus_model") || !isRuntimeSetting("default_workflow_budget_usd") {
 		t.Fatalf("runtime settings keys not recognized")
 	}
-	if isRuntimeSetting("server_port") {
-		t.Fatalf("server_port should remain config-backed")
+	if isRuntimeSetting("server_port") || isRuntimeSetting("db_url") {
+		t.Fatalf("db_url and server_port should remain config-backed")
 	}
 }
 
