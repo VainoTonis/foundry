@@ -112,7 +112,9 @@ type AppSetting struct {
 // --- App settings ---
 
 func SeedAppSettingIfMissing(ctx context.Context, pool *pgxpool.Pool, key, value string) error {
-	_, err := pool.Exec(ctx, `INSERT INTO app_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`, key, value)
+	_, err := pool.Exec(ctx, `INSERT INTO app_settings (key, value) VALUES ($1, $2)
+		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+		WHERE app_settings.value = ''`, key, value)
 	return err
 }
 
