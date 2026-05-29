@@ -35,25 +35,18 @@ Runs unattended. Check results in the UI when you're back.
 
 ## Quick start
 
-Run Foundry locally with Docker Compose:
-
-```sh
-docker compose build
-docker compose up
-```
-
-Compose starts both PostgreSQL and Foundry. Open `http://localhost:8080`.
-
-If port `8080` is already in use, stop the conflicting service or change the `foundry` port mapping in `docker-compose.yml`.
-
-For source-based development instead:
+Run PostgreSQL with Docker Compose, then build and run Foundry on the host:
 
 ```sh
 docker compose up -d postgres
-cp config.yaml config.local.yaml
-$EDITOR config.local.yaml
-go run ./cmd/server config.local.yaml
+go build -o ./foundry ./cmd/server
+$EDITOR config.yaml
+./foundry config.yaml
 ```
+
+Compose starts PostgreSQL only. Foundry runs as the host binary `./foundry`, using `config.yaml`. Open `http://localhost:8080`.
+
+If port `8080` is already in use, stop the conflicting service or change `server_port` in `config.yaml`.
 
 Minimum useful config:
 

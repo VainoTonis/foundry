@@ -15,28 +15,5 @@ services:
       timeout: 5s
       retries: 5
 
-  foundry:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    depends_on:
-      postgres:
-        condition: service_healthy
-    ports:
-      - "8080:8080"
-    volumes:
-      - ~/git:/root/git
-    command:
-      - sh
-      - -c
-      - |
-        printf '%s\n' \
-          'db_url: "postgres://foundry:foundry@postgres:5432/foundry?sslmode=disable"' \
-          'server_port: 8080' \
-          'git_root: "/root/git"' \
-          'memory_repo_path: "/root/git/personal/foundry-memory"' \
-          > /tmp/config.docker.yaml
-        exec ./foundry /tmp/config.docker.yaml
-
 volumes:
   pgdata:
