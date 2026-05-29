@@ -2915,7 +2915,9 @@ func (s *Server) handleSpecDrafts(w http.ResponseWriter, r *http.Request) {
 			if err := cerb.Chat(ctx, session, initialPrompt, cbURL); err != nil {
 				log.Printf("spec-builder chat start error: %v", err)
 				errStatus := "error"
-				db.UpdateSpecDraft(ctx, pool, draftID, db.UpdateSpecDraftParams{Status: &errStatus})
+				if _, updateErr := db.UpdateSpecDraft(ctx, pool, draftID, db.UpdateSpecDraftParams{Status: &errStatus}); updateErr != nil {
+					log.Printf("spec-builder: mark draft %d error: %v", draftID, updateErr)
+				}
 				return
 			}
 		}()
@@ -3023,7 +3025,9 @@ func (s *Server) handleSpecDraft(w http.ResponseWriter, r *http.Request) {
 			if err := cerb.Message(ctx, session, body.Content, cbURL); err != nil {
 				log.Printf("spec-builder message error: %v", err)
 				errStatus := "error"
-				db.UpdateSpecDraft(ctx, pool, draftID, db.UpdateSpecDraftParams{Status: &errStatus})
+				if _, updateErr := db.UpdateSpecDraft(ctx, pool, draftID, db.UpdateSpecDraftParams{Status: &errStatus}); updateErr != nil {
+					log.Printf("spec-builder: mark draft %d error: %v", draftID, updateErr)
+				}
 			}
 		}()
 		jsonOK(w, draft, http.StatusOK)
@@ -3089,8 +3093,11 @@ func (s *Server) handleSpecDraft(w http.ResponseWriter, r *http.Request) {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		saved := "saved"
-		db.UpdateSpecDraft(r.Context(), s.pool, id, db.UpdateSpecDraftParams{Status: &saved, Title: &title})
+		frozen := db.SpecDraftStatusFrozen
+		if _, err := db.UpdateSpecDraft(r.Context(), s.pool, id, db.UpdateSpecDraftParams{Status: &frozen, Title: &title}); err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		jsonOK(w, map[string]int64{"spec_id": sp.ID}, http.StatusCreated)
 
 	case suffix == "" && r.Method == http.MethodDelete:
@@ -3731,13 +3738,17 @@ func RecoverOrphanDrafts(ctx context.Context, pool *pgxpool.Pool, cerb *cerberus
 			continue
 		}
 		if d.CerberusSession == "" {
-			db.UpdateSpecDraft(ctx, pool, d.ID, db.UpdateSpecDraftParams{Status: &errStatus})
+			if _, updateErr := db.UpdateSpecDraft(ctx, pool, d.ID, db.UpdateSpecDraftParams{Status: &errStatus}); updateErr != nil {
+				log.Printf("orphan recovery: mark draft %d error: %v", d.ID, updateErr)
+			}
 			continue
 		}
 		status, err := cerb.Status(ctx, d.CerberusSession)
 		if err != nil || strings.Contains(status, "not found") || strings.Contains(status, "done") || strings.Contains(status, "failed") {
 			log.Printf("orphan recovery: marking draft %d as error (status=%q err=%v)", d.ID, status, err)
-			db.UpdateSpecDraft(ctx, pool, d.ID, db.UpdateSpecDraftParams{Status: &errStatus})
+			if _, updateErr := db.UpdateSpecDraft(ctx, pool, d.ID, db.UpdateSpecDraftParams{Status: &errStatus}); updateErr != nil {
+				log.Printf("orphan recovery: mark draft %d error: %v", d.ID, updateErr)
+			}
 			continue
 		}
 		// session is alive (waiting) — leave it alone, user can resume from the UI

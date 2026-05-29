@@ -822,7 +822,7 @@ func ListKnownCerberusSessions(ctx context.Context, pool *pgxpool.Pool) ([]Known
 			return nil, err
 		}
 		k.Type = typ
-		if k.FoundryStatus == "saved" || k.FoundryStatus == "error" {
+		if IsSpecDraftSafeToCleanStatus(k.FoundryStatus) {
 			k.SafeToClean = true
 		} else {
 			k.UnsafeReason = "spec draft is active"
@@ -833,6 +833,15 @@ func ListKnownCerberusSessions(ctx context.Context, pool *pgxpool.Pool) ([]Known
 }
 
 // --- SpecDrafts ---
+
+const (
+	SpecDraftStatusFrozen = "frozen"
+	SpecDraftStatusError  = "error"
+)
+
+func IsSpecDraftSafeToCleanStatus(status string) bool {
+	return status == SpecDraftStatusFrozen || status == SpecDraftStatusError
+}
 
 type SpecDraft struct {
 	ID                    int64           `json:"id"`
