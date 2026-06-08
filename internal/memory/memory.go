@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 )
@@ -261,4 +262,56 @@ func cleanNamespace(namespace string) (string, error) {
 		}
 	}
 	return namespace, nil
+}
+
+// SlugifyFilename converts a string into a URL-safe filename slug.
+func SlugifyFilename(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	var b strings.Builder
+	lastDash := false
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash && b.Len() > 0 {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if out == "" {
+		return "spec"
+	}
+	return out
+}
+
+// WriteDraftSpecMarkdown writes a spec to the memory namespace on disk
+// and returns the written path.
+func WriteDraftSpecMarkdown(repoPath, namespace string, draftID int64, title, content string) (string, error) {
+	repoPath = strings.TrimSpace(repoPath)
+	namespace = strings.Trim(strings.TrimSpace(namespace), string(os.PathSeparator)+"/")
+	if repoPath == "" {
+		return "", fmt.Errorf("memory repo path is not configured")
+	}
+	if namespace == "" {
+		return "", fmt.Errorf("project memory namespace is not configured")
+	}
+
+	repoRoot := filepath.Clean(repoPath)
+	specDir := filepath.Clean(filepath.Join(repoRoot, filepath.FromSlash(namespace), "specs"))
+	if rel, err := filepath.Rel(repoRoot, specDir); err != nil || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("invalid memory namespace %q", namespace)
+	}
+	if err := os.MkdirAll(specDir, 0o755); err != nil {
+		return "", fmt.Errorf("create memory specs dir: %w", err)
+	}
+
+	base := fmt.Sprintf("draft-%d-%s", draftID, SlugifyFilename(title))
+	path := filepath.Join(specDir, base+".md")
+	if err := os.WriteFile(path, []byte(strings.TrimSpace(content)+"\n"), 0o644); err != nil {
+		return "", fmt.Errorf("write memory spec: %w", err)
+	}
+	return path, nil
 }

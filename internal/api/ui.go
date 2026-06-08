@@ -15,6 +15,7 @@ import (
 	"github.com/tonis2/foundry/internal/db"
 	"github.com/tonis2/foundry/internal/discover"
 	"github.com/tonis2/foundry/internal/memory"
+	"github.com/tonis2/foundry/internal/specdrafts"
 )
 
 // ---- server-rendered UI templates and helpers ----
@@ -1049,7 +1050,7 @@ func (s *Server) handleUISpecBuilderDetailFragment(w http.ResponseWriter, r *htt
 	}
 	var msgs []uiChatMessage
 	_ = json.Unmarshal(draft.Messages, &msgs)
-	preview := extractFinalSpec(draft.Messages)
+	preview := specdrafts.ExtractFinalSpec(draft.Messages)
 	var mem memory.Slice
 	var memErrMsg string
 	var proj db.Project
