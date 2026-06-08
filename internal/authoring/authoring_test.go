@@ -1,4 +1,4 @@
-package specdrafts
+package authoring
 
 import (
 	"encoding/json"

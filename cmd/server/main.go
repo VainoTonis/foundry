@@ -13,11 +13,11 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tonis2/foundry/internal/api"
+	"github.com/tonis2/foundry/internal/authoring"
 	"github.com/tonis2/foundry/internal/cerberus"
 	"github.com/tonis2/foundry/internal/config"
 	"github.com/tonis2/foundry/internal/db"
 	"github.com/tonis2/foundry/internal/hub"
-	"github.com/tonis2/foundry/internal/specdrafts"
 	"github.com/tonis2/foundry/internal/workflow"
 )
 
@@ -78,7 +78,7 @@ func main() {
 	runner := workflow.NewRunner(pool, cerb, runnerCfg, eventHub)
 
 	// orphan draft recovery (non-blocking)
-	go specdrafts.RecoverOrphanDrafts(context.Background(), pool, cerb)
+	go authoring.RecoverOrphanDrafts(context.Background(), pool, cerb)
 
 	// API server
 	srv := api.NewServer(pool, runner, cerb, eventHub, runtime.DefaultWorkflowBudgetUSD, runtime.GitRoot, runtime.MemoryRepoPath, cfgPath, runtime.CerberusProfile, cfg.ServerPort)

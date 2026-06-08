@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tonis2/foundry/internal/authoring"
 	"github.com/tonis2/foundry/internal/db"
-	"github.com/tonis2/foundry/internal/specdrafts"
 )
 
 func TestSettingsPatchSeparatesRuntimeKeys(t *testing.T) {
@@ -57,10 +57,10 @@ func TestExtractFinalSpecFindsSaveReadySpecInMarkdownFence(t *testing.T) {
 		{Role: "assistant", Content: "Draft #5 is ready to save.\n\n```markdown\n# Draft Studio Robust Save\n\nBuild the save path.\n\n## Phase 1: Extract\n\nFind the spec inside assistant prose.\n```\n\nYou can save this now."},
 	})
 
-	got := specdrafts.ExtractFinalSpec(messages)
+	got := authoring.ExtractFinalSpec(messages)
 	want := "# Draft Studio Robust Save\n\nBuild the save path.\n\n## Phase 1: Extract\n\nFind the spec inside assistant prose."
 	if got != want {
-		t.Fatalf("specdrafts.ExtractFinalSpec() = %q, want %q", got, want)
+		t.Fatalf("authoring.ExtractFinalSpec() = %q, want %q", got, want)
 	}
 }
 
@@ -69,10 +69,10 @@ func TestExtractFinalSpecFindsSaveReadySpecAfterProse(t *testing.T) {
 		{Role: "assistant", Content: "This is the save-ready version:\n\n# Draft Five Style Output\n\nProse before the title should not be saved.\n\n## Phase 1: Save\n\nPersist only the markdown spec."},
 	})
 
-	got := specdrafts.ExtractFinalSpec(messages)
+	got := authoring.ExtractFinalSpec(messages)
 	want := "# Draft Five Style Output\n\nProse before the title should not be saved.\n\n## Phase 1: Save\n\nPersist only the markdown spec."
 	if got != want {
-		t.Fatalf("specdrafts.ExtractFinalSpec() = %q, want %q", got, want)
+		t.Fatalf("authoring.ExtractFinalSpec() = %q, want %q", got, want)
 	}
 }
 

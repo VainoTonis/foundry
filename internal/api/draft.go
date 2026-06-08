@@ -9,16 +9,16 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/tonis2/foundry/internal/authoring"
 	"github.com/tonis2/foundry/internal/db"
-	"github.com/tonis2/foundry/internal/specdrafts"
 )
 
 // ---- spec-draft handlers ----
 
 // newAuthoringService creates an authoring Service with Server dependencies.
-func (s *Server) newSpecDraftsService() *specdrafts.Service {
+func (s *Server) newSpecDraftsService() *authoring.Service {
 	_, memoryRepoPath, _ := s.runtimeSettings()
-	return specdrafts.NewService(
+	return authoring.NewService(
 		s.pool,
 		s.cerb,
 		s.callbackURL(),
@@ -50,10 +50,10 @@ func (s *Server) handleSpecDrafts(w http.ResponseWriter, r *http.Request) {
 		}
 
 		svc := s.newSpecDraftsService()
-		draft, err := svc.CreateDraftAndStartChat(r.Context(), specdrafts.CreateDraftAndStartChatParams{
+		draft, err := svc.CreateDraftAndStartChat(r.Context(), authoring.CreateDraftAndStartChatParams{
 			ProjectID:         body.ProjectID,
 			Description:       body.Description,
-			SpecBuilderPrompt: specdrafts.SpecBuilderPrompt,
+			SpecBuilderPrompt: authoring.SpecBuilderPrompt,
 		})
 		if err != nil {
 			statusCode := http.StatusInternalServerError
@@ -131,7 +131,7 @@ func (s *Server) handleSpecDraft(w http.ResponseWriter, r *http.Request) {
 		}
 
 		svc := s.newSpecDraftsService()
-		draft, err := svc.AppendUserMessage(r.Context(), specdrafts.AppendUserMessageParams{
+		draft, err := svc.AppendUserMessage(r.Context(), authoring.AppendUserMessageParams{
 			DraftID: id,
 			Content: body.Content,
 		})
@@ -159,7 +159,7 @@ func (s *Server) handleSpecDraft(w http.ResponseWriter, r *http.Request) {
 		}
 
 		svc := s.newSpecDraftsService()
-		specID, err := svc.SaveDraft(r.Context(), specdrafts.SaveDraftParams{
+		specID, err := svc.SaveDraft(r.Context(), authoring.SaveDraftParams{
 			DraftID: id,
 			Title:   saveBody.Title,
 		})
@@ -198,7 +198,7 @@ func (s *Server) handleSpecDraft(w http.ResponseWriter, r *http.Request) {
 // ---- cerberus draft event streaming ----
 
 func (s *Server) assembleAndAppend(ctx context.Context, session string, isTurnComplete bool) {
-	specdrafts.AssembleAndAppendMessages(ctx, s.pool, session, isTurnComplete)
+	authoring.AssembleAndAppendMessages(ctx, s.pool, session, isTurnComplete)
 }
 
 func (s *Server) streamDraftEvents(w http.ResponseWriter, r *http.Request, draftID int64) {

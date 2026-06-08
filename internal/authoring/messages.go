@@ -1,4 +1,4 @@
-package specdrafts
+package authoring
 
 import (
 	"context"

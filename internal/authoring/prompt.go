@@ -1,4 +1,4 @@
-package specdrafts
+package authoring
 
 // SpecBuilderPrompt is the system prompt for the spec-builder draft assistant.
 const SpecBuilderPrompt = `You are Draft Studio for Foundry, a spec-driven development loop that runs AI agents.
