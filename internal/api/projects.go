@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strings"
 
 	"github.com/tonis2/foundry/internal/db"
 	"github.com/tonis2/foundry/internal/discover"
@@ -16,19 +15,14 @@ func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
 		var body struct {
-			Name            string `json:"name"`
-			RepoPath        string `json:"repo_path"`
-			MemoryNamespace string `json:"memory_namespace"`
+			Name     string `json:"name"`
+			RepoPath string `json:"repo_path"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			jsonErr(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		memoryNamespace := strings.TrimSpace(body.MemoryNamespace)
-		if memoryNamespace == "" {
-			memoryNamespace = body.Name
-		}
-		p, err := db.CreateProject(r.Context(), s.pool, body.Name, body.RepoPath, memoryNamespace)
+		p, err := db.CreateProject(r.Context(), s.pool, body.Name, body.RepoPath)
 		if err != nil {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -51,7 +45,7 @@ func (s *Server) handleDiscover(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	gitRoot, _, _ := s.runtimeSettings()
+	gitRoot, _ := s.runtimeSettings()
 	if gitRoot == "" {
 		jsonErr(w, "git_root not configured", http.StatusConflict)
 		return
@@ -69,13 +63,12 @@ func (s *Server) handleDiscover(w http.ResponseWriter, r *http.Request) {
 	}
 	type repoItem struct {
 		discover.Repo
-		Imported        bool   `json:"imported"`
-		MemoryNamespace string `json:"memory_namespace"`
+		Imported bool `json:"imported"`
 	}
 	out := make([]repoItem, 0, len(repos))
 	for _, repo := range repos {
-		p, imported := byPath[repo.Path]
-		out = append(out, repoItem{Repo: repo, Imported: imported, MemoryNamespace: p.MemoryNamespace})
+		_, imported := byPath[repo.Path]
+		out = append(out, repoItem{Repo: repo, Imported: imported})
 	}
 	jsonOK(w, out, http.StatusOK)
 }
@@ -101,18 +94,16 @@ func (s *Server) handleProject(w http.ResponseWriter, r *http.Request) {
 		jsonOK(w, p, http.StatusOK)
 	case http.MethodPatch:
 		var body struct {
-			Name            *string `json:"name"`
-			RepoPath        *string `json:"repo_path"`
-			MemoryNamespace *string `json:"memory_namespace"`
+			Name     *string `json:"name"`
+			RepoPath *string `json:"repo_path"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			jsonErr(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		p, err := db.UpdateProject(r.Context(), s.pool, id, db.UpdateProjectParams{
-			Name:            body.Name,
-			RepoPath:        body.RepoPath,
-			MemoryNamespace: body.MemoryNamespace,
+			Name:     body.Name,
+			RepoPath: body.RepoPath,
 		})
 		if errors.Is(err, db.ErrNotFound) {
 			jsonErr(w, "not found", http.StatusNotFound)

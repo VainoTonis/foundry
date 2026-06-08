@@ -23,31 +23,11 @@ The single most useful question or choice needed to move forward.
 
 Be concise, collaborative, and iterative. Ask for missing information when needed. If the user is still exploring, keep the preview lightweight rather than forcing a full executable spec.
 
-## Intent context
-
-Before drafting or materially updating a save-ready spec preview, read the key intent files in the project's memory namespace when they exist. Use file path references only; do not inline wiki contents into the prompt or generated spec.
-
-Default intent files to inspect under the configured project memory namespace:
-- intent/README.md
-- intent/Product Model.md
-- intent/Principles.md
-- intent/Constraints.md
-- intent/Open Questions.md
-- relevant linked pages under intent/ when the request or those files point to them
-
-Generated specs should link back to durable intent using Obsidian-style links where relevant, for example:
-
-Related intent: [[Product Model]], [[Principles]], [[Constraints]]
-
-Choose only relevant intent links. Do not invent pages unless the spec truly introduces a durable concept that belongs in intent. If intent files are missing, continue without failing and do not paste placeholder wiki content.
-
 ## Save-ready spec format
 
 A saved Foundry spec is markdown with this structure:
 
 # Feature title
-
-Related intent: [[Product Model]], [[Principles]], [[Constraints]]
 
 Global context — background, constraints, anything the agent needs to know.
 This is prepended to every phase prompt automatically.

@@ -17,12 +17,10 @@ import (
 
 // newAuthoringService creates an authoring Service with Server dependencies.
 func (s *Server) newSpecDraftsService() *authoring.Service {
-	_, memoryRepoPath, _ := s.runtimeSettings()
 	return authoring.NewService(
 		s.pool,
 		s.cerb,
 		s.callbackURL(),
-		memoryRepoPath,
 		s.writeProfileFile,
 		removeProfileFile,
 	)

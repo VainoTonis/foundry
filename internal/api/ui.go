@@ -15,7 +15,6 @@ import (
 	"github.com/tonis2/foundry/internal/authoring"
 	"github.com/tonis2/foundry/internal/db"
 	"github.com/tonis2/foundry/internal/discover"
-	"github.com/tonis2/foundry/internal/memory"
 )
 
 // ---- server-rendered UI templates and helpers ----
@@ -102,11 +101,10 @@ var uiTemplates = template.Must(template.New("ui").Funcs(template.FuncMap{
   </div>
   <div id="new-project" class="popover-card" popover>
     <h3>New Project</h3>
-    <p class="hint">Register the target repository and its approved-memory namespace.</p>
+    <p class="hint">Register the target repository.</p>
     <form method="post" action="/backlog/projects" hx-post="/backlog/projects" hx-target="#app" hx-swap="innerHTML">
       <div class="field"><label>Name</label><input name="name" required></div>
       <div class="field"><label>Repo path</label><input name="repo_path" required placeholder="/workspace or /home/me/src/app"></div>
-      <div class="field"><label>Memory namespace</label><input name="memory_namespace" placeholder="Defaults to project name"><p class="hint">Leave blank to use the project name.</p></div>
       <button class="btn btn-primary">Create project</button>
     </form>
   </div>
@@ -154,21 +152,19 @@ What this phase does.</textarea></div>
 
 {{define "projects"}}
 <div data-page="projects">
-  <div class="page-header command-header"><div><p class="eyebrow">Foundry / projects</p><h2>Project registry</h2><p class="hint">Each project binds a target repo to one approved-memory namespace.</p></div><div class="card-actions"><button class="btn" popovertarget="new-project-page">+ Project</button><button class="btn btn-primary" hx-get="/projects/fragment?discover=1" hx-target="#app" hx-push-url="/projects">Discover repos</button></div></div>
+  <div class="page-header command-header"><div><p class="eyebrow">Foundry / projects</p><h2>Project registry</h2><p class="hint">Each project binds Foundry to one target repo.</p></div><div class="card-actions"><button class="btn" popovertarget="new-project-page">+ Project</button><button class="btn btn-primary" hx-get="/projects/fragment?discover=1" hx-target="#app" hx-push-url="/projects">Discover repos</button></div></div>
   <div id="new-project-page" class="popover-card" popover>
     <h3>New Project</h3>
     <p class="hint">Use repo paths relative to the machine running Foundry.</p>
     <form method="post" action="/projects" hx-post="/projects" hx-target="#app" hx-swap="innerHTML">
       <div class="field"><label>Name</label><input name="name" required></div>
       <div class="field"><label>Target repo path</label><input name="repo_path" required></div>
-      <div class="field"><label>Memory namespace</label><input name="memory_namespace" placeholder="Defaults to project name"><p class="hint">Leave blank to use the project name.</p></div>
       <button class="btn btn-primary">Create project</button>
     </form>
   </div>
-  <div class="context-slab"><span>Approved memory repo</span><strong>{{if .MemoryRepoPath}}{{.MemoryRepoPath}}{{else}}not configured{{end}}</strong></div>
-  {{if .Projects}}<div class="group-label">Registered projects</div><div class="project-grid">{{range .Projects}}<article class="project-slab"><div class="project-head"><a class="project-title" href="/projects/{{.ID}}" hx-get="/projects/{{.ID}}/fragment" hx-target="#app" hx-push-url="/projects/{{.ID}}">{{.Name}}</a><span class="chip chip-{{.MemoryClass}}">{{.MemoryState}}</span></div><dl class="fact-list"><div><dt>Target repo</dt><dd>{{.RepoPath}}</dd></div><div><dt>Memory namespace</dt><dd>{{if .MemoryNamespace}}{{.MemoryNamespace}}{{else}}—{{end}}</dd></div></dl><div class="card-actions"><a class="btn btn-primary" href="/projects/{{.ID}}" hx-get="/projects/{{.ID}}/fragment" hx-target="#app" hx-push-url="/projects/{{.ID}}">View / edit</a></div></article>{{end}}</div>{{else}}<div class="empty empty-action">No projects yet. Create one manually or discover repositories from the configured git root.</div>{{end}}
+  {{if .Projects}}<div class="group-label">Registered projects</div><div class="project-grid">{{range .Projects}}<article class="project-slab"><div class="project-head"><a class="project-title" href="/projects/{{.ID}}" hx-get="/projects/{{.ID}}/fragment" hx-target="#app" hx-push-url="/projects/{{.ID}}">{{.Name}}</a><span class="chip chip-done">repo</span></div><dl class="fact-list"><div><dt>Target repo</dt><dd>{{.RepoPath}}</dd></div></dl><div class="card-actions"><a class="btn btn-primary" href="/projects/{{.ID}}" hx-get="/projects/{{.ID}}/fragment" hx-target="#app" hx-push-url="/projects/{{.ID}}">View / edit</a></div></article>{{end}}</div>{{else}}<div class="empty empty-action">No projects yet. Create one manually or discover repositories from the configured git root.</div>{{end}}
   {{if .DiscoverErr}}<div class="empty empty-error">Discovery failed: {{.DiscoverErr}}</div>{{end}}
-  {{if .Repos}}<div class="group-label">Discovered repos</div>{{range .Repos}}<article class="work-row"><div class="work-main"><span class="work-title">{{.Name}}</span><div class="work-meta">target: {{.Path}}{{if .Imported}} · namespace: {{if .MemoryNamespace}}{{.MemoryNamespace}}{{else}}—{{end}}{{end}}</div></div><div class="work-signals">{{if .Imported}}<span class="chip chip-done">imported</span>{{else}}<span class="chip chip-pending">new</span>{{end}}</div>{{if not .Imported}}<div class="work-next"><form method="post" action="/projects?discover=1" hx-post="/projects?discover=1" hx-target="#app" hx-swap="innerHTML"><input type="hidden" name="name" value="{{.Name}}"><input type="hidden" name="repo_path" value="{{.Path}}"><input type="hidden" name="memory_namespace" value="{{.Name}}"><button class="btn btn-primary">Import project</button></form></div>{{end}}</article>{{end}}{{end}}
+  {{if .Repos}}<div class="group-label">Discovered repos</div>{{range .Repos}}<article class="work-row"><div class="work-main"><span class="work-title">{{.Name}}</span><div class="work-meta">target: {{.Path}}</div></div><div class="work-signals">{{if .Imported}}<span class="chip chip-done">imported</span>{{else}}<span class="chip chip-pending">new</span>{{end}}</div>{{if not .Imported}}<div class="work-next"><form method="post" action="/projects?discover=1" hx-post="/projects?discover=1" hx-target="#app" hx-swap="innerHTML"><input type="hidden" name="name" value="{{.Name}}"><input type="hidden" name="repo_path" value="{{.Path}}"><button class="btn btn-primary">Import project</button></form></div>{{end}}</article>{{end}}{{end}}
 </div>
 {{end}}
 
@@ -181,12 +177,10 @@ What this phase does.</textarea></div>
       <h3>Edit project</h3>
       <div class="field"><label>Name</label><input name="name" value="{{.Project.Name}}" required></div>
       <div class="field"><label>Target repo path</label><input name="repo_path" value="{{.Project.RepoPath}}" required></div>
-      <div class="field"><label>Memory namespace</label><input name="memory_namespace" value="{{.Project.MemoryNamespace}}" placeholder="Defaults to project name"><p class="hint">Namespace is read from the configured private memory repo.</p></div>
       <button class="btn btn-primary">Save changes</button>
     </form>
-    <aside class="context-panel"><h3>Project context</h3><dl class="fact-list"><div><dt>Target repo</dt><dd>{{.Project.RepoPath}}</dd></div><div><dt>Memory namespace</dt><dd>{{.Project.MemoryNamespace}}</dd></div><div><dt>Approved memory</dt><dd>{{if .MemoryError}}error{{else if .Memory.Markdown}}{{len .Memory.Files}} file(s) available{{else}}none yet{{end}}</dd></div></dl></aside>
+    <aside class="context-panel"><h3>Project context</h3><dl class="fact-list"><div><dt>Target repo</dt><dd>{{.Project.RepoPath}}</dd></div></dl></aside>
   </div>
-  <div class="section"><h3>Approved memory</h3>{{if .MemoryError}}<div class="empty empty-error">{{.MemoryError}}</div>{{else if .Memory.Markdown}}<div class="card-meta">{{len .Memory.Files}} file(s) from {{.Memory.Root}}</div><pre class="doc-box">{{.Memory.Markdown}}</pre>{{else}}<div class="empty empty-action">No approved markdown memory found for this namespace. Accepted memory updates will appear here.</div>{{end}}</div>
 </div>
 {{end}}
 
@@ -213,7 +207,7 @@ What this phase does.</textarea></div>
     <div class="work-window-head"><div><h2>Work window</h2><p class="hint">Select a phase, then inspect changed code or full-width logs.</p></div><div class="work-tabs"><button type="button" class="work-tab is-selected" data-work-window-tab="diff">Diff</button><button type="button" class="work-tab" data-work-window-tab="logs">Logs</button></div></div>
     {{if .HasInitialPhase}}<div class="selected-phase-actions"><div><strong data-selected-phase-name>{{.InitialPhase.Name}}</strong><div class="card-meta">Phase actions apply to the selected strip item.</div></div><div class="card-actions"><button class="btn btn-primary" data-json-post="/api/phases/{{.InitialPhase.ID}}/approve" data-phase-action="approve" data-refresh="/workflows/{{$.Workflow.ID}}/fragment" data-target="#app">Approve</button><button class="btn btn-danger" data-json-post="/api/phases/{{.InitialPhase.ID}}/reject" data-phase-action="reject" data-refresh="/workflows/{{$.Workflow.ID}}/fragment" data-target="#app">Reject</button><button class="btn" data-json-post="/api/phases/{{.InitialPhase.ID}}/clean" data-phase-action="clean" data-refresh="/workflows/{{$.Workflow.ID}}/fragment" data-target="#app">Clean</button></div></div><div id="workflow-work-body" class="workflow-work-body" data-phase-detail-panel="{{.InitialPhase.ID}}" hx-get="/phases/{{.InitialPhase.ID}}/diff/fragment" hx-trigger="load" hx-swap="innerHTML"></div>{{else}}<div id="workflow-work-body" class="workflow-work-body empty empty-action">No selected phase.</div>{{end}}
   </section>
-  <details class="workflow-actions"><summary>Workflow actions and evidence</summary><div class="card-actions"><button class="btn" data-json-post="/api/workflows/{{.Workflow.ID}}/resume" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app">Resume</button>{{if eq .Workflow.Status "failed"}}<button class="btn btn-primary" data-json-post="/api/workflows/{{.Workflow.ID}}/follow-up" data-redirect-template="/workflows/{id}">Follow-up run</button>{{end}}<button class="btn btn-danger" data-json-post="/api/workflows/{{.Workflow.ID}}/stop" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app">Stop</button></div><div class="evidence-grid"><section><h3>Approved memory used</h3>{{if .MemoryError}}<div class="empty empty-error">{{.MemoryError}}</div>{{else if .Memory.Markdown}}<div class="card-meta">{{len .Memory.Files}} file(s) from {{.Memory.Root}}</div><pre class="doc-box">{{.Memory.Markdown}}</pre>{{else}}<div class="empty empty-action">No approved markdown memory found for this workflow's project namespace.</div>{{end}}</section><section class="memory-review"><h3>Memory update review</h3>{{if .MemoryUpdateError}}<div class="empty empty-error">{{.MemoryUpdateError}}</div>{{end}}{{if .MemoryUpdate}}<div class="memory-proposal"><div class="memory-proposal-head"><div><span class="eyebrow">Proposal #{{.MemoryUpdate.ID}}</span><h4>Durable project memory</h4></div><span class="chip chip-{{.MemoryUpdate.Status}}">{{.MemoryUpdate.Status}}</span></div><dl class="fact-list"><div><dt>Destination path</dt><dd>{{if .MemoryUpdate.MemoryPath}}{{.MemoryUpdate.MemoryPath}}{{else}}Pending acceptance; no approved file has been written.{{end}}</dd></div><div><dt>Reviewer comment</dt><dd>{{if .MemoryUpdate.ReviewerComment}}{{.MemoryUpdate.ReviewerComment}}{{else}}No reviewer comment yet.{{end}}</dd></div></dl><div class="section-title-row"><h3>Proposal markdown</h3><span class="chip chip-review">review before write</span></div><pre class="doc-box memory-markdown">{{.MemoryUpdate.ProposalMarkdown}}</pre><div class="memory-action-zone"><div class="card-actions"><button class="btn btn-primary" data-json-post="/api/workflows/{{.Workflow.ID}}/memory-update/accept" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app">Accept and write memory</button><button class="btn btn-danger" data-json-post="/api/workflows/{{.Workflow.ID}}/memory-update/reject" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app">Reject proposal</button></div><form data-json method="post" action="/api/workflows/{{.Workflow.ID}}/memory-update/revise" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app"><div class="field"><label>Revision comment</label><textarea name="comment" required placeholder="What should change before this becomes approved memory?"></textarea></div><button class="btn">Revise with comment</button></form></div></div>{{else}}<form class="memory-proposal" data-json method="post" action="/api/workflows/{{.Workflow.ID}}/memory-update" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app"><h4>Create a reviewable memory proposal</h4><p class="hint">Nothing is written to approved memory until you accept the generated markdown.</p><div class="field"><label>Feedback for memory</label><textarea name="feedback" placeholder="What durable context should be remembered from this workflow?"></textarea></div><button class="btn btn-primary">Create memory update proposal</button></form>{{end}}</section></div></details>
+  <details class="workflow-actions"><summary>Workflow actions and evidence</summary><div class="card-actions"><button class="btn" data-json-post="/api/workflows/{{.Workflow.ID}}/resume" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app">Resume</button>{{if eq .Workflow.Status "failed"}}<button class="btn btn-primary" data-json-post="/api/workflows/{{.Workflow.ID}}/follow-up" data-redirect-template="/workflows/{id}">Follow-up run</button>{{end}}<button class="btn btn-danger" data-json-post="/api/workflows/{{.Workflow.ID}}/stop" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-target="#app">Stop</button></div></details>
 </div>
 {{end}}
 
@@ -230,10 +224,10 @@ What this phase does.</textarea></div>
   <div class="page-header command-header"><div><p class="eyebrow">Draft Studio</p><h2>Explore intent before it becomes a spec</h2><p class="hint">Choose a project, steer the assistant through goals, constraints, and phase shape, then save only when the markdown matches your intent.</p></div></div>
   <div class="builder-start-grid"><form class="panel-form builder-start-form" data-json method="post" action="/api/spec-drafts" data-redirect-template="/spec-builder/{id}">
     <h3>Start a draft</h3>
-    <div class="field"><label>Project</label><select name="project_id" required>{{range .Projects}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select><p class="hint">Approved memory from this project's namespace is used as context.</p></div>
+    <div class="field"><label>Project</label><select name="project_id" required>{{range .Projects}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select></div>
     <div class="field"><label>What intent should we explore?</label><textarea name="description" required placeholder="Describe the goal, constraints, open questions, evidence needed, and possible phases."></textarea><p class="hint">Use the conversation to steer the draft; for runnable work, ask for visible ## Phase N: headings before saving.</p></div>
     <button class="btn btn-primary">Start draft</button>
-  </form><aside class="context-panel"><h3>How Draft Studio helps</h3><dl class="fact-list"><div><dt>Input</dt><dd>Your project, initial intent, and approved memory.</dd></div><div><dt>Exploration</dt><dd>Steer goals, scope, constraints, evidence, and phase boundaries in conversation.</dd></div><div><dt>Safe point</dt><dd>The draft is not executable backlog work until you save it as a spec.</dd></div></dl></aside></div>
+  </form><aside class="context-panel"><h3>How Draft Studio helps</h3><dl class="fact-list"><div><dt>Input</dt><dd>Your project and initial intent.</dd></div><div><dt>Exploration</dt><dd>Steer goals, scope, constraints, evidence, and phase boundaries in conversation.</dd></div><div><dt>Safe point</dt><dd>The draft is not executable backlog work until you save it as a spec.</dd></div></dl></aside></div>
   {{if .Drafts}}<div class="group-label">Resume active drafts</div><div class="worklist">{{range .Drafts}}<article class="work-row"><div class="work-main"><a class="work-title" href="/spec-builder/{{.ID}}" hx-get="/spec-builder/{{.ID}}/fragment" hx-target="#app" hx-push-url="/spec-builder/{{.ID}}">{{.Title}}</a><div class="work-meta">updated {{datetime .UpdatedAt}}</div></div><div class="work-signals"><span class="chip chip-{{.Status}}">{{.Status}}</span></div><div class="work-next"><a class="btn btn-primary" href="/spec-builder/{{.ID}}" hx-get="/spec-builder/{{.ID}}/fragment" hx-target="#app" hx-push-url="/spec-builder/{{.ID}}">Continue</a></div></article>{{end}}</div>{{else}}<div class="empty empty-action">No active drafts. Start in Draft Studio to explore and refine intent before it enters the backlog.</div>{{end}}
 </div>
 {{end}}
@@ -246,7 +240,6 @@ What this phase does.</textarea></div>
   <div class="page-header spec-hero"><div><p class="eyebrow">Draft #{{.Draft.ID}}</p><h2>{{.Draft.Title}}</h2><div class="card-meta">{{if .HasProject}}{{.Project.Name}} · {{end}}{{.Draft.Status}} · updated {{datetime .Draft.UpdatedAt}}</div></div><div class="card-actions"><button class="btn btn-primary" data-json-post="/api/spec-drafts/{{.Draft.ID}}/save" data-body='{"title":""}' data-redirect-template="/specs/{spec_id}">Save as spec</button><button class="btn btn-danger" data-json-delete="/api/spec-drafts/{{.Draft.ID}}" data-redirect="/backlog">Abandon</button></div></div>
   <div class="builder-status-slab"><span class="chip chip-{{.Draft.Status}}">{{.Draft.Status}}</span><strong>Steer the assistant until the intent, scope, and phases are ready to save as a spec.</strong><span class="hint">Streaming errors remain in the page error region and chat.</span></div>
   <div class="spec-builder-layout"><section class="spec-builder-chat panel-form"><div class="section-title-row"><h3>Draft Studio conversation</h3><span class="chip chip-streaming">live draft</span></div><div id="draft-messages" class="chat-messages">{{template "draftMessages" .}}</div><div id="draft-stream" class="chat-msg-streaming"></div><form data-json data-draft-message method="post" action="/api/spec-drafts/{{.Draft.ID}}/message"><div class="chat-input-row"><textarea class="chat-textarea" name="content" required placeholder="Steer the draft with goals, constraints, corrections, or clearer phases…"></textarea><button class="btn btn-primary">Send</button></div></form></section><aside class="spec-preview-pane"><div class="section-title-row"><h3>Latest generated spec preview</h3><span class="chip chip-pending">review before save</span></div><pre id="draft-preview" class="doc-box spec-doc">{{if .Preview}}{{.Preview}}{{else}}Steer Draft Studio to produce a full markdown spec preview. Include ## Phase N: headings when the work should become executable.{{end}}</pre></aside></div>
-  <details class="section memory-details"><summary>Approved memory used</summary>{{if .MemoryError}}<div class="empty empty-error">{{.MemoryError}}</div>{{else if .Memory.Markdown}}<div class="card-meta">{{len .Memory.Files}} file(s) from {{.Memory.Root}}</div><pre class="doc-box">{{.Memory.Markdown}}</pre>{{else}}<div class="empty empty-action">No project memory loaded for this draft.</div>{{end}}</details>
 </div>
 {{end}}
 
@@ -582,12 +575,8 @@ func (s *Server) handleUIBacklogCreateProject(w http.ResponseWriter, r *http.Req
 	}
 	name := strings.TrimSpace(r.FormValue("name"))
 	repoPath := strings.TrimSpace(r.FormValue("repo_path"))
-	memoryNamespace := strings.TrimSpace(r.FormValue("memory_namespace"))
-	if memoryNamespace == "" {
-		memoryNamespace = name
-	}
 
-	if _, err := db.CreateProject(r.Context(), s.pool, name, repoPath, memoryNamespace); err != nil {
+	if _, err := db.CreateProject(r.Context(), s.pool, name, repoPath); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -661,25 +650,7 @@ func (s *Server) handleUIBacklogCreateWorkflow(w http.ResponseWriter, r *http.Re
 
 type uiRepoItem struct {
 	discover.Repo
-	Imported        bool
-	MemoryNamespace string
-}
-
-type uiProjectRow struct {
-	db.Project
-	MemoryState string
-	MemoryClass string
-}
-
-func projectMemoryState(repoPath string, p db.Project) (string, string) {
-	mem, err := memory.LoadApproved(repoPath, p.MemoryNamespace, nil)
-	if err != nil {
-		return "memory error", "error"
-	}
-	if strings.TrimSpace(mem.Markdown) == "" {
-		return "no approved memory", "pending"
-	}
-	return fmt.Sprintf("%d memory file(s)", len(mem.Files)), "accepted"
+	Imported bool
 }
 
 func (s *Server) handleUIProjectsFragment(w http.ResponseWriter, r *http.Request) {
@@ -688,12 +659,7 @@ func (s *Server) handleUIProjectsFragment(w http.ResponseWriter, r *http.Request
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	gitRoot, memoryRepoPath, _ := s.runtimeSettings()
-	projectRows := make([]uiProjectRow, 0, len(projects))
-	for _, p := range projects {
-		state, class := projectMemoryState(memoryRepoPath, p)
-		projectRows = append(projectRows, uiProjectRow{Project: p, MemoryState: state, MemoryClass: class})
-	}
+	gitRoot, _ := s.runtimeSettings()
 	var repos []uiRepoItem
 	var discoverErr string
 	if r.URL.Query().Get("discover") == "1" {
@@ -707,17 +673,16 @@ func (s *Server) handleUIProjectsFragment(w http.ResponseWriter, r *http.Request
 				byPath[p.RepoPath] = p
 			}
 			for _, repo := range found {
-				p, imported := byPath[repo.Path]
-				repos = append(repos, uiRepoItem{Repo: repo, Imported: imported, MemoryNamespace: p.MemoryNamespace})
+				_, imported := byPath[repo.Path]
+				repos = append(repos, uiRepoItem{Repo: repo, Imported: imported})
 			}
 		}
 	}
 	data := struct {
-		Projects       []uiProjectRow
-		Repos          []uiRepoItem
-		DiscoverErr    string
-		MemoryRepoPath string
-	}{projectRows, repos, discoverErr, memoryRepoPath}
+		Projects    []db.Project
+		Repos       []uiRepoItem
+		DiscoverErr string
+	}{projects, repos, discoverErr}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := uiTemplates.ExecuteTemplate(w, "projects", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -731,11 +696,7 @@ func (s *Server) handleUIProjectCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	name := strings.TrimSpace(r.FormValue("name"))
 	repoPath := strings.TrimSpace(r.FormValue("repo_path"))
-	memoryNamespace := strings.TrimSpace(r.FormValue("memory_namespace"))
-	if memoryNamespace == "" {
-		memoryNamespace = name
-	}
-	if _, err := db.CreateProject(r.Context(), s.pool, name, repoPath, memoryNamespace); err != nil {
+	if _, err := db.CreateProject(r.Context(), s.pool, name, repoPath); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -775,11 +736,9 @@ func (s *Server) handleUIProjectUpdate(w http.ResponseWriter, r *http.Request, i
 	}
 	name := strings.TrimSpace(r.FormValue("name"))
 	repoPath := strings.TrimSpace(r.FormValue("repo_path"))
-	memoryNamespace := strings.TrimSpace(r.FormValue("memory_namespace"))
 	if _, err := db.UpdateProject(r.Context(), s.pool, id, db.UpdateProjectParams{
-		Name:            &name,
-		RepoPath:        &repoPath,
-		MemoryNamespace: &memoryNamespace,
+		Name:     &name,
+		RepoPath: &repoPath,
 	}); errors.Is(err, db.ErrNotFound) {
 		http.NotFound(w, r)
 		return
@@ -812,18 +771,10 @@ func (s *Server) handleUIProjectFragment(w http.ResponseWriter, r *http.Request,
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	_, memoryRepoPath, _ := s.runtimeSettings()
-	mem, memErr := memory.LoadApproved(memoryRepoPath, p.MemoryNamespace, nil)
-	memErrMsg := ""
-	if memErr != nil {
-		memErrMsg = memErr.Error()
-	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := uiTemplates.ExecuteTemplate(w, "projectDetail", struct {
-		Project     db.Project
-		Memory      memory.Slice
-		MemoryError string
-	}{p, mem, memErrMsg}); err != nil {
+		Project db.Project
+	}{p}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -888,23 +839,10 @@ func (s *Server) handleUIWorkflowFragment(w http.ResponseWriter, r *http.Request
 	}
 	sp, _ := db.GetSpec(r.Context(), s.pool, wf.SpecID)
 	proj, _ := db.GetProject(r.Context(), s.pool, sp.ProjectID)
-	_, memoryRepoPath, _ := s.runtimeSettings()
-	mem, memErr := memory.LoadApproved(memoryRepoPath, proj.MemoryNamespace, nil)
-	memErrMsg := ""
-	if memErr != nil {
-		memErrMsg = memErr.Error()
-	}
 	phases, err := db.ListPhasesByWorkflow(r.Context(), s.pool, id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
-	}
-	var memUpdate *db.MemoryUpdateJob
-	var memUpdateErr string
-	if job, err := db.GetLatestMemoryUpdateJobByWorkflow(r.Context(), s.pool, id); err == nil {
-		memUpdate = &job
-	} else if !errors.Is(err, db.ErrNotFound) {
-		memUpdateErr = err.Error()
 	}
 	initialPhase, hasInitialPhase := selectInitialPhase(phases)
 	currentPhaseName := "no phase"
@@ -913,18 +851,14 @@ func (s *Server) handleUIWorkflowFragment(w http.ResponseWriter, r *http.Request
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := uiTemplates.ExecuteTemplate(w, "workflowDetail", struct {
-		Workflow          db.Workflow
-		Spec              db.Spec
-		Project           db.Project
-		Phases            []db.Phase
-		InitialPhase      db.Phase
-		HasInitialPhase   bool
-		CurrentPhaseName  string
-		Memory            memory.Slice
-		MemoryError       string
-		MemoryUpdate      *db.MemoryUpdateJob
-		MemoryUpdateError string
-	}{wf, sp, proj, phases, initialPhase, hasInitialPhase, currentPhaseName, mem, memErrMsg, memUpdate, memUpdateErr}); err != nil {
+		Workflow         db.Workflow
+		Spec             db.Spec
+		Project          db.Project
+		Phases           []db.Phase
+		InitialPhase     db.Phase
+		HasInitialPhase  bool
+		CurrentPhaseName string
+	}{wf, sp, proj, phases, initialPhase, hasInitialPhase, currentPhaseName}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -1051,32 +985,22 @@ func (s *Server) handleUISpecBuilderDetailFragment(w http.ResponseWriter, r *htt
 	var msgs []uiChatMessage
 	_ = json.Unmarshal(draft.Messages, &msgs)
 	preview := authoring.ExtractFinalSpec(draft.Messages)
-	var mem memory.Slice
-	var memErrMsg string
 	var proj db.Project
 	hasProject := false
 	if draft.ProjectID != nil {
 		if p, err := db.GetProject(r.Context(), s.pool, *draft.ProjectID); err == nil {
 			proj = p
 			hasProject = true
-			_, memoryRepoPath, _ := s.runtimeSettings()
-			if loaded, err := memory.LoadApproved(memoryRepoPath, proj.MemoryNamespace, nil); err == nil {
-				mem = loaded
-			} else {
-				memErrMsg = err.Error()
-			}
 		}
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := uiTemplates.ExecuteTemplate(w, "builderDetail", struct {
-		Draft       db.SpecDraft
-		Messages    []uiChatMessage
-		Preview     string
-		Project     db.Project
-		HasProject  bool
-		Memory      memory.Slice
-		MemoryError string
-	}{draft, msgs, preview, proj, hasProject, mem, memErrMsg}); err != nil {
+		Draft      db.SpecDraft
+		Messages   []uiChatMessage
+		Preview    string
+		Project    db.Project
+		HasProject bool
+	}{draft, msgs, preview, proj, hasProject}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }

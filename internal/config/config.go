@@ -25,7 +25,6 @@ type Config struct {
 	ReviewAPIKey               string  `yaml:"review_api_key"`
 	ReviewModel                string  `yaml:"review_model"`
 	GitRoot                    string  `yaml:"git_root"`
-	MemoryRepoPath             string  `yaml:"memory_repo_path"`
 }
 
 func Load(path string) (Config, error) {
@@ -56,7 +55,6 @@ func RuntimeSettingKeys() map[string]bool {
 		"review_api_key":                true,
 		"review_model":                  true,
 		"git_root":                      true,
-		"memory_repo_path":              true,
 	}
 }
 
@@ -74,7 +72,6 @@ func RuntimeDefaults(c Config) map[string]string {
 		"review_api_key":                c.ReviewAPIKey,
 		"review_model":                  c.ReviewModel,
 		"git_root":                      c.GitRoot,
-		"memory_repo_path":              c.MemoryRepoPath,
 	}
 }
 
@@ -117,8 +114,6 @@ func ApplyRuntimeSettings(c *Config, values map[string]string) error {
 			c.ReviewModel = v
 		case "git_root":
 			c.GitRoot = expandHome(v)
-		case "memory_repo_path":
-			c.MemoryRepoPath = expandHome(v)
 		}
 	}
 	setDefaults(c)
@@ -152,9 +147,6 @@ func setDefaults(c *Config) {
 	}
 	if c.GitRoot != "" {
 		c.GitRoot = expandHome(c.GitRoot)
-	}
-	if c.MemoryRepoPath != "" {
-		c.MemoryRepoPath = expandHome(c.MemoryRepoPath)
 	}
 }
 

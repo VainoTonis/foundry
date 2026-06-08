@@ -73,7 +73,6 @@ func main() {
 		MaxConcurrentWorkflows:     runtime.MaxConcurrentWorkflows,
 		CerberusProfile:            runtime.CerberusProfile,
 		CerberusCallbackURL:        fmt.Sprintf("http://localhost:%d/api/cerberus/events", cfg.ServerPort),
-		MemoryRepoPath:             runtime.MemoryRepoPath,
 	}
 	runner := workflow.NewRunner(pool, cerb, runnerCfg, eventHub)
 
@@ -81,7 +80,7 @@ func main() {
 	go authoring.RecoverOrphanDrafts(context.Background(), pool, cerb)
 
 	// API server
-	srv := api.NewServer(pool, runner, cerb, eventHub, runtime.DefaultWorkflowBudgetUSD, runtime.GitRoot, runtime.MemoryRepoPath, cfgPath, runtime.CerberusProfile, cfg.ServerPort)
+	srv := api.NewServer(pool, runner, cerb, eventHub, runtime.DefaultWorkflowBudgetUSD, runtime.GitRoot, cfgPath, runtime.CerberusProfile, cfg.ServerPort)
 
 	// serve API, server-rendered UI, and static assets
 	mux := http.NewServeMux()

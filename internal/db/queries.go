@@ -12,11 +12,10 @@ import (
 )
 
 type Project struct {
-	ID              int64     `json:"id"`
-	Name            string    `json:"name"`
-	RepoPath        string    `json:"repo_path"`
-	MemoryNamespace string    `json:"memory_namespace"`
-	CreatedAt       time.Time `json:"created_at"`
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	RepoPath  string    `json:"repo_path"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type Spec struct {
@@ -70,17 +69,6 @@ type PhaseLog struct {
 	PhaseID int64     `json:"phase_id"`
 	Line    string    `json:"line"`
 	Ts      time.Time `json:"ts"`
-}
-
-type MemoryUpdateJob struct {
-	ID               int64     `json:"id"`
-	WorkflowID       int64     `json:"workflow_id"`
-	Status           string    `json:"status"`
-	ProposalMarkdown string    `json:"proposal_markdown"`
-	ReviewerComment  string    `json:"reviewer_comment"`
-	MemoryPath       string    `json:"memory_path"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 type KnownCerberusSession struct {
@@ -154,17 +142,17 @@ func ListAppSettings(ctx context.Context, pool *pgxpool.Pool) ([]AppSetting, err
 
 // --- Projects ---
 
-func CreateProject(ctx context.Context, pool *pgxpool.Pool, name, repoPath, memoryNamespace string) (Project, error) {
+func CreateProject(ctx context.Context, pool *pgxpool.Pool, name, repoPath string) (Project, error) {
 	var p Project
 	err := pool.QueryRow(ctx,
-		`INSERT INTO projects (name, repo_path, memory_namespace) VALUES ($1, $2, $3) RETURNING id, name, repo_path, memory_namespace, created_at`,
-		name, repoPath, memoryNamespace,
-	).Scan(&p.ID, &p.Name, &p.RepoPath, &p.MemoryNamespace, &p.CreatedAt)
+		`INSERT INTO projects (name, repo_path) VALUES ($1, $2) RETURNING id, name, repo_path, created_at`,
+		name, repoPath,
+	).Scan(&p.ID, &p.Name, &p.RepoPath, &p.CreatedAt)
 	return p, err
 }
 
 func ListProjects(ctx context.Context, pool *pgxpool.Pool) ([]Project, error) {
-	rows, err := pool.Query(ctx, `SELECT id, name, repo_path, memory_namespace, created_at FROM projects ORDER BY id`)
+	rows, err := pool.Query(ctx, `SELECT id, name, repo_path, created_at FROM projects ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +160,7 @@ func ListProjects(ctx context.Context, pool *pgxpool.Pool) ([]Project, error) {
 	var out []Project
 	for rows.Next() {
 		var p Project
-		if err := rows.Scan(&p.ID, &p.Name, &p.RepoPath, &p.MemoryNamespace, &p.CreatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.RepoPath, &p.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -183,8 +171,8 @@ func ListProjects(ctx context.Context, pool *pgxpool.Pool) ([]Project, error) {
 func GetProject(ctx context.Context, pool *pgxpool.Pool, id int64) (Project, error) {
 	var p Project
 	err := pool.QueryRow(ctx,
-		`SELECT id, name, repo_path, memory_namespace, created_at FROM projects WHERE id = $1`, id,
-	).Scan(&p.ID, &p.Name, &p.RepoPath, &p.MemoryNamespace, &p.CreatedAt)
+		`SELECT id, name, repo_path, created_at FROM projects WHERE id = $1`, id,
+	).Scan(&p.ID, &p.Name, &p.RepoPath, &p.CreatedAt)
 	if err == pgx.ErrNoRows {
 		return p, ErrNotFound
 	}
@@ -192,9 +180,8 @@ func GetProject(ctx context.Context, pool *pgxpool.Pool, id int64) (Project, err
 }
 
 type UpdateProjectParams struct {
-	Name            *string
-	RepoPath        *string
-	MemoryNamespace *string
+	Name     *string
+	RepoPath *string
 }
 
 func UpdateProject(ctx context.Context, pool *pgxpool.Pool, id int64, p UpdateProjectParams) (Project, error) {
@@ -211,19 +198,14 @@ func UpdateProject(ctx context.Context, pool *pgxpool.Pool, id int64, p UpdatePr
 		args = append(args, *p.RepoPath)
 		n++
 	}
-	if p.MemoryNamespace != nil {
-		set = append(set, "memory_namespace = $"+itoa(n))
-		args = append(args, *p.MemoryNamespace)
-		n++
-	}
 	if len(set) == 0 {
 		return GetProject(ctx, pool, id)
 	}
 	args = append(args, id)
 	q := `UPDATE projects SET ` + joinComma(set) + ` WHERE id = $` + itoa(n) +
-		` RETURNING id, name, repo_path, memory_namespace, created_at`
+		` RETURNING id, name, repo_path, created_at`
 	var out Project
-	err := pool.QueryRow(ctx, q, args...).Scan(&out.ID, &out.Name, &out.RepoPath, &out.MemoryNamespace, &out.CreatedAt)
+	err := pool.QueryRow(ctx, q, args...).Scan(&out.ID, &out.Name, &out.RepoPath, &out.CreatedAt)
 	if err == pgx.ErrNoRows {
 		return out, ErrNotFound
 	}
@@ -424,88 +406,6 @@ func WorkflowTotalCost(ctx context.Context, pool *pgxpool.Pool, workflowID int64
 		`SELECT COALESCE(SUM(cost_usd), 0) FROM phases WHERE workflow_id = $1`, workflowID,
 	).Scan(&total)
 	return total, err
-}
-
-// --- Memory update jobs ---
-
-func scanMemoryUpdateJob(row pgx.Row) (MemoryUpdateJob, error) {
-	var j MemoryUpdateJob
-	err := row.Scan(&j.ID, &j.WorkflowID, &j.Status, &j.ProposalMarkdown, &j.ReviewerComment, &j.MemoryPath, &j.CreatedAt, &j.UpdatedAt)
-	if err == pgx.ErrNoRows {
-		return j, ErrNotFound
-	}
-	return j, err
-}
-
-func CreateMemoryUpdateJob(ctx context.Context, pool *pgxpool.Pool, workflowID int64, proposalMarkdown, comment string) (MemoryUpdateJob, error) {
-	return scanMemoryUpdateJob(pool.QueryRow(ctx,
-		`INSERT INTO memory_update_jobs (workflow_id, proposal_markdown, reviewer_comment)
-		 VALUES ($1, $2, $3)
-		 RETURNING id, workflow_id, status, proposal_markdown, reviewer_comment, memory_path, created_at, updated_at`,
-		workflowID, proposalMarkdown, comment,
-	))
-}
-
-func GetMemoryUpdateJob(ctx context.Context, pool *pgxpool.Pool, id int64) (MemoryUpdateJob, error) {
-	return scanMemoryUpdateJob(pool.QueryRow(ctx,
-		`SELECT id, workflow_id, status, proposal_markdown, reviewer_comment, memory_path, created_at, updated_at
-		 FROM memory_update_jobs WHERE id = $1`, id,
-	))
-}
-
-func ListMemoryUpdateJobs(ctx context.Context, pool *pgxpool.Pool) ([]MemoryUpdateJob, error) {
-	rows, err := pool.Query(ctx,
-		`SELECT id, workflow_id, status, proposal_markdown, reviewer_comment, memory_path, created_at, updated_at
-		 FROM memory_update_jobs ORDER BY id`,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []MemoryUpdateJob
-	for rows.Next() {
-		var j MemoryUpdateJob
-		if err := rows.Scan(&j.ID, &j.WorkflowID, &j.Status, &j.ProposalMarkdown, &j.ReviewerComment, &j.MemoryPath, &j.CreatedAt, &j.UpdatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, j)
-	}
-	return out, rows.Err()
-}
-
-func GetLatestMemoryUpdateJobByWorkflow(ctx context.Context, pool *pgxpool.Pool, workflowID int64) (MemoryUpdateJob, error) {
-	return scanMemoryUpdateJob(pool.QueryRow(ctx,
-		`SELECT id, workflow_id, status, proposal_markdown, reviewer_comment, memory_path, created_at, updated_at
-		 FROM memory_update_jobs WHERE workflow_id = $1 ORDER BY id DESC LIMIT 1`, workflowID,
-	))
-}
-
-type UpdateMemoryUpdateJobParams struct {
-	Status           *string
-	ProposalMarkdown *string
-	ReviewerComment  *string
-	MemoryPath       *string
-}
-
-func UpdateMemoryUpdateJob(ctx context.Context, pool *pgxpool.Pool, id int64, p UpdateMemoryUpdateJobParams) (MemoryUpdateJob, error) {
-	set := []string{"updated_at = NOW()"}
-	args := []any{}
-	n := 1
-	maybeStr := func(field string, v *string) {
-		if v != nil {
-			set = append(set, field+" = $"+itoa(n))
-			args = append(args, *v)
-			n++
-		}
-	}
-	maybeStr("status", p.Status)
-	maybeStr("proposal_markdown", p.ProposalMarkdown)
-	maybeStr("reviewer_comment", p.ReviewerComment)
-	maybeStr("memory_path", p.MemoryPath)
-	args = append(args, id)
-	q := `UPDATE memory_update_jobs SET ` + joinComma(set) + ` WHERE id = $` + itoa(n) +
-		` RETURNING id, workflow_id, status, proposal_markdown, reviewer_comment, memory_path, created_at, updated_at`
-	return scanMemoryUpdateJob(pool.QueryRow(ctx, q, args...))
 }
 
 // --- Phases ---

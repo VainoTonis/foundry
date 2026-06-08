@@ -12,18 +12,16 @@ type Service struct {
 	pool              *pgxpool.Pool
 	cerb              *cerberus.Client
 	callbackURL       string
-	memoryRepoPath    string
 	writeProfileFile  func(ctx context.Context, session string) (string, error)
 	removeProfileFile func(session string)
 }
 
 // NewService creates a new Service with the required dependencies.
-func NewService(pool *pgxpool.Pool, cerb *cerberus.Client, callbackURL, memoryRepoPath string, writeProfileFile func(ctx context.Context, session string) (string, error), removeProfileFile func(session string)) *Service {
+func NewService(pool *pgxpool.Pool, cerb *cerberus.Client, callbackURL string, writeProfileFile func(ctx context.Context, session string) (string, error), removeProfileFile func(session string)) *Service {
 	return &Service{
 		pool:              pool,
 		cerb:              cerb,
 		callbackURL:       callbackURL,
-		memoryRepoPath:    memoryRepoPath,
 		writeProfileFile:  writeProfileFile,
 		removeProfileFile: removeProfileFile,
 	}

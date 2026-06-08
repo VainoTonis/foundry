@@ -117,8 +117,6 @@ func (s *Server) handleWorkflow(w http.ResponseWriter, r *http.Request) {
 		jsonOK(w, map[string]string{"status": "stopping"}, http.StatusOK)
 	case suffix == "follow-up" && r.Method == http.MethodPost:
 		s.handleWorkflowFollowUp(w, r, id)
-	case strings.HasPrefix(suffix, "memory-update"):
-		s.handleWorkflowMemoryUpdate(w, r, id, strings.Trim(strings.TrimPrefix(suffix, "memory-update"), "/"))
 	case suffix == "stream":
 		s.streamWorkflow(w, r, id)
 	default:

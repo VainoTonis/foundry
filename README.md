@@ -6,14 +6,14 @@ Here is intent. Here is agent work. Here is evidence. Here is decision.
 
 Foundry is where ideas get turned into code. You write a spec, define phases, and Foundry runs them overnight via [cerberus](https://github.com/VainoTonis/cerberus) — automatically reviewing output, applying commits, and recording every decision made along the way.
 
-The durable project memory lives in the [intent wiki](./intent/README.md), which is plain Markdown and Obsidian-friendly.
+Durable product intent lives in the [intent wiki](./intent/README.md), which is plain Markdown and Obsidian-friendly.
 
 ## What it does
 
 - **Spec backlog** — dump ideas as markdown specs, they auto-queue and run as PoC
 - **Two tracks** — PoC (fast, prove it works) and Polish (proper, tested, maintainable)
 - **Automated phase loop** — cerberus runs each phase, an LLM reviews the diff, commits get applied, next phase starts
-- **Decision memory** — every phase records what changed, why, and which files were touched
+- **Decision records** — every phase records what changed, why, and which files were touched
 
 ## How it works
 
@@ -52,7 +52,6 @@ Minimum useful config:
 
 - `db_url` points to PostgreSQL.
 - `git_root` points at the directory to scan for target repos.
-- `memory_repo_path` points at a private git repo for approved Markdown memory.
 - `cerberus_bin` points at the Cerberus CLI, or `cerberus` is on `PATH`.
 
 On startup, Foundry loads config, runs migrations, connects to PostgreSQL, and serves the UI/API.
@@ -61,7 +60,6 @@ On startup, Foundry loads config, runs migrations, connects to PostgreSQL, and s
 
 - [Install](./docs/install.md)
 - [Self-hosting](./docs/self-hosting.md)
-- [Private memory repo](./docs/private-memory.md)
 - [Cerberus integration](./docs/cerberus.md)
 - [Troubleshooting](./docs/troubleshooting.md)
 

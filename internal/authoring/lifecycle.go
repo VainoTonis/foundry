@@ -9,7 +9,6 @@ import (
 
 	"github.com/tonis2/foundry/internal/cerberus"
 	"github.com/tonis2/foundry/internal/db"
-	"github.com/tonis2/foundry/internal/memory"
 )
 
 // CreateDraftAndStartChat creates a spec draft and begins a chat session with cerberus.
@@ -18,10 +17,6 @@ func (svc *Service) CreateDraftAndStartChat(ctx context.Context, params CreateDr
 	if params.ProjectID == nil {
 		return nil, fmt.Errorf("project_id is required")
 	}
-	if strings.TrimSpace(svc.memoryRepoPath) == "" {
-		return nil, fmt.Errorf("memory repo path is not configured")
-	}
-
 	proj, err := db.GetProject(ctx, svc.pool, *params.ProjectID)
 	if err != nil {
 		return nil, fmt.Errorf("get project: %w", err)
@@ -47,13 +42,7 @@ func (svc *Service) CreateDraftAndStartChat(ctx context.Context, params CreateDr
 	if params.Description != "" {
 		initialPrompt += "\n\nThe user's request:\n" + params.Description
 	}
-	initialPrompt += "\n\nProject name: " + proj.Name + "\nThe selected project's repository is mounted at /workspace inside your container. Use project memory namespace " + proj.MemoryNamespace + "."
-
-	if mem, err := memory.LoadApproved(svc.memoryRepoPath, proj.MemoryNamespace, nil); err == nil && mem.Markdown != "" {
-		initialPrompt = mem.Markdown + "\n\n" + initialPrompt
-	} else if err != nil {
-		log.Printf("spec-builder draft %d: load memory: %v", draft.ID, err)
-	}
+	initialPrompt += "\n\nProject name: " + proj.Name + "\nThe selected project's repository is mounted at /workspace inside your container."
 
 	go svc.runChat(context.Background(), draft.ID, session, initialPrompt, projectRepoPath)
 
@@ -143,14 +132,12 @@ func (svc *Service) SaveDraft(ctx context.Context, params SaveDraftParams) (int6
 	}
 
 	var projID int64
-	var proj *db.Project
 	if draft.ProjectID != nil {
 		projID = *draft.ProjectID
 		p, err := db.GetProject(ctx, svc.pool, projID)
 		if err != nil {
 			return 0, fmt.Errorf("get project: %w", err)
 		}
-		proj = &p
 		svc.cerb.SetRepoPath(p.RepoPath)
 	}
 
@@ -173,12 +160,6 @@ func (svc *Service) SaveDraft(ctx context.Context, params SaveDraftParams) (int6
 	}
 	if title == "" {
 		title = draft.Title
-	}
-
-	if proj != nil {
-		if _, err := memory.WriteDraftSpecMarkdown(svc.memoryRepoPath, proj.MemoryNamespace, draft.ID, title, specContent); err != nil {
-			return 0, fmt.Errorf("write spec to memory: %w", err)
-		}
 	}
 
 	sp, err := db.CreateSpec(ctx, svc.pool, projID, title, specContent, []byte("[]"))

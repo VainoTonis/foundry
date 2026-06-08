@@ -1,12 +1,15 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/tonis2/foundry/internal/db"
 )
 
 // JSON response helpers
@@ -128,4 +131,17 @@ func truncateString(s string, max int) string {
 		return s[:max]
 	}
 	return s[:max-len(marker)] + marker
+}
+
+func (s *Server) workflowProject(ctx context.Context, workflowID int64) (db.Workflow, db.Spec, db.Project, error) {
+	wf, err := db.GetWorkflow(ctx, s.pool, workflowID)
+	if err != nil {
+		return wf, db.Spec{}, db.Project{}, err
+	}
+	sp, err := db.GetSpec(ctx, s.pool, wf.SpecID)
+	if err != nil {
+		return wf, sp, db.Project{}, err
+	}
+	proj, err := db.GetProject(ctx, s.pool, sp.ProjectID)
+	return wf, sp, proj, err
 }

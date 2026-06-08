@@ -25,7 +25,6 @@ type Server struct {
 	defaultBudget   float64
 	settingsMu      sync.RWMutex
 	gitRoot         string
-	memoryRepoPath  string
 	cfgPath         string
 	serverPort      int
 	cerberusProfile string
@@ -33,8 +32,8 @@ type Server struct {
 	cerbBuffers     map[string]*cerberusTextBuffer
 }
 
-func NewServer(pool *pgxpool.Pool, runner *workflow.Runner, cerb *cerberus.Client, eventHub *hub.EventHub, defaultBudget float64, gitRoot string, memoryRepoPath string, cfgPath string, cerberusProfile string, serverPort int) *Server {
-	s := &Server{pool: pool, runner: runner, cerb: cerb, eventHub: eventHub, defaultBudget: defaultBudget, gitRoot: gitRoot, memoryRepoPath: memoryRepoPath, cfgPath: cfgPath, serverPort: serverPort, cerberusProfile: cerberusProfile, cerbBuffers: make(map[string]*cerberusTextBuffer)}
+func NewServer(pool *pgxpool.Pool, runner *workflow.Runner, cerb *cerberus.Client, eventHub *hub.EventHub, defaultBudget float64, gitRoot string, cfgPath string, cerberusProfile string, serverPort int) *Server {
+	s := &Server{pool: pool, runner: runner, cerb: cerb, eventHub: eventHub, defaultBudget: defaultBudget, gitRoot: gitRoot, cfgPath: cfgPath, serverPort: serverPort, cerberusProfile: cerberusProfile, cerbBuffers: make(map[string]*cerberusTextBuffer)}
 	s.mux = http.NewServeMux()
 	s.routes()
 	return s
@@ -44,10 +43,10 @@ func (s *Server) callbackURL() string {
 	return fmt.Sprintf("http://localhost:%d/api/cerberus/events", s.serverPort)
 }
 
-func (s *Server) runtimeSettings() (gitRoot, memoryRepoPath, cerberusProfile string) {
+func (s *Server) runtimeSettings() (gitRoot, cerberusProfile string) {
 	s.settingsMu.RLock()
 	defer s.settingsMu.RUnlock()
-	return s.gitRoot, s.memoryRepoPath, s.cerberusProfile
+	return s.gitRoot, s.cerberusProfile
 }
 
 func (s *Server) updateRuntimeSettings(values map[string]string) {
@@ -55,19 +54,12 @@ func (s *Server) updateRuntimeSettings(values map[string]string) {
 	if v, ok := values["git_root"]; ok {
 		s.gitRoot = strings.TrimSpace(v)
 	}
-	if v, ok := values["memory_repo_path"]; ok {
-		s.memoryRepoPath = strings.TrimSpace(v)
-	}
 	if v, ok := values["cerberus_profile"]; ok {
 		s.cerberusProfile = strings.TrimSpace(v)
 	}
-	memoryRepoPath := s.memoryRepoPath
 	cerberusProfile := s.cerberusProfile
 	s.settingsMu.Unlock()
 	if s.runner != nil {
-		if _, ok := values["memory_repo_path"]; ok {
-			s.runner.SetMemoryRepoPath(memoryRepoPath)
-		}
 		if _, ok := values["cerberus_profile"]; ok {
 			s.runner.SetCerberusProfile(cerberusProfile)
 		}
@@ -75,8 +67,8 @@ func (s *Server) updateRuntimeSettings(values map[string]string) {
 }
 
 func (s *Server) loadRuntimeSettings(ctx context.Context) (map[string]string, error) {
-	gitRoot, memoryRepoPath, cerberusProfile := s.runtimeSettings()
-	values := map[string]string{"git_root": gitRoot, "memory_repo_path": memoryRepoPath, "cerberus_profile": cerberusProfile}
+	gitRoot, cerberusProfile := s.runtimeSettings()
+	values := map[string]string{"git_root": gitRoot, "cerberus_profile": cerberusProfile}
 	for key := range runtimeSettingKeys() {
 		setting, err := db.GetAppSetting(ctx, s.pool, key)
 		if err == db.ErrNotFound {
@@ -130,8 +122,6 @@ func (s *Server) routes() {
 
 	s.mux.HandleFunc("/api/workflows", s.handleWorkflows)
 	s.mux.HandleFunc("/api/workflows/", s.handleWorkflow)
-	s.mux.HandleFunc("/api/memory-updates/", s.handleMemoryUpdate)
-
 	s.mux.HandleFunc("/api/phases/", s.handlePhase)
 	s.mux.HandleFunc("/api/settings", s.handleSettings)
 	s.mux.HandleFunc("/api/profiles", s.handleProfiles)

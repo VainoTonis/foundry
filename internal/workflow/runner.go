@@ -15,7 +15,6 @@ import (
 	"github.com/tonis2/foundry/internal/cerberus"
 	"github.com/tonis2/foundry/internal/db"
 	"github.com/tonis2/foundry/internal/hub"
-	"github.com/tonis2/foundry/internal/memory"
 	"github.com/tonis2/foundry/internal/spec"
 )
 
@@ -25,7 +24,6 @@ type Config struct {
 	MaxConcurrentWorkflows     int
 	CerberusProfile            string
 	CerberusCallbackURL        string
-	MemoryRepoPath             string
 }
 
 type Runner struct {
@@ -53,24 +51,11 @@ func (r *Runner) SetCerberusProfile(profile string) {
 	r.mu.Unlock()
 }
 
-func (r *Runner) SetMemoryRepoPath(path string) {
-	r.mu.Lock()
-	r.cfg.MemoryRepoPath = strings.TrimSpace(path)
-	r.mu.Unlock()
-}
-
 func (r *Runner) cerberusProfile() string {
 	r.mu.Lock()
 	profile := r.cfg.CerberusProfile
 	r.mu.Unlock()
 	return profile
-}
-
-func (r *Runner) memoryRepoPath() string {
-	r.mu.Lock()
-	path := r.cfg.MemoryRepoPath
-	r.mu.Unlock()
-	return path
 }
 
 func (r *Runner) Stop(workflowID int64) {
@@ -190,12 +175,6 @@ func (r *Runner) runPhase(
 	prompt := spec.BuildPrompt(globalCtx, phase.Goal, trackOverlay)
 	if phase.AdjustedPrompt != nil && *phase.AdjustedPrompt != "" {
 		prompt = *phase.AdjustedPrompt
-	}
-	memoryRepoPath := r.memoryRepoPath()
-	if mem, err := memory.LoadApproved(memoryRepoPath, proj.MemoryNamespace, extractTags(phase.Goal)); err == nil {
-		prompt = memory.Prepend(mem.Markdown, prompt)
-	} else {
-		log.Printf("phase %d: load memory: %v", phase.ID, err)
 	}
 	prompt = prependRepoRootContext(proj.RepoPath, prompt)
 	return r.execPhase(ctx, wf, proj, phase, prompt, false)
@@ -589,11 +568,10 @@ func (r *Runner) writeProfileFile(ctx context.Context, profileName, session stri
 }
 
 type phaseFeedbackPayload struct {
-	Result          string   `json:"result"`
-	UsefulContext   []string `json:"useful_context"`
-	Problems        []string `json:"problems"`
-	SuggestedMemory string   `json:"suggested_memory"`
-	Confidence      float64  `json:"confidence"`
+	Result        string   `json:"result"`
+	UsefulContext []string `json:"useful_context"`
+	Problems      []string `json:"problems"`
+	Confidence    float64  `json:"confidence"`
 }
 
 func buildPhaseFeedback(verdict, notes string, filesJSON []byte, commitHash string) []byte {
@@ -622,12 +600,9 @@ func buildPhaseFeedback(verdict, notes string, filesJSON []byte, commitHash stri
 			feedback.UsefulContext = append(feedback.UsefulContext, notes)
 		}
 	}
-	if len(feedback.UsefulContext) > 0 {
-		feedback.SuggestedMemory = strings.Join(feedback.UsefulContext, "; ")
-	}
 	b, err := json.Marshal(feedback)
 	if err != nil {
-		return []byte(`{"result":"` + verdict + `","useful_context":[],"problems":["phase feedback marshal failed"],"suggested_memory":"","confidence":0}`)
+		return []byte(`{"result":"` + verdict + `","useful_context":[],"problems":["phase feedback marshal failed"],"confidence":0}`)
 	}
 	return b
 }

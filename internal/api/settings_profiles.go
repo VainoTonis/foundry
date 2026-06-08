@@ -76,7 +76,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 // ---- profiles ----
 
 func (s *Server) writeProfileFile(ctx context.Context, session string) (string, error) {
-	_, _, cerberusProfile := s.runtimeSettings()
+	_, cerberusProfile := s.runtimeSettings()
 	if cerberusProfile == "" {
 		return "", nil
 	}
