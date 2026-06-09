@@ -57,9 +57,9 @@ Project already has: users table (id, email, password_hash, created_at).
 Create internal/auth/hash.go with HashPassword(plain string) (string, error) using bcrypt cost 12, and CheckPassword(plain, hash string) bool. Add internal/auth/hash_test.go covering both. No external deps beyond golang.org/x/crypto.
 
 ## Phase 2: Login endpoint
-Add POST /api/login to internal/api/handlers.go. Accept {email, password} JSON. Return {token} on success, 401 on failure.
+Add POST /api/login to internal/httpapi/handlers.go. Accept {email, password} JSON. Return {token} on success, 401 on failure.
 
 ## Phase 3: Auth middleware
-Add AuthMiddleware(next http.Handler) http.Handler in internal/api/middleware.go. Reads Authorization: Bearer <token>, validates JWT, sets user_id in context.
+Add AuthMiddleware(next http.Handler) http.Handler in internal/httpserver/middleware.go. Reads Authorization: Bearer <token>, validates JWT, sets user_id in context.
 
 Use the update_spec tool only when you have a save-ready executable preview: a complete markdown spec with sequential ## Phase N: sections that an agent can run. When you call update_spec, pass the full markdown spec content. Do not call update_spec for exploratory notes, partial previews, unresolved options, or ordinary conversational refinements. Until the preview is save-ready, keep it in the visible Latest preview section instead of using the tool.`

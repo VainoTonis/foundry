@@ -1,4 +1,4 @@
-package api
+package webui
 
 import (
 	"context"
@@ -8,13 +8,11 @@ import (
 	"html/template"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/tonis2/foundry/internal/authoring"
 	"github.com/tonis2/foundry/internal/db"
-	"github.com/tonis2/foundry/internal/discover"
 )
 
 // ---- server-rendered UI templates and helpers ----
@@ -465,7 +463,7 @@ func selectInitialPhase(phases []db.Phase) (db.Phase, bool) {
 
 type shellData struct{ Page, Fragment string }
 
-func (s *Server) renderShell(w http.ResponseWriter, page, fragment string) {
+func (s *Handler) renderShell(w http.ResponseWriter, page, fragment string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := uiTemplates.ExecuteTemplate(w, "shell", shellData{Page: page, Fragment: fragment}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -474,7 +472,7 @@ func (s *Server) renderShell(w http.ResponseWriter, page, fragment string) {
 
 // ---- UI route handlers ----
 
-func (s *Server) handleUIShell(w http.ResponseWriter, r *http.Request) {
+func (s *Handler) handleUIShell(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
 		return
@@ -482,304 +480,11 @@ func (s *Server) handleUIShell(w http.ResponseWriter, r *http.Request) {
 	s.renderShell(w, "backlog", "/backlog/fragment")
 }
 
-func (s *Server) handleUIBacklogPage(w http.ResponseWriter, r *http.Request) {
-	s.renderShell(w, "backlog", "/backlog/fragment")
-}
-
-func (s *Server) handleUIProjectsPage(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/projects" {
-		http.NotFound(w, r)
-		return
-	}
-	switch r.Method {
-	case http.MethodGet:
-		s.renderShell(w, "projects", "/projects/fragment")
-	case http.MethodPost:
-		s.handleUIProjectCreate(w, r)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
-}
-
-func (s *Server) handleUISettingsPage(w http.ResponseWriter, r *http.Request) {
+func (s *Handler) handleUISettingsPage(w http.ResponseWriter, r *http.Request) {
 	s.renderShell(w, "settings", "/settings/fragment")
 }
 
-type uiSpecRow struct {
-	db.Spec
-	ProjectName string
-}
-
-type uiSpecGroup struct {
-	Label string
-	Items []uiSpecRow
-}
-
-func (s *Server) handleUIBacklogFragment(w http.ResponseWriter, r *http.Request) {
-	projects, _ := db.ListProjects(r.Context(), s.pool)
-	specs, err := db.ListSpecs(r.Context(), s.pool, db.ListSpecsFilter{})
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	drafts, _ := db.ListSpecDrafts(r.Context(), s.pool)
-	activeDrafts := make([]db.SpecDraft, 0)
-	for _, d := range drafts {
-		if d.Status == "active" {
-			activeDrafts = append(activeDrafts, d)
-		}
-	}
-	projectNames := map[int64]string{}
-	for _, p := range projects {
-		projectNames[p.ID] = p.Name
-	}
-	groups := []uiSpecGroup{{Label: "Needs attention"}, {Label: "Running / queued"}, {Label: "Ready to run"}, {Label: "Completed"}, {Label: "Other states"}}
-	for _, sp := range specs {
-		row := uiSpecRow{Spec: sp, ProjectName: projectNames[sp.ProjectID]}
-		if row.ProjectName == "" {
-			row.ProjectName = fmt.Sprintf("Project #%d", sp.ProjectID)
-		}
-		switch sp.Status {
-		case "failed", "blocked", "awaiting_review", "review", "paused":
-			groups[0].Items = append(groups[0].Items, row)
-		case "running", "queued":
-			groups[1].Items = append(groups[1].Items, row)
-		case "pending", "idle", "draft":
-			groups[2].Items = append(groups[2].Items, row)
-		case "done", "accepted":
-			groups[3].Items = append(groups[3].Items, row)
-		default:
-			groups[4].Items = append(groups[4].Items, row)
-		}
-	}
-	data := struct {
-		Projects []db.Project
-		Groups   []uiSpecGroup
-		HasSpecs bool
-		Drafts   []db.SpecDraft
-	}{projects, groups, len(specs) > 0, activeDrafts}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := uiTemplates.ExecuteTemplate(w, "backlog", data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
-}
-
-func (s *Server) handleUIBacklogCreateProject(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	name := strings.TrimSpace(r.FormValue("name"))
-	repoPath := strings.TrimSpace(r.FormValue("repo_path"))
-
-	if _, err := db.CreateProject(r.Context(), s.pool, name, repoPath); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	s.handleUIBacklogFragment(w, r)
-}
-
-func (s *Server) handleUIBacklogCreateSpec(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	projectID, err := strconv.ParseInt(r.FormValue("project_id"), 10, 64)
-	if err != nil {
-		http.Error(w, "invalid project_id", http.StatusBadRequest)
-		return
-	}
-	if _, err := db.CreateSpec(r.Context(), s.pool, projectID, strings.TrimSpace(r.FormValue("title")), r.FormValue("content"), []byte("[]")); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	s.handleUIBacklogFragment(w, r)
-}
-
-func (s *Server) handleUIBacklogCreateWorkflow(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	specID, err := strconv.ParseInt(r.FormValue("spec_id"), 10, 64)
-	if err != nil {
-		http.Error(w, "invalid spec_id", http.StatusBadRequest)
-		return
-	}
-	sp, err := db.GetSpec(r.Context(), s.pool, specID)
-	if errors.Is(err, db.ErrNotFound) {
-		http.Error(w, "spec not found", http.StatusNotFound)
-		return
-	}
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	maxCost := &s.defaultBudget
-	if raw := strings.TrimSpace(r.FormValue("max_cost_usd")); raw != "" {
-		parsed, err := strconv.ParseFloat(raw, 64)
-		if err != nil {
-			http.Error(w, "invalid max_cost_usd", http.StatusBadRequest)
-			return
-		}
-		maxCost = &parsed
-	}
-	wf, err := db.CreateWorkflow(r.Context(), s.pool, sp.ID, sp.Track, maxCost)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	runStatus := "running"
-	_, _ = db.UpdateSpec(r.Context(), s.pool, sp.ID, db.UpdateSpecParams{Status: &runStatus})
-	s.runner.Start(wf.ID)
-	w.Header().Set("HX-Redirect", fmt.Sprintf("/workflows/%d", wf.ID))
-	w.WriteHeader(http.StatusCreated)
-}
-
-type uiRepoItem struct {
-	discover.Repo
-	Imported bool
-}
-
-func (s *Server) handleUIProjectsFragment(w http.ResponseWriter, r *http.Request) {
-	projects, err := db.ListProjects(r.Context(), s.pool)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	gitRoot, _ := s.runtimeSettings()
-	var repos []uiRepoItem
-	var discoverErr string
-	if r.URL.Query().Get("discover") == "1" {
-		if gitRoot == "" {
-			discoverErr = "git_root not configured"
-		} else if found, err := discover.FindRepos(gitRoot); err != nil {
-			discoverErr = err.Error()
-		} else {
-			byPath := map[string]db.Project{}
-			for _, p := range projects {
-				byPath[p.RepoPath] = p
-			}
-			for _, repo := range found {
-				_, imported := byPath[repo.Path]
-				repos = append(repos, uiRepoItem{Repo: repo, Imported: imported})
-			}
-		}
-	}
-	data := struct {
-		Projects    []db.Project
-		Repos       []uiRepoItem
-		DiscoverErr string
-	}{projects, repos, discoverErr}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := uiTemplates.ExecuteTemplate(w, "projects", data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
-}
-
-func (s *Server) handleUIProjectCreate(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	name := strings.TrimSpace(r.FormValue("name"))
-	repoPath := strings.TrimSpace(r.FormValue("repo_path"))
-	if _, err := db.CreateProject(r.Context(), s.pool, name, repoPath); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	s.handleUIProjectsFragment(w, r)
-}
-
-func (s *Server) handleUIProject(w http.ResponseWriter, r *http.Request) {
-	id, frag, ok := parseUIID(r.URL.Path, "/projects/")
-	if !ok {
-		http.NotFound(w, r)
-		return
-	}
-	if frag {
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		s.handleUIProjectFragment(w, r, id)
-		return
-	}
-	switch r.Method {
-	case http.MethodGet:
-		s.renderShell(w, "projects", fmt.Sprintf("/projects/%d/fragment", id))
-	case http.MethodPatch, http.MethodPost:
-		s.handleUIProjectUpdate(w, r, id)
-	case http.MethodDelete:
-		s.handleUIProjectDelete(w, r, id)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
-}
-
-func (s *Server) handleUIProjectUpdate(w http.ResponseWriter, r *http.Request, id int64) {
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	name := strings.TrimSpace(r.FormValue("name"))
-	repoPath := strings.TrimSpace(r.FormValue("repo_path"))
-	if _, err := db.UpdateProject(r.Context(), s.pool, id, db.UpdateProjectParams{
-		Name:     &name,
-		RepoPath: &repoPath,
-	}); errors.Is(err, db.ErrNotFound) {
-		http.NotFound(w, r)
-		return
-	} else if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	s.handleUIProjectFragment(w, r, id)
-}
-
-func (s *Server) handleUIProjectDelete(w http.ResponseWriter, r *http.Request, id int64) {
-	if err := db.DeleteProject(r.Context(), s.pool, id); errors.Is(err, db.ErrNotFound) {
-		http.NotFound(w, r)
-		return
-	} else if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("HX-Redirect", "/projects")
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func (s *Server) handleUIProjectFragment(w http.ResponseWriter, r *http.Request, id int64) {
-	p, err := db.GetProject(r.Context(), s.pool, id)
-	if errors.Is(err, db.ErrNotFound) {
-		http.NotFound(w, r)
-		return
-	}
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := uiTemplates.ExecuteTemplate(w, "projectDetail", struct {
-		Project db.Project
-	}{p}); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
-}
-
-func (s *Server) handleUISpec(w http.ResponseWriter, r *http.Request) {
+func (s *Handler) handleUISpec(w http.ResponseWriter, r *http.Request) {
 	id, frag, ok := parseUIID(r.URL.Path, "/specs/")
 	if !ok {
 		http.NotFound(w, r)
@@ -792,7 +497,7 @@ func (s *Server) handleUISpec(w http.ResponseWriter, r *http.Request) {
 	s.renderShell(w, "backlog", fmt.Sprintf("/specs/%d/fragment", id))
 }
 
-func (s *Server) handleUISpecFragment(w http.ResponseWriter, r *http.Request, id int64) {
+func (s *Handler) handleUISpecFragment(w http.ResponseWriter, r *http.Request, id int64) {
 	sp, err := db.GetSpec(r.Context(), s.pool, id)
 	if errors.Is(err, db.ErrNotFound) {
 		http.NotFound(w, r)
@@ -814,7 +519,7 @@ func (s *Server) handleUISpecFragment(w http.ResponseWriter, r *http.Request, id
 	}
 }
 
-func (s *Server) handleUIWorkflow(w http.ResponseWriter, r *http.Request) {
+func (s *Handler) handleUIWorkflow(w http.ResponseWriter, r *http.Request) {
 	id, suffix, ok := parseUIIDSuffix(r.URL.Path, "/workflows/")
 	if !ok || (suffix != "" && suffix != "fragment") {
 		http.NotFound(w, r)
@@ -827,7 +532,7 @@ func (s *Server) handleUIWorkflow(w http.ResponseWriter, r *http.Request) {
 	s.renderShell(w, "backlog", fmt.Sprintf("/workflows/%d/fragment", id))
 }
 
-func (s *Server) handleUIWorkflowFragment(w http.ResponseWriter, r *http.Request, id int64) {
+func (s *Handler) handleUIWorkflowFragment(w http.ResponseWriter, r *http.Request, id int64) {
 	wf, err := db.GetWorkflow(r.Context(), s.pool, id)
 	if errors.Is(err, db.ErrNotFound) {
 		http.NotFound(w, r)
@@ -863,7 +568,7 @@ func (s *Server) handleUIWorkflowFragment(w http.ResponseWriter, r *http.Request
 	}
 }
 
-func (s *Server) handleUIPhase(w http.ResponseWriter, r *http.Request) {
+func (s *Handler) handleUIPhase(w http.ResponseWriter, r *http.Request) {
 	id, suffix, ok := parseUIIDSuffix(r.URL.Path, "/phases/")
 	if !ok {
 		http.NotFound(w, r)
@@ -879,7 +584,7 @@ func (s *Server) handleUIPhase(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) handleUIPhaseLogsFragment(w http.ResponseWriter, r *http.Request, id int64) {
+func (s *Handler) handleUIPhaseLogsFragment(w http.ResponseWriter, r *http.Request, id int64) {
 	ph, err := db.GetPhase(r.Context(), s.pool, id)
 	if errors.Is(err, db.ErrNotFound) {
 		http.NotFound(w, r)
@@ -904,7 +609,7 @@ func (s *Server) handleUIPhaseLogsFragment(w http.ResponseWriter, r *http.Reques
 	}
 }
 
-func (s *Server) handleUIPhaseDiffFragment(w http.ResponseWriter, r *http.Request, id int64) {
+func (s *Handler) handleUIPhaseDiffFragment(w http.ResponseWriter, r *http.Request, id int64) {
 	ph, err := db.GetPhase(r.Context(), s.pool, id)
 	if errors.Is(err, db.ErrNotFound) {
 		http.NotFound(w, r)
@@ -931,7 +636,7 @@ func (s *Server) handleUIPhaseDiffFragment(w http.ResponseWriter, r *http.Reques
 	}
 }
 
-func (s *Server) handleUISpecBuilderPage(w http.ResponseWriter, r *http.Request) {
+func (s *Handler) handleUISpecBuilderPage(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/spec-builder" {
 		http.NotFound(w, r)
 		return
@@ -939,7 +644,7 @@ func (s *Server) handleUISpecBuilderPage(w http.ResponseWriter, r *http.Request)
 	s.renderShell(w, "builder", "/spec-builder/fragment")
 }
 
-func (s *Server) handleUISpecBuilderStartFragment(w http.ResponseWriter, r *http.Request) {
+func (s *Handler) handleUISpecBuilderStartFragment(w http.ResponseWriter, r *http.Request) {
 	projects, _ := db.ListProjects(r.Context(), s.pool)
 	drafts, _ := db.ListSpecDrafts(r.Context(), s.pool)
 	active := []db.SpecDraft{}
@@ -957,7 +662,7 @@ func (s *Server) handleUISpecBuilderStartFragment(w http.ResponseWriter, r *http
 	}
 }
 
-func (s *Server) handleUISpecBuilder(w http.ResponseWriter, r *http.Request) {
+func (s *Handler) handleUISpecBuilder(w http.ResponseWriter, r *http.Request) {
 	id, suffix, ok := parseUIIDSuffix(r.URL.Path, "/spec-builder/")
 	if !ok || (suffix != "" && suffix != "fragment") {
 		http.NotFound(w, r)
@@ -972,7 +677,7 @@ func (s *Server) handleUISpecBuilder(w http.ResponseWriter, r *http.Request) {
 
 type uiChatMessage struct{ Role, Content string }
 
-func (s *Server) handleUISpecBuilderDetailFragment(w http.ResponseWriter, r *http.Request, id int64) {
+func (s *Handler) handleUISpecBuilderDetailFragment(w http.ResponseWriter, r *http.Request, id int64) {
 	draft, err := db.GetSpecDraft(r.Context(), s.pool, id)
 	if errors.Is(err, db.ErrNotFound) {
 		http.NotFound(w, r)
@@ -1011,7 +716,7 @@ type cerberusSessionView struct {
 	CerberusError  string `json:"cerberus_error,omitempty"`
 }
 
-func (s *Server) handleUISettingsFragment(w http.ResponseWriter, r *http.Request) {
+func (s *Handler) handleUISettingsFragment(w http.ResponseWriter, r *http.Request) {
 	data, err := os.ReadFile(s.cfgPath)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -1082,7 +787,7 @@ func (s *Server) handleUISettingsFragment(w http.ResponseWriter, r *http.Request
 	}
 }
 
-func (s *Server) knownCerberusSessionViews(ctx context.Context, withStatus bool) ([]cerberusSessionView, error) {
+func (s *Handler) knownCerberusSessionViews(ctx context.Context, withStatus bool) ([]cerberusSessionView, error) {
 	known, err := db.ListKnownCerberusSessions(ctx, s.pool)
 	if err != nil {
 		return nil, err

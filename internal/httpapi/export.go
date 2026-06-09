@@ -1,4 +1,4 @@
-package api
+package httpapi
 
 import (
 	"net/http"
@@ -8,7 +8,7 @@ import (
 
 // ---- export ----
 
-func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) HandleExport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -42,30 +42,30 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 		return false
 	}
 
-	projects, err := db.ListProjects(ctx, s.pool)
+	projects, err := db.ListProjects(ctx, h.pool)
 	if fail(err) {
 		return
 	}
-	specs, err := db.ListSpecs(ctx, s.pool, db.ListSpecsFilter{})
+	specs, err := db.ListSpecs(ctx, h.pool, db.ListSpecsFilter{})
 	if fail(err) {
 		return
 	}
 
 	exportSpecs := make([]exportSpec, 0, len(specs))
 	for _, spec := range specs {
-		workflows, err := db.ListWorkflowsBySpec(ctx, s.pool, spec.ID)
+		workflows, err := db.ListWorkflowsBySpec(ctx, h.pool, spec.ID)
 		if fail(err) {
 			return
 		}
 		exportWorkflows := make([]exportWorkflow, 0, len(workflows))
 		for _, workflow := range workflows {
-			phases, err := db.ListPhasesByWorkflow(ctx, s.pool, workflow.ID)
+			phases, err := db.ListPhasesByWorkflow(ctx, h.pool, workflow.ID)
 			if fail(err) {
 				return
 			}
 			exportPhases := make([]exportPhase, 0, len(phases))
 			for _, phase := range phases {
-				logs, err := db.ListPhaseLogs(ctx, s.pool, phase.ID)
+				logs, err := db.ListPhaseLogs(ctx, h.pool, phase.ID)
 				if fail(err) {
 					return
 				}
@@ -76,11 +76,11 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 		exportSpecs = append(exportSpecs, exportSpec{Spec: spec, Workflows: exportWorkflows})
 	}
 
-	specDrafts, err := db.ListSpecDrafts(ctx, s.pool)
+	specDrafts, err := db.ListSpecDrafts(ctx, h.pool)
 	if fail(err) {
 		return
 	}
-	profiles, err := db.ListProfiles(ctx, s.pool)
+	profiles, err := db.ListProfiles(ctx, h.pool)
 	if fail(err) {
 		return
 	}

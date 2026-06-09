@@ -1,4 +1,4 @@
-package api
+package httpapi
 
 import (
 	"encoding/json"
@@ -12,7 +12,7 @@ import (
 
 // ---- specs ----
 
-func (s *Server) handleSpecs(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) HandleSpecs(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
 		var body struct {
@@ -29,7 +29,7 @@ func (s *Server) handleSpecs(w http.ResponseWriter, r *http.Request) {
 		if body.Tags != nil {
 			tags = body.Tags
 		}
-		sp, err := db.CreateSpec(r.Context(), s.pool, body.ProjectID, body.Title, body.Content, tags)
+		sp, err := db.CreateSpec(r.Context(), h.pool, body.ProjectID, body.Title, body.Content, tags)
 		if err != nil {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -42,7 +42,7 @@ func (s *Server) handleSpecs(w http.ResponseWriter, r *http.Request) {
 		if pid := r.URL.Query().Get("project_id"); pid != "" {
 			f.ProjectID, _ = strconv.ParseInt(pid, 10, 64)
 		}
-		list, err := db.ListSpecs(r.Context(), s.pool, f)
+		list, err := db.ListSpecs(r.Context(), h.pool, f)
 		if err != nil {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -53,7 +53,7 @@ func (s *Server) handleSpecs(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) handleSpec(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) HandleSpec(w http.ResponseWriter, r *http.Request) {
 	// routes under /api/specs/:id and /api/specs/:id/promote
 	path := strings.TrimPrefix(r.URL.Path, "/api/specs/")
 	parts := strings.SplitN(path, "/", 2)
@@ -69,14 +69,14 @@ func (s *Server) handleSpec(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case suffix == "workflows" && r.Method == http.MethodGet:
-		wfs, err := db.ListWorkflowsBySpec(r.Context(), s.pool, id)
+		wfs, err := db.ListWorkflowsBySpec(r.Context(), h.pool, id)
 		if err != nil {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		jsonOK(w, wfs, http.StatusOK)
 	case suffix == "promote" && r.Method == http.MethodPost:
-		sp, err := db.GetSpec(r.Context(), s.pool, id)
+		sp, err := db.GetSpec(r.Context(), h.pool, id)
 		if errors.Is(err, db.ErrNotFound) {
 			jsonErr(w, "not found", http.StatusNotFound)
 			return
@@ -86,14 +86,14 @@ func (s *Server) handleSpec(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		track := "polish"
-		sp, err = db.UpdateSpec(r.Context(), s.pool, sp.ID, db.UpdateSpecParams{Track: &track})
+		sp, err = db.UpdateSpec(r.Context(), h.pool, sp.ID, db.UpdateSpecParams{Track: &track})
 		if err != nil {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		jsonOK(w, sp, http.StatusOK)
 	case suffix == "" && r.Method == http.MethodGet:
-		sp, err := db.GetSpec(r.Context(), s.pool, id)
+		sp, err := db.GetSpec(r.Context(), h.pool, id)
 		if errors.Is(err, db.ErrNotFound) {
 			jsonErr(w, "not found", http.StatusNotFound)
 			return
@@ -117,7 +117,7 @@ func (s *Server) handleSpec(w http.ResponseWriter, r *http.Request) {
 		if body.Tags != nil {
 			tags = body.Tags
 		}
-		sp, err := db.UpdateSpec(r.Context(), s.pool, id, db.UpdateSpecParams{
+		sp, err := db.UpdateSpec(r.Context(), h.pool, id, db.UpdateSpecParams{
 			Title:   body.Title,
 			Content: body.Content,
 			Tags:    tags,
@@ -132,7 +132,7 @@ func (s *Server) handleSpec(w http.ResponseWriter, r *http.Request) {
 		}
 		jsonOK(w, sp, http.StatusOK)
 	case suffix == "" && r.Method == http.MethodDelete:
-		_, err := db.GetSpec(r.Context(), s.pool, id)
+		_, err := db.GetSpec(r.Context(), h.pool, id)
 		if errors.Is(err, db.ErrNotFound) {
 			jsonErr(w, "not found", http.StatusNotFound)
 			return
@@ -141,7 +141,7 @@ func (s *Server) handleSpec(w http.ResponseWriter, r *http.Request) {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		err = db.DeleteSpec(r.Context(), s.pool, id)
+		err = db.DeleteSpec(r.Context(), h.pool, id)
 		if err != nil {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return

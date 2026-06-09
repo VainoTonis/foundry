@@ -12,11 +12,11 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/tonis2/foundry/internal/api"
 	"github.com/tonis2/foundry/internal/authoring"
 	"github.com/tonis2/foundry/internal/cerberus"
 	"github.com/tonis2/foundry/internal/config"
 	"github.com/tonis2/foundry/internal/db"
+	"github.com/tonis2/foundry/internal/httpserver"
 	"github.com/tonis2/foundry/internal/hub"
 	"github.com/tonis2/foundry/internal/workflow"
 )
@@ -79,10 +79,10 @@ func main() {
 	// orphan draft recovery (non-blocking)
 	go authoring.RecoverOrphanDrafts(context.Background(), pool, cerb)
 
-	// API server
-	srv := api.NewServer(pool, runner, cerb, eventHub, runtime.DefaultWorkflowBudgetUSD, runtime.GitRoot, cfgPath, runtime.CerberusProfile, cfg.ServerPort)
+	// HTTP edge server
+	srv := httpserver.NewServer(pool, runner, cerb, eventHub, runtime.DefaultWorkflowBudgetUSD, runtime.GitRoot, cfgPath, runtime.CerberusProfile, cfg.ServerPort)
 
-	// serve API, server-rendered UI, and static assets
+	// Serve JSON API, server-rendered UI, and static assets.
 	mux := http.NewServeMux()
 	mux.Handle("/api/", srv)
 	mux.Handle("/style.css", noCacheMiddleware(http.FileServer(http.Dir("web"))))

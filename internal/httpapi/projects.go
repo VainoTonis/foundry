@@ -1,4 +1,4 @@
-package api
+package httpapi
 
 import (
 	"encoding/json"
@@ -11,7 +11,7 @@ import (
 
 // ---- projects ----
 
-func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) HandleProjects(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
 		var body struct {
@@ -22,14 +22,14 @@ func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
 			jsonErr(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		p, err := db.CreateProject(r.Context(), s.pool, body.Name, body.RepoPath)
+		p, err := db.CreateProject(r.Context(), h.pool, body.Name, body.RepoPath)
 		if err != nil {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		jsonOK(w, p, http.StatusCreated)
 	case http.MethodGet:
-		list, err := db.ListProjects(r.Context(), s.pool)
+		list, err := db.ListProjects(r.Context(), h.pool)
 		if err != nil {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -40,12 +40,15 @@ func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) handleDiscover(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) HandleDiscover(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	gitRoot, _ := s.runtimeSettings()
+	gitRoot := ""
+	if h.gitRoot != nil {
+		gitRoot = h.gitRoot()
+	}
 	if gitRoot == "" {
 		jsonErr(w, "git_root not configured", http.StatusConflict)
 		return
@@ -56,7 +59,7 @@ func (s *Server) handleDiscover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// cross-reference with already-registered projects so UI can mark which are imported
-	existing, _ := db.ListProjects(r.Context(), s.pool)
+	existing, _ := db.ListProjects(r.Context(), h.pool)
 	byPath := make(map[string]db.Project, len(existing))
 	for _, p := range existing {
 		byPath[p.RepoPath] = p
@@ -73,7 +76,7 @@ func (s *Server) handleDiscover(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, out, http.StatusOK)
 }
 
-func (s *Server) handleProject(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) HandleProject(w http.ResponseWriter, r *http.Request) {
 	id, err := pathID(r.URL.Path, "/api/projects/")
 	if err != nil {
 		jsonErr(w, "invalid id", http.StatusBadRequest)
@@ -82,7 +85,7 @@ func (s *Server) handleProject(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		p, err := db.GetProject(r.Context(), s.pool, id)
+		p, err := db.GetProject(r.Context(), h.pool, id)
 		if errors.Is(err, db.ErrNotFound) {
 			jsonErr(w, "not found", http.StatusNotFound)
 			return
@@ -101,7 +104,7 @@ func (s *Server) handleProject(w http.ResponseWriter, r *http.Request) {
 			jsonErr(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		p, err := db.UpdateProject(r.Context(), s.pool, id, db.UpdateProjectParams{
+		p, err := db.UpdateProject(r.Context(), h.pool, id, db.UpdateProjectParams{
 			Name:     body.Name,
 			RepoPath: body.RepoPath,
 		})
@@ -115,7 +118,7 @@ func (s *Server) handleProject(w http.ResponseWriter, r *http.Request) {
 		}
 		jsonOK(w, p, http.StatusOK)
 	case http.MethodDelete:
-		if err := db.DeleteProject(r.Context(), s.pool, id); errors.Is(err, db.ErrNotFound) {
+		if err := db.DeleteProject(r.Context(), h.pool, id); errors.Is(err, db.ErrNotFound) {
 			jsonErr(w, "not found", http.StatusNotFound)
 			return
 		} else if err != nil {

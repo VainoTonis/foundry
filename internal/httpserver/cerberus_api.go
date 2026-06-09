@@ -1,6 +1,7 @@
-package api
+package httpserver
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -8,6 +9,12 @@ import (
 
 	"github.com/tonis2/foundry/internal/db"
 )
+
+type cerberusSessionView struct {
+	db.KnownCerberusSession
+	CerberusStatus string `json:"cerberus_status"`
+	CerberusError  string `json:"cerberus_error,omitempty"`
+}
 
 // ---- cerberus callback ----
 
@@ -99,4 +106,28 @@ func (s *Server) cleanKnownCerberusSession(w http.ResponseWriter, r *http.Reques
 	db.DeleteCerberusEvents(r.Context(), s.pool, item.Session)
 	removeProfileFile(item.Session)
 	jsonOK(w, map[string]string{"status": "cleaned", "session": item.Session}, http.StatusOK)
+}
+
+func (s *Server) knownCerberusSessionViews(ctx context.Context, withStatus bool) ([]cerberusSessionView, error) {
+	known, err := db.ListKnownCerberusSessions(ctx, s.pool)
+	if err != nil {
+		return nil, err
+	}
+	views := make([]cerberusSessionView, 0, len(known))
+	for _, k := range known {
+		v := cerberusSessionView{KnownCerberusSession: k}
+		if withStatus && s.cerb != nil {
+			if strings.TrimSpace(k.ProjectRepo) != "" {
+				s.cerb.SetRepoPath(k.ProjectRepo)
+			}
+			status, err := s.cerb.Status(ctx, k.Session)
+			if err != nil {
+				v.CerberusError = err.Error()
+			} else {
+				v.CerberusStatus = status
+			}
+		}
+		views = append(views, v)
+	}
+	return views, nil
 }

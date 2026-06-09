@@ -50,6 +50,8 @@ Do not patch around removed concepts. Delete first. Repair only product that rem
 
 ## Phase 2: Split API Into HTTP Edge, JSON API, And Web UI
 
+Status: Done.
+
 Current problem: API code mixes HTTP transport, server-rendered UI, streaming mechanics, feature policy, request validation, and application operations.
 
 Target shape:
