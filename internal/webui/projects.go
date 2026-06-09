@@ -10,7 +10,7 @@ import (
 	"github.com/tonis2/foundry/internal/discover"
 )
 
-type uiRepoItem struct {
+type repoItem struct {
 	discover.Repo
 	Imported bool
 }
@@ -40,7 +40,7 @@ func (s *Handler) handleUIProjectsFragment(w http.ResponseWriter, r *http.Reques
 	if s.runtimeSettings != nil {
 		gitRoot, _ = s.runtimeSettings()
 	}
-	var repos []uiRepoItem
+	var repos []repoItem
 	var discoverErr string
 	if r.URL.Query().Get("discover") == "1" {
 		if gitRoot == "" {
@@ -54,17 +54,17 @@ func (s *Handler) handleUIProjectsFragment(w http.ResponseWriter, r *http.Reques
 			}
 			for _, repo := range found {
 				_, imported := byPath[repo.Path]
-				repos = append(repos, uiRepoItem{Repo: repo, Imported: imported})
+				repos = append(repos, repoItem{Repo: repo, Imported: imported})
 			}
 		}
 	}
 	data := struct {
 		Projects    []db.Project
-		Repos       []uiRepoItem
+		Repos       []repoItem
 		DiscoverErr string
 	}{projects, repos, discoverErr}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := uiTemplates.ExecuteTemplate(w, "projects", data); err != nil {
+	if err := templates.ExecuteTemplate(w, "projects", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -152,7 +152,7 @@ func (s *Handler) handleUIProjectFragment(w http.ResponseWriter, r *http.Request
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := uiTemplates.ExecuteTemplate(w, "projectDetail", struct {
+	if err := templates.ExecuteTemplate(w, "projectDetail", struct {
 		Project db.Project
 	}{p}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

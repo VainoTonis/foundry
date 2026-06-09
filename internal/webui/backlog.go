@@ -10,14 +10,14 @@ import (
 	"github.com/tonis2/foundry/internal/db"
 )
 
-type uiSpecRow struct {
+type specRow struct {
 	db.Spec
 	ProjectName string
 }
 
-type uiSpecGroup struct {
+type specGroup struct {
 	Label string
-	Items []uiSpecRow
+	Items []specRow
 }
 
 func (s *Handler) handleUIBacklogPage(w http.ResponseWriter, r *http.Request) {
@@ -42,9 +42,9 @@ func (s *Handler) handleUIBacklogFragment(w http.ResponseWriter, r *http.Request
 	for _, p := range projects {
 		projectNames[p.ID] = p.Name
 	}
-	groups := []uiSpecGroup{{Label: "Needs attention"}, {Label: "Running / queued"}, {Label: "Ready to run"}, {Label: "Completed"}, {Label: "Other states"}}
+	groups := []specGroup{{Label: "Needs attention"}, {Label: "Running / queued"}, {Label: "Ready to run"}, {Label: "Completed"}, {Label: "Other states"}}
 	for _, sp := range specs {
-		row := uiSpecRow{Spec: sp, ProjectName: projectNames[sp.ProjectID]}
+		row := specRow{Spec: sp, ProjectName: projectNames[sp.ProjectID]}
 		if row.ProjectName == "" {
 			row.ProjectName = fmt.Sprintf("Project #%d", sp.ProjectID)
 		}
@@ -63,12 +63,12 @@ func (s *Handler) handleUIBacklogFragment(w http.ResponseWriter, r *http.Request
 	}
 	data := struct {
 		Projects []db.Project
-		Groups   []uiSpecGroup
+		Groups   []specGroup
 		HasSpecs bool
 		Drafts   []db.SpecDraft
 	}{projects, groups, len(specs) > 0, activeDrafts}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := uiTemplates.ExecuteTemplate(w, "backlog", data); err != nil {
+	if err := templates.ExecuteTemplate(w, "backlog", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }

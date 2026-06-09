@@ -1,0 +1,33 @@
+{{define "projects"}}
+<div data-page="projects">
+  <div class="page-header command-header"><div><p class="eyebrow">Foundry / projects</p><h2>Project registry</h2><p class="hint">Each project binds Foundry to one target repo.</p></div><div class="card-actions"><button class="btn" popovertarget="new-project-page">+ Project</button><button class="btn btn-primary" hx-get="/projects/fragment?discover=1" hx-target="#app" hx-push-url="/projects">Discover repos</button></div></div>
+  <div id="new-project-page" class="popover-card" popover>
+    <h3>New Project</h3>
+    <p class="hint">Use repo paths relative to the machine running Foundry.</p>
+    <form method="post" action="/projects" hx-post="/projects" hx-target="#app" hx-swap="innerHTML">
+      <div class="field"><label>Name</label><input name="name" required></div>
+      <div class="field"><label>Target repo path</label><input name="repo_path" required></div>
+      <button class="btn btn-primary">Create project</button>
+    </form>
+  </div>
+  {{if .Projects}}<div class="group-label">Registered projects</div><div class="project-grid">{{range .Projects}}<article class="project-slab"><div class="project-head"><a class="project-title" href="/projects/{{.ID}}" hx-get="/projects/{{.ID}}/fragment" hx-target="#app" hx-push-url="/projects/{{.ID}}">{{.Name}}</a><span class="chip chip-done">repo</span></div><dl class="fact-list"><div><dt>Target repo</dt><dd>{{.RepoPath}}</dd></div></dl><div class="card-actions"><a class="btn btn-primary" href="/projects/{{.ID}}" hx-get="/projects/{{.ID}}/fragment" hx-target="#app" hx-push-url="/projects/{{.ID}}">View / edit</a></div></article>{{end}}</div>{{else}}<div class="empty empty-action">No projects yet. Create one manually or discover repositories from the configured git root.</div>{{end}}
+  {{if .DiscoverErr}}<div class="empty empty-error">Discovery failed: {{.DiscoverErr}}</div>{{end}}
+  {{if .Repos}}<div class="group-label">Discovered repos</div>{{range .Repos}}<article class="work-row"><div class="work-main"><span class="work-title">{{.Name}}</span><div class="work-meta">target: {{.Path}}</div></div><div class="work-signals">{{if .Imported}}<span class="chip chip-done">imported</span>{{else}}<span class="chip chip-pending">new</span>{{end}}</div>{{if not .Imported}}<div class="work-next"><form method="post" action="/projects?discover=1" hx-post="/projects?discover=1" hx-target="#app" hx-swap="innerHTML"><input type="hidden" name="name" value="{{.Name}}"><input type="hidden" name="repo_path" value="{{.Path}}"><button class="btn btn-primary">Import project</button></form></div>{{end}}</article>{{end}}{{end}}
+</div>
+{{end}}
+
+{{define "projectDetail"}}
+<div data-page="projects">
+  <div class="context-nav"><a class="btn" href="/projects" hx-get="/projects/fragment" hx-target="#app" hx-push-url="/projects">← Projects</a><a class="btn" href="/backlog" hx-get="/backlog/fragment" hx-target="#app" hx-push-url="/backlog">Backlog</a></div>
+  <div class="page-header"><div><p class="eyebrow">Project #{{.Project.ID}}</p><h2>{{.Project.Name}}</h2><div class="card-meta">created {{date .Project.CreatedAt}}</div></div><button class="btn btn-danger" hx-delete="/projects/{{.Project.ID}}" hx-confirm="Delete this project and its specs/workflows?">Delete project</button></div>
+  <div class="project-layout">
+    <form class="panel-form" method="post" action="/projects/{{.Project.ID}}" hx-patch="/projects/{{.Project.ID}}" hx-target="#app" hx-swap="innerHTML">
+      <h3>Edit project</h3>
+      <div class="field"><label>Name</label><input name="name" value="{{.Project.Name}}" required></div>
+      <div class="field"><label>Target repo path</label><input name="repo_path" value="{{.Project.RepoPath}}" required></div>
+      <button class="btn btn-primary">Save changes</button>
+    </form>
+    <aside class="context-panel"><h3>Project context</h3><dl class="fact-list"><div><dt>Target repo</dt><dd>{{.Project.RepoPath}}</dd></div></dl></aside>
+  </div>
+</div>
+{{end}}

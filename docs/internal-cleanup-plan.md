@@ -87,6 +87,8 @@ Expected result:
 
 ## Phase 3: Move HTML To `internal/webui`
 
+Status: Done.
+
 Current problem: server-rendered UI and HTTP handling are too close together, especially where templates and handlers live in same large files.
 
 Target shape:

@@ -1,0 +1,64 @@
+{{define "backlog"}}
+<div data-page="backlog">
+  <div class="page-header command-header">
+    <div>
+      <p class="eyebrow">Foundry / backlog</p>
+      <h2>Executable intent queue</h2>
+      <p class="hint">Scan status, ownership, and the next safe action without opening each spec.</p>
+    </div>
+    <div class="card-actions">
+      <a class="btn btn-primary" href="/spec-builder" hx-get="/spec-builder/fragment" hx-target="#app" hx-push-url="/spec-builder">Open Draft Studio</a>
+      <button class="btn btn-primary" popovertarget="new-spec">+ Spec</button>
+      <button class="btn" popovertarget="new-project">+ Project</button>
+    </div>
+  </div>
+  <div id="new-project" class="popover-card" popover>
+    <h3>New Project</h3>
+    <p class="hint">Register the target repository.</p>
+    <form method="post" action="/backlog/projects" hx-post="/backlog/projects" hx-target="#app" hx-swap="innerHTML">
+      <div class="field"><label>Name</label><input name="name" required></div>
+      <div class="field"><label>Repo path</label><input name="repo_path" required placeholder="/workspace or /home/me/src/app"></div>
+      <button class="btn btn-primary">Create project</button>
+    </form>
+  </div>
+  <div id="new-spec" class="popover-card" popover>
+    <h3>New Spec</h3>
+    <p class="hint">Specs become runnable when they include <code>## Phase N:</code> sections.</p>
+    <form method="post" action="/backlog/specs" hx-post="/backlog/specs" hx-target="#app" hx-swap="innerHTML">
+      <div class="field"><label>Title</label><input name="title" required></div>
+      <div class="field"><label>Project</label><select name="project_id" required>{{range .Projects}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select></div>
+      <div class="field"><label>Content</label><textarea name="content" required># Feature title
+
+Global context here.
+
+## Phase 1: Bootstrap
+
+What this phase does.</textarea></div>
+      <button class="btn btn-primary">Create spec</button>
+    </form>
+  </div>
+  {{if .HasSpecs}}
+    <div class="worklist" aria-label="Specs grouped by status">
+    {{range .Groups}}
+      {{if .Items}}
+        <div class="group-label">{{.Label}}</div>
+        {{range .Items}}
+          <article class="work-row work-row-{{.Status}}">
+            <div class="work-main">
+              <a class="work-title" href="/specs/{{.ID}}" hx-get="/specs/{{.ID}}/fragment" hx-target="#app" hx-push-url="/specs/{{.ID}}">{{.Title}}</a>
+              <div class="work-meta"><strong>{{.ProjectName}}</strong> · created {{date .CreatedAt}} · last {{date .UpdatedAt}}</div>
+            </div>
+            <div class="work-signals"><span class="chip chip-{{.Status}}">{{.Status}}</span><span class="chip chip-{{.Track}}">{{.Track}}</span></div>
+            <div class="work-next"><form method="post" action="/backlog/workflows" hx-post="/backlog/workflows"><input type="hidden" name="spec_id" value="{{.ID}}"><button class="btn btn-primary">Run workflow</button></form></div>
+          </article>
+        {{end}}
+      {{end}}
+    {{end}}
+    </div>
+  {{else}}<div class="empty empty-action">No specs yet. Create a spec or use Draft Studio to explore intent before saving executable work.</div>{{end}}
+  {{if .Drafts}}
+    <div class="group-label">draft studio drafts</div>
+    {{range .Drafts}}<article class="work-row"><div class="work-main"><a class="work-title" href="/spec-builder/{{.ID}}" hx-get="/spec-builder/{{.ID}}/fragment" hx-target="#app" hx-push-url="/spec-builder/{{.ID}}">{{.Title}}</a><div class="work-meta">draft created {{date .CreatedAt}}</div></div><div class="work-signals"><span class="chip chip-{{.Status}}">{{.Status}}</span></div><div class="work-next"><a class="btn" href="/spec-builder/{{.ID}}" hx-get="/spec-builder/{{.ID}}/fragment" hx-target="#app" hx-push-url="/spec-builder/{{.ID}}">Continue draft</a></div></article>{{end}}
+  {{end}}
+</div>
+{{end}}
