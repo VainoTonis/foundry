@@ -131,6 +131,8 @@ Expected result:
 
 ## Phase 4: Split Persistence By Entity
 
+Status: Done.
+
 Current problem: persistence is conceptually in the right place but physically too dense.
 
 Keep one DB package unless a stronger reason appears.
