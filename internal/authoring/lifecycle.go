@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tonis2/foundry/internal/cerberus"
 	"github.com/tonis2/foundry/internal/db"
 )
 
@@ -32,7 +31,7 @@ func (svc *Service) CreateDraftAndStartChat(ctx context.Context, params CreateDr
 		return nil, fmt.Errorf("create draft: %w", err)
 	}
 
-	session := cerberus.DraftSessionName(draft.ID)
+	session := draftSessionName(draft.ID)
 	if _, err := db.UpdateSpecDraft(ctx, svc.pool, draft.ID, db.UpdateSpecDraftParams{CerberusSession: &session}); err != nil {
 		return nil, fmt.Errorf("update draft session: %w", err)
 	}
@@ -232,4 +231,8 @@ func (svc *Service) DeleteDraft(ctx context.Context, draftID int64) error {
 	}
 
 	return nil
+}
+
+func draftSessionName(draftID int64) string {
+	return fmt.Sprintf("foundry-draft-%d", draftID)
 }

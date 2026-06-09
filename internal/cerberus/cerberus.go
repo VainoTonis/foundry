@@ -97,11 +97,6 @@ func (c *Client) Clean(ctx context.Context, session string) error {
 	return c.run(ctx, "clean", "--name", session)
 }
 
-// SessionName builds the canonical session name for a workflow phase.
-func SessionName(workflowID, phaseID int64) string {
-	return fmt.Sprintf("foundry-w%d-p%d", workflowID, phaseID)
-}
-
 func (c *Client) run(ctx context.Context, args ...string) error {
 	cmd := exec.CommandContext(ctx, c.bin, args...)
 	cmd.Dir = c.repoPath
@@ -144,16 +139,11 @@ func formatCommandOutput(stdout, stderr string) string {
 	return b.String()
 }
 
-// DraftSessionName builds the canonical session name for a spec draft.
-func DraftSessionName(draftID int64) string {
-	return fmt.Sprintf("foundry-draft-%d", draftID)
-}
-
 // Chat starts an interactive cerberus session (first turn). Blocking — run in a goroutine.
 // When callbackURL is set, cerberus POSTs incremental JSONL events there.
 // When callbackURL is empty, falls back to stdout parsing (legacy).
 func (c *Client) Chat(ctx context.Context, session, prompt, callbackURL string) error {
-	args := []string{"chat", "--name", session, "--prompt", specBuilderSystemPrompt + "\n\n" + prompt}
+	args := []string{"chat", "--name", session, "--prompt", prompt}
 	if c.image != "" {
 		args = append(args, "--image", c.image)
 	}
@@ -168,15 +158,6 @@ func (c *Client) Chat(ctx context.Context, session, prompt, callbackURL string) 
 	}
 	return c.run(ctx, args...)
 }
-
-// specBuilderSystemPrompt replaces pi's default code-agent system prompt for spec builder sessions.
-const specBuilderSystemPrompt = `You are a spec writer. Your only job is to help the user write a Foundry spec — a markdown document that describes what should be built and how it breaks into phases.
-
-You have read access to the filesystem. The project code is mounted at /workspace — always read files from there, never from host paths. Do NOT write or modify any files. Do NOT run build commands or tests.
-
-When writing specs, never reference the project by its host path (e.g. "personal/dummy", "work/myapp"). The agent that executes the spec works in /workspace, which is already the project root. All file paths in phase goals must be relative to that root (e.g. "src/main.go", "README.md"). Mentioning a host-style path causes the agent to create a phantom subdirectory instead of working at the root.
-
-Respond conversationally. Ask clarifying questions when needed. When you have enough information, produce the spec.`
 
 // Message sends a follow-up message in an existing interactive session.
 // When callbackURL is set, cerberus POSTs incremental JSONL events there.

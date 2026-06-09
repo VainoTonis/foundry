@@ -182,6 +182,8 @@ Expected result:
 
 ## Phase 6: Make External Tool Wrapper Boring
 
+Status: Done.
+
 External tool wrappers should run commands and return results. Product prompts and state rules should live elsewhere.
 
 Move any product-specific prompt content, workflow policy, or Draft Studio behavior out of external command wrappers.

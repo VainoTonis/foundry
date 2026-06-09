@@ -7,9 +7,6 @@ ui_verbosity: "normal"
 max_concurrent_workflows: 1
 default_workflow_budget_usd: 0.5
 default_phase_timeout_seconds: 1800
-review_base_url: "https://api.openai.com/v1"
-review_api_key: ""
-review_model: "claude-haiku-4-5"
 git_root: "~/git"
 
 cerberus_profile: ""

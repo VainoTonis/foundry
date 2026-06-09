@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tonis2/foundry/internal/cerberus"
 	"github.com/tonis2/foundry/internal/db"
 )
 
@@ -31,7 +30,7 @@ func (r *Runner) execPhase(
 	prompt string,
 	isRetry bool,
 ) error {
-	sessionName := cerberus.SessionName(wf.ID, phase.ID)
+	sessionName := phaseSessionName(wf.ID, phase.ID)
 
 	r.cerb.SetRepoPath(proj.RepoPath)
 
@@ -238,6 +237,10 @@ func tickerC(t *time.Ticker) <-chan time.Time {
 		return nil
 	}
 	return t.C
+}
+
+func phaseSessionName(workflowID, phaseID int64) string {
+	return fmt.Sprintf("foundry-w%d-p%d", workflowID, phaseID)
 }
 
 func strPtr(s string) *string { return &s }
