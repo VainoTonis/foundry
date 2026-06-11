@@ -4,22 +4,21 @@ Foundry is a spec-driven, self-running development loop.
 
 Here is intent. Here is agent work. Here is evidence. Here is decision.
 
-Foundry is where ideas get turned into code. You write a spec, define phases, and Foundry runs them overnight via [cerberus](https://github.com/VainoTonis/cerberus) — automatically reviewing output, applying commits, and recording every decision made along the way.
-
-Durable product intent lives in the [intent wiki](./intent/README.md), which is plain Markdown and Obsidian-friendly.
+Foundry is where ideas get turned into code. You write a spec, define phases, and Foundry runs them via [cerberus](https://github.com/VainoTonis/cerberus), applying successful commits and recording what happened along the way.
 
 ## What it does
 
-- **Spec backlog** — dump ideas as markdown specs, they auto-queue and run as PoC
+- **Spec backlog** — save markdown specs and run them as PoC or polish workflows
 - **Two tracks** — PoC (fast, prove it works) and Polish (proper, tested, maintainable)
-- **Automated phase loop** — cerberus runs each phase, an LLM reviews the diff, commits get applied, next phase starts
-- **Decision records** — every phase records what changed, why, and which files were touched
+- **Automated phase loop** — cerberus runs each phase, produced commits get applied, next phase starts
+- **Phase evidence** — every phase records status, logs, files touched, and failure context
+- **Draft Studio** — chat with cerberus to shape a spec before saving it
 
 ## How it works
 
 ```
 spec (markdown) → phases parsed → cerberus runs each phase in a container
-→ LLM reviews diff vs goal → pass: commit applied, next phase
+→ diff and commit captured → pass: commit applied, next phase
 → fail: retry once with adjusted prompt → fail again: paused
 → all done: workflow complete
 ```
@@ -56,13 +55,10 @@ Minimum useful config:
 
 On startup, Foundry loads config, runs migrations, connects to PostgreSQL, and serves the UI/API.
 
-## Documentation
+## Notes
 
-- [Install](./docs/install.md)
-- [Self-hosting](./docs/self-hosting.md)
-- [Cerberus integration](./docs/cerberus.md)
-- [Troubleshooting](./docs/troubleshooting.md)
+Internal package rules live in [docs/internal-package-boundaries.md](./docs/internal-package-boundaries.md).
 
 ## Status
 
-Pre-alpha. See [SPEC.md](./SPEC.md) for the full design.
+Pre-alpha. Internal cleanup still in progress.
