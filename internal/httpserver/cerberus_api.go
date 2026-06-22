@@ -96,7 +96,6 @@ func (s *Server) cleanKnownCerberusSession(w http.ResponseWriter, r *http.Reques
 		jsonErr(w, "refusing to clean active session: "+item.UnsafeReason, http.StatusConflict)
 		return
 	}
-	var err error
 	if strings.TrimSpace(item.ProjectRepo) != "" {
 		err = s.cerb.WithRepo(item.ProjectRepo).Clean(r.Context(), item.Session)
 	} else {
