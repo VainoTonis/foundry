@@ -1,12 +1,12 @@
 package webui
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"github.com/tonis2/foundry/internal/app"
 	"github.com/tonis2/foundry/internal/db"
 )
 
@@ -122,21 +122,15 @@ func (s *Handler) handleUIBacklogCreateWorkflow(w http.ResponseWriter, r *http.R
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+
+	// Parse form input
 	specID, err := strconv.ParseInt(r.FormValue("spec_id"), 10, 64)
 	if err != nil {
 		http.Error(w, "invalid spec_id", http.StatusBadRequest)
 		return
 	}
-	sp, err := db.GetSpec(r.Context(), s.pool, specID)
-	if errors.Is(err, db.ErrNotFound) {
-		http.Error(w, "spec not found", http.StatusNotFound)
-		return
-	}
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	maxCost := &s.defaultBudget
+
+	var maxCost *float64
 	if raw := strings.TrimSpace(r.FormValue("max_cost_usd")); raw != "" {
 		parsed, err := strconv.ParseFloat(raw, 64)
 		if err != nil {
@@ -144,15 +138,22 @@ func (s *Handler) handleUIBacklogCreateWorkflow(w http.ResponseWriter, r *http.R
 			return
 		}
 		maxCost = &parsed
+	} else {
+		maxCost = &s.defaultBudget
 	}
-	wf, err := db.CreateWorkflow(r.Context(), s.pool, sp.ID, sp.Track, maxCost)
+
+	// Execute use case
+	uc := app.NewWorkflowStartUseCase(s.pool, s.runner)
+	res, err := uc.Execute(r.Context(), app.WorkflowStartRequest{
+		SpecID:     specID,
+		MaxCostUSD: maxCost,
+	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	runStatus := "running"
-	_, _ = db.UpdateSpec(r.Context(), s.pool, sp.ID, db.UpdateSpecParams{Status: &runStatus})
-	s.runner.Start(wf.ID)
-	w.Header().Set("HX-Redirect", fmt.Sprintf("/workflows/%d", wf.ID))
+
+	// Return HX redirect
+	w.Header().Set("HX-Redirect", fmt.Sprintf("/workflows/%d", res.WorkflowID))
 	w.WriteHeader(http.StatusCreated)
 }
