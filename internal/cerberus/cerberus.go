@@ -18,8 +18,21 @@ type Client struct {
 	repoPath string // working directory for all cerberus commands (target project repo)
 }
 
+// PerRepoView provides an immutable, per-repo command API that does not mutate shared Client state.
+type PerRepoView struct {
+	client   *Client
+	repoPath string
+}
+
 func New(bin, image, model, profile string) *Client {
 	return &Client{bin: bin, image: image, model: model, profile: profile}
+}
+
+// WithRepo returns an immutable, per-repo command API for the given repo path.
+// All commands executed via the returned PerRepoView use the specified repo path
+// without mutating the shared Client state.
+func (c *Client) WithRepo(repoPath string) *PerRepoView {
+	return &PerRepoView{client: c, repoPath: repoPath}
 }
 
 // SetRepoPath sets the working directory for all cerberus commands.
@@ -98,8 +111,12 @@ func (c *Client) Clean(ctx context.Context, session string) error {
 }
 
 func (c *Client) run(ctx context.Context, args ...string) error {
+	return c.runWith(ctx, c.repoPath, args...)
+}
+
+func (c *Client) runWith(ctx context.Context, repoPath string, args ...string) error {
 	cmd := exec.CommandContext(ctx, c.bin, args...)
-	cmd.Dir = c.repoPath
+	cmd.Dir = repoPath
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -110,8 +127,12 @@ func (c *Client) run(ctx context.Context, args ...string) error {
 }
 
 func (c *Client) output(ctx context.Context, args ...string) (string, error) {
+	return c.outputWith(ctx, c.repoPath, args...)
+}
+
+func (c *Client) outputWith(ctx context.Context, repoPath string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, c.bin, args...)
-	cmd.Dir = c.repoPath
+	cmd.Dir = repoPath
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -191,4 +212,114 @@ func (c *Client) Generate(ctx context.Context, session, prompt string) (string, 
 // cerberus close --name <session>
 func (c *Client) Close(ctx context.Context, session string) error {
 	return c.run(ctx, "close", "--name", session)
+}
+
+// PerRepoView methods - immutable per-repo command execution
+
+// Start launches a cerberus session with the given prompt. Blocking — run in a goroutine.
+// When callbackURL is set, cerberus POSTs incremental JSONL events there.
+func (v *PerRepoView) Start(ctx context.Context, session, prompt, callbackURL string) error {
+	f, err := os.CreateTemp("", "foundry-prompt-*.txt")
+	if err != nil {
+		return fmt.Errorf("create prompt file: %w", err)
+	}
+	defer os.Remove(f.Name())
+	if _, err := f.WriteString(prompt); err != nil {
+		f.Close()
+		return fmt.Errorf("write prompt file: %w", err)
+	}
+	f.Close()
+
+	args := []string{"start", "--name", session, "--prompt-file", f.Name()}
+	if v.client.image != "" {
+		args = append(args, "--image", v.client.image)
+	}
+	if v.client.model != "" {
+		args = append(args, "--model", v.client.model)
+	}
+	if v.client.profile != "" {
+		args = append(args, "--profile-file", v.client.profile)
+	}
+	if callbackURL != "" {
+		args = append(args, "--callback", callbackURL, "--output", "jsonl")
+	}
+	return v.client.runWith(ctx, v.repoPath, args...)
+}
+
+// Status returns the raw status string from cerberus.
+func (v *PerRepoView) Status(ctx context.Context, session string) (string, error) {
+	out, err := v.client.outputWith(ctx, v.repoPath, "status", "--name", session)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// Logs returns the full log output for a session.
+func (v *PerRepoView) Logs(ctx context.Context, session string) (string, error) {
+	return v.client.outputWith(ctx, v.repoPath, "logs", "--name", session)
+}
+
+// Diff returns the git diff produced by the cerberus session.
+func (v *PerRepoView) Diff(ctx context.Context, session string) (string, error) {
+	return v.client.outputWith(ctx, v.repoPath, "review", "--name", session, "--diff")
+}
+
+// Review returns the plain review summary (files touched, commit hash).
+func (v *PerRepoView) Review(ctx context.Context, session string) (string, error) {
+	return v.client.outputWith(ctx, v.repoPath, "review", "--name", session)
+}
+
+// Clean removes the cerberus session.
+func (v *PerRepoView) Clean(ctx context.Context, session string) error {
+	return v.client.runWith(ctx, v.repoPath, "clean", "--name", session)
+}
+
+// Chat starts an interactive cerberus session (first turn). Blocking — run in a goroutine.
+// When callbackURL is set, cerberus POSTs incremental JSONL events there.
+func (v *PerRepoView) Chat(ctx context.Context, session, prompt, callbackURL string) error {
+	args := []string{"chat", "--name", session, "--prompt", prompt}
+	if v.client.image != "" {
+		args = append(args, "--image", v.client.image)
+	}
+	if v.client.model != "" {
+		args = append(args, "--model", v.client.model)
+	}
+	if v.client.profile != "" {
+		args = append(args, "--profile-file", v.client.profile)
+	}
+	if callbackURL != "" {
+		args = append(args, "--callback", callbackURL, "--output", "jsonl")
+	}
+	return v.client.runWith(ctx, v.repoPath, args...)
+}
+
+// Message sends a follow-up message in an existing interactive session.
+func (v *PerRepoView) Message(ctx context.Context, session, msg, callbackURL string) error {
+	args := []string{"message", "--name", session, "--message", msg}
+	if callbackURL != "" {
+		args = append(args, "--callback", callbackURL, "--output", "jsonl")
+	}
+	return v.client.runWith(ctx, v.repoPath, args...)
+}
+
+// Generate sends a single prompt to an interactive cerberus session and returns stdout.
+// The caller is responsible for cleaning the session when desired.
+func (v *PerRepoView) Generate(ctx context.Context, session, prompt string) (string, error) {
+	args := []string{"chat", "--name", session, "--prompt", prompt}
+	if v.client.image != "" {
+		args = append(args, "--image", v.client.image)
+	}
+	if v.client.model != "" {
+		args = append(args, "--model", v.client.model)
+	}
+	if v.client.profile != "" {
+		args = append(args, "--profile-file", v.client.profile)
+	}
+	return v.client.outputWith(ctx, v.repoPath, args...)
+}
+
+// Close commits any changes and cleans up an interactive session.
+func (v *PerRepoView) Close(ctx context.Context, session string) error {
+	return v.client.runWith(ctx, v.repoPath, "close", "--name", session)
 }
