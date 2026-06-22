@@ -99,10 +99,14 @@ func (s *Handler) knownCerberusSessionViews(ctx context.Context, withStatus bool
 	for _, k := range known {
 		v := cerberusSessionView{KnownCerberusSession: k}
 		if withStatus && s.cerb != nil {
-			if strings.TrimSpace(k.ProjectRepo) != "" {
-				s.cerb.SetRepoPath(k.ProjectRepo)
+			var status string
+			var err error
+			repoPath := strings.TrimSpace(k.ProjectRepo)
+			if repoPath != "" {
+				status, err = s.cerb.WithRepo(repoPath).Status(ctx, k.Session)
+			} else {
+				status, err = s.cerb.Status(ctx, k.Session)
 			}
-			status, err := s.cerb.Status(ctx, k.Session)
 			if err != nil {
 				v.CerberusError = err.Error()
 			} else {
