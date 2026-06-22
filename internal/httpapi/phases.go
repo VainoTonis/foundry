@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -111,12 +112,15 @@ func (h *Handler) HandlePhase(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if ph.CerberusSession != nil {
+			var cerberusCmd interface {
+				Clean(context.Context, string) error
+			} = h.cerb
 			if h.projectRepoForWorkflow != nil {
 				if repo, err := h.projectRepoForWorkflow(r.Context(), ph.WorkflowID); err == nil && strings.TrimSpace(repo) != "" {
-					h.cerb.SetRepoPath(repo)
+					cerberusCmd = h.cerb.WithRepo(repo)
 				}
 			}
-			if err := h.cerb.Clean(r.Context(), *ph.CerberusSession); err != nil {
+			if err := cerberusCmd.Clean(r.Context(), *ph.CerberusSession); err != nil {
 				jsonErr(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
