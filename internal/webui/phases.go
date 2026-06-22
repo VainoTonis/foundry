@@ -61,26 +61,16 @@ func (s *Handler) handleUIPhaseDiffFragment(w http.ResponseWriter, r *http.Reque
 	var diff, msg string
 	if ph.CerberusSession == nil {
 		msg = "No Cerberus session for this phase yet."
+	} else if wf, err := db.GetWorkflow(r.Context(), s.pool, ph.WorkflowID); err != nil {
+		msg = err.Error()
+	} else if spec, err := db.GetSpec(r.Context(), s.pool, wf.SpecID); err != nil {
+		msg = err.Error()
+	} else if proj, err := db.GetProject(r.Context(), s.pool, spec.ProjectID); err != nil {
+		msg = err.Error()
+	} else if d, err := s.cerb.WithRepo(proj.RepoPath).Diff(r.Context(), *ph.CerberusSession); err != nil {
+		msg = err.Error()
 	} else {
-		// Get repo path: phase -> workflow -> spec -> project
-		wf, err := db.GetWorkflow(r.Context(), s.pool, ph.WorkflowID)
-		if err != nil {
-			msg = "Failed to get workflow: " + err.Error()
-		} else {
-			spec, err := db.GetSpec(r.Context(), s.pool, wf.SpecID)
-			if err != nil {
-				msg = "Failed to get spec: " + err.Error()
-			} else {
-				proj, err := db.GetProject(r.Context(), s.pool, spec.ProjectID)
-				if err != nil {
-					msg = "Failed to get project: " + err.Error()
-				} else if d, err := s.cerb.WithRepo(proj.RepoPath).Diff(r.Context(), *ph.CerberusSession); err != nil {
-					msg = err.Error()
-				} else {
-					diff = d
-				}
-			}
-		}
+		diff = d
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := templates.ExecuteTemplate(w, "phases.diff", struct {
