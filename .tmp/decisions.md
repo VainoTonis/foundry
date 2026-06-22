@@ -6,15 +6,11 @@
 ---
 
 ## D1 — The reviewer runs through cerberus, not a separate harness · DECIDED
-The `internal/review` package maintains its own OpenAI-compatible HTTP client. We
-will not maintain a second LLM harness. Reviewing is an LLM workflow like any
-other, so it should go through cerberus.
+Foundry should not maintain a second LLM harness for review/judgment. Reviewing
+is an LLM workflow like any other, so it should go through cerberus.
 - **Why:** one harness to maintain; cerberus already does LLM calls.
-- **Cheaper than expected:** `cerb.Generate` already exists and is already used
-  for memory proposals (`handlers.go:2277`). Review collapses to: build prompt →
-  `cerb.Generate` → parse JSON verdict.
-- **Ripple:** may need a cerberus change to support a clean "judge this diff,
-  return JSON, don't touch the repo" mode. The `review.Result` schema stays.
+- **Ripple:** may need a cerberus mode for "judge this diff, return structured
+  verdict, don't touch the repo".
 
 ## D2 — Smart retry comes from the reviewer · DIRECTION
 Retry should be *reasoned* (use the failure to adjust the next prompt), not the
@@ -56,27 +52,27 @@ economical.
 - **Verdict:** needs a real cost-vs-safety analysis before committing. Flagged,
   not decided.
 
-## D7 — Intent docs (Gap #2) were removed on purpose · CONTEXT + OPEN
+## D7 — Intent docs were removed on purpose · DECIDED
 The `intent/*.md` and `docs/*` files referenced by the README and the phase
 prompt builder were intentionally ripped out — there were multiple copies of the
 same docs, no structure, just confusing.
-- **Still open:** the prompt builder (`spec.DefaultIntentReferences`) and README
-  still REFERENCE them. Decide: (a) rebuild intent docs with ONE clear structure,
-  or (b) drop the references so prompts stop pointing at nothing.
+- **Decision:** drop prompt-builder references so phase prompts stop pointing at
+  missing docs. Durable intent belongs in the saved spec's global context until a
+  better system earns its way back in.
 
-## D8 — `internal/api` needs a rewrite · DIRECTION
-The 3,759-line God-file doing eight jobs is the worst-maintained part of the
-codebase and where the real product (spec authoring) is buried. It is the one
-package where a rewrite (not just refactor) is justified.
-- **Why:** unmaintainable; mixes routing, UI, authoring, streaming, settings.
+## D8 — overloaded HTTP/API surface rewrite · DONE
+The old God package was split into HTTP edge, JSON API, web UI, stream, and
+authoring responsibilities.
+- **Why:** the old package mixed routing, UI, authoring, streaming, settings, and
+  product behavior.
 
 ## META — Rebuild-from-zero vs. evolve in place · DECIDED: EVOLVE IN PLACE
 Standing temptation was to strip everything and start from 0. Self-identified as
 a recurring pattern ("I cannot keep rebuilding things every time I get to this").
 - **Decided:** evolve in place. Keep the working engine, data model, cerberus,
-  memory, and streaming. Rewrite only `internal/api` (D8) and finish the two
-  organs (judgment, authoring).
-- **Why:** the walkthrough showed the architecture is sound; the stall is a
+  and streaming. Rewrite only overloaded areas and finish the two organs
+  (judgment, authoring).
+- **Why:** the read-through showed the architecture is sound; the stall is a
   punch-list, not an architecture failure. A ground-up rebuild discards working
   code to re-arrive at the same plateau. This path is the one that breaks the
   rebuild loop.

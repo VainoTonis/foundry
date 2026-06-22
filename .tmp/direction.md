@@ -1,7 +1,7 @@
 # Foundry — Direction
 
 > PM synthesis after a direction conversation. Date: 2026-06-01.
-> Companion to `architecture-overview.md`.
+> Kept as product direction. Code structure notes moved to `docs/internal-cleanup-plan.md` and `docs/internal-package-boundaries.md`.
 
 ---
 
@@ -63,7 +63,7 @@ from it.
 ### OUT — explicitly parked (anti-scope-creep list)
 - ❌ Memory feedback loop — deliberation lives in the spec only, until memory is
   trusted.
-- ❌ Rewiring the LLM reviewer (Gap #1 from architecture-overview.md).
+- ❌ Rewiring review/judgment.
 - ❌ Multi-user / auth / distribution.
 - ❌ Fancy multi-mock comparison UI — **one mock at a time, you read it.** Earn
   the fancy version later.
