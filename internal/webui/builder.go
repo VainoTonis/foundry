@@ -30,7 +30,7 @@ func (s *Handler) handleUISpecBuilderStartFragment(w http.ResponseWriter, r *htt
 		}
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := templates.ExecuteTemplate(w, "builderStart", struct {
+	if err := templates.ExecuteTemplate(w, "builder.start", struct {
 		Projects []db.Project
 		Drafts   []db.SpecDraft
 	}{projects, active}); err != nil {
@@ -73,7 +73,7 @@ func (s *Handler) handleUISpecBuilderDetailFragment(w http.ResponseWriter, r *ht
 		}
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := templates.ExecuteTemplate(w, "builderDetail", struct {
+	if err := templates.ExecuteTemplate(w, "builder.detail", struct {
 		Draft      db.SpecDraft
 		Messages   []chatMessage
 		Preview    string

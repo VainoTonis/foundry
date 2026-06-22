@@ -44,7 +44,7 @@ func (s *Handler) handleUIWorkflowFragment(w http.ResponseWriter, r *http.Reques
 		currentPhaseName = initialPhase.Name
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := templates.ExecuteTemplate(w, "workflowDetail", struct {
+	if err := templates.ExecuteTemplate(w, "workflows.detail", struct {
 		Workflow         db.Workflow
 		Spec             db.Spec
 		Project          db.Project

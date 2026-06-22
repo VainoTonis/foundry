@@ -34,7 +34,7 @@ func (s *Handler) handleUISpecFragment(w http.ResponseWriter, r *http.Request, i
 	wfs, _ := db.ListWorkflowsBySpec(r.Context(), s.pool, id)
 	proj, _ := db.GetProject(r.Context(), s.pool, sp.ProjectID)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := templates.ExecuteTemplate(w, "specDetail", struct {
+	if err := templates.ExecuteTemplate(w, "specs.detail", struct {
 		Spec      db.Spec
 		Project   db.Project
 		Workflows []db.Workflow

@@ -68,7 +68,7 @@ func (s *Handler) handleUIBacklogFragment(w http.ResponseWriter, r *http.Request
 		Drafts   []db.SpecDraft
 	}{projects, groups, len(specs) > 0, activeDrafts}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := templates.ExecuteTemplate(w, "backlog", data); err != nil {
+	if err := templates.ExecuteTemplate(w, "backlog.main", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }

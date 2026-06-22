@@ -39,7 +39,7 @@ func (s *Handler) handleUIPhaseLogsFragment(w http.ResponseWriter, r *http.Reque
 		lastLogID = logs[len(logs)-1].ID
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := templates.ExecuteTemplate(w, "phaseLogs", struct {
+	if err := templates.ExecuteTemplate(w, "phases.logs", struct {
 		Phase     db.Phase
 		Logs      []db.PhaseLog
 		LastLogID int64
@@ -67,7 +67,7 @@ func (s *Handler) handleUIPhaseDiffFragment(w http.ResponseWriter, r *http.Reque
 		diff = d
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := templates.ExecuteTemplate(w, "phaseDiff", struct {
+	if err := templates.ExecuteTemplate(w, "phases.diff", struct {
 		Phase       db.Phase
 		Diff, Error string
 	}{ph, diff, msg}); err != nil {

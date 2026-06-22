@@ -5,7 +5,7 @@ import (
 	"html/template"
 )
 
-//go:embed templates/*.html
+//go:embed templates/*/*.html
 var templateFS embed.FS
 
 var templates = template.Must(template.New("ui").Funcs(template.FuncMap{
@@ -29,4 +29,4 @@ var templates = template.Must(template.New("ui").Funcs(template.FuncMap{
 
 	// Log display functions
 	"logRows": buildLogRows,
-}).ParseFS(templateFS, "templates/*.html"))
+}).ParseFS(templateFS, "templates/*/*.html"))

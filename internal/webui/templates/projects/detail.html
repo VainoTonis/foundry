@@ -1,0 +1,15 @@
+{{define "projects.detail"}}
+<div data-page="projects">
+  <div class="context-nav"><a class="btn" href="/projects" hx-get="/projects/fragment" hx-target="#app" hx-push-url="/projects">← Projects</a><a class="btn" href="/backlog" hx-get="/backlog/fragment" hx-target="#app" hx-push-url="/backlog">Backlog</a></div>
+  <div class="page-header"><div><p class="eyebrow">Project #{{.Project.ID}}</p><h2>{{.Project.Name}}</h2><div class="card-meta">created {{date .Project.CreatedAt}}</div></div><button class="btn btn-danger" hx-delete="/projects/{{.Project.ID}}" hx-confirm="Delete this project and its specs/workflows?">Delete project</button></div>
+  <div class="project-layout">
+    <form class="panel-form" method="post" action="/projects/{{.Project.ID}}" hx-patch="/projects/{{.Project.ID}}" hx-target="#app" hx-swap="innerHTML">
+      <h3>Edit project</h3>
+      <div class="field"><label>Name</label><input name="name" value="{{.Project.Name}}" required></div>
+      <div class="field"><label>Target repo path</label><input name="repo_path" value="{{.Project.RepoPath}}" required></div>
+      <button class="btn btn-primary">Save changes</button>
+    </form>
+    <aside class="context-panel"><h3>Project context</h3><dl class="fact-list"><div><dt>Target repo</dt><dd>{{.Project.RepoPath}}</dd></div></dl></aside>
+  </div>
+</div>
+{{end}}

@@ -1,4 +1,4 @@
-{{define "specDetail"}}
+{{define "specs.detail"}}
 <div data-page="backlog">
   <div class="context-nav"><a class="btn" href="/backlog" hx-get="/backlog/fragment" hx-target="#app" hx-push-url="/backlog">← Backlog</a><a class="btn" href="/projects/{{.Project.ID}}" hx-get="/projects/{{.Project.ID}}/fragment" hx-target="#app" hx-push-url="/projects/{{.Project.ID}}">Project: {{.Project.Name}}</a></div>
   <div class="context-slab spec-context"><span>Executable spec</span><strong>{{.Project.Name}} / Spec #{{.Spec.ID}}</strong><em>Runnable when content contains <code>## Phase N:</code> headings.</em></div>

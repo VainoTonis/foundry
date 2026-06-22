@@ -64,7 +64,7 @@ func (s *Handler) handleUIProjectsFragment(w http.ResponseWriter, r *http.Reques
 		DiscoverErr string
 	}{projects, repos, discoverErr}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := templates.ExecuteTemplate(w, "projects", data); err != nil {
+	if err := templates.ExecuteTemplate(w, "projects.main", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -152,7 +152,7 @@ func (s *Handler) handleUIProjectFragment(w http.ResponseWriter, r *http.Request
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := templates.ExecuteTemplate(w, "projectDetail", struct {
+	if err := templates.ExecuteTemplate(w, "projects.detail", struct {
 		Project db.Project
 	}{p}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

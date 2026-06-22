@@ -1,4 +1,4 @@
-{{define "workflowDetail"}}
+{{define "workflows.detail"}}
 <div class="workflow-diffdesk" data-page="backlog" data-workflow-id="{{.Workflow.ID}}" data-workflow-stream="/api/workflows/{{.Workflow.ID}}/stream" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-selected-phase="{{.InitialPhase.ID}}" data-selected-tab="diff">
   <nav class="workflow-local-nav" aria-label="Workflow context"><a href="/backlog" hx-get="/backlog/fragment" hx-target="#app" hx-push-url="/backlog">Foundry</a><a href="/projects/{{.Project.ID}}" hx-get="/projects/{{.Project.ID}}/fragment" hx-target="#app" hx-push-url="/projects/{{.Project.ID}}">{{.Project.Name}}</a></nav>
   <header class="workflow-hero">
