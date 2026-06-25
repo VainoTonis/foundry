@@ -519,13 +519,47 @@ function isChatAtBottom(box) {
   return !box || (box.scrollHeight - box.scrollTop - box.clientHeight) < 48;
 }
 
+function chatBottomSentinel(box) {
+  if (!box) return null;
+  let sentinel = box.querySelector(':scope > [data-chat-bottom]');
+  if (!sentinel) {
+    sentinel = document.createElement('div');
+    sentinel.dataset.chatBottom = '1';
+    sentinel.className = 'chat-bottom-sentinel';
+    box.appendChild(sentinel);
+  }
+  return sentinel;
+}
+
 function setChatAutoScroll(box) {
   if (box) box.dataset.autoScroll = isChatAtBottom(box) ? '1' : '0';
 }
 
+function bindChatAutoScroll(box) {
+  if (!box || box.dataset.autoScrollBound === '1') return;
+  box.dataset.autoScrollBound = '1';
+  if (!box.dataset.autoScroll) box.dataset.autoScroll = '1';
+  chatBottomSentinel(box);
+  box.addEventListener('scroll', () => setChatAutoScroll(box), { passive: true });
+  box.addEventListener('wheel', (event) => {
+    if (event.deltaY < 0) box.dataset.autoScroll = '0';
+  }, { passive: true });
+  box.addEventListener('touchmove', () => { box.dataset.autoScroll = '0'; }, { passive: true });
+}
+
 function scrollChatIfFollowing(box) {
   if (!box || box.dataset.autoScroll === '0') return;
-  box.scrollTop = box.scrollHeight;
+  const sentinel = chatBottomSentinel(box);
+  requestAnimationFrame(() => {
+    if (box.dataset.autoScroll === '0') return;
+    sentinel?.scrollIntoView({ block: 'end' });
+    box.scrollTop = box.scrollHeight;
+    requestAnimationFrame(() => {
+      if (box.dataset.autoScroll === '0') return;
+      sentinel?.scrollIntoView({ block: 'end' });
+      box.scrollTop = box.scrollHeight;
+    });
+  });
 }
 
 function appendChatMessageToBox(boxId, role, content, extraClass) {
@@ -540,7 +574,7 @@ function appendChatMessageToBox(boxId, role, content, extraClass) {
   body.className = 'chat-msg-body';
   body.textContent = content;
   msg.append(label, body);
-  box.appendChild(msg);
+  box.insertBefore(msg, chatBottomSentinel(box));
   scrollChatIfFollowing(box);
   return body;
 }
@@ -570,6 +604,7 @@ async function submitChatMessage(form) {
 function initChatStream(root) {
   const el = root.querySelector?.('[data-chat-stream]');
   if (!el) return;
+  bindChatAutoScroll(root.querySelector('#chat-messages'));
   if (chatSource) { chatSource.close(); chatSource = null; }
   const finish = () => {
     setChatDebug('Turn complete. Refreshing transcript...', 'finish');
@@ -599,10 +634,6 @@ function initChatStream(root) {
     finish();
   };
 }
-
-document.addEventListener('scroll', (event) => {
-  if (event.target?.classList?.contains('chat-messages')) setChatAutoScroll(event.target);
-}, true);
 
 function initStreams(root) {
   initWorkflowStream(root);

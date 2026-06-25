@@ -428,6 +428,7 @@ button:disabled, .btn:disabled, [aria-busy="true"] { opacity: .62; cursor: not-a
 .chat-page .chat-textarea { min-height: 54px; max-height: 28vh; resize: vertical; }
 .chat-debug-line { margin-top: .45rem; font-family: var(--mono); font-size: .76rem; color: var(--muted); }
 .chat-msg { display: flex; flex-direction: column; gap: .2rem; max-width: 85%; }
+.chat-bottom-sentinel { flex: 0 0 1px; width: 100%; }
 .chat-msg-user { align-self: flex-end; }
 .chat-msg-assistant { align-self: flex-start; }
 .chat-msg-label { font-size: .7rem; color: var(--muted); font-weight: 950; text-transform: uppercase; letter-spacing: .06em; }
