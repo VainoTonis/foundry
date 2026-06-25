@@ -1,0 +1,33 @@
+{{define "chat.list"}}
+<div data-page="chat">
+  <div class="page-header command-header">
+    <div>
+      <p class="eyebrow">Chat</p>
+      <h2>Cerberus conversations</h2>
+      <p class="hint">Context-free chat sessions with the cerberus agent.</p>
+    </div>
+    <div class="card-actions">
+      <button class="btn btn-primary" data-json-post="/api/chat/sessions" data-body="{}" data-redirect-template="/chat/{id}">New chat</button>
+    </div>
+  </div>
+  {{if .Sessions}}
+    <div class="worklist" aria-label="Chat sessions">
+      {{range .Sessions}}
+        <article class="work-row">
+          <div class="work-main">
+            <a class="work-title" href="/chat/{{.ID}}" hx-get="/chat/{{.ID}}/fragment" hx-target="#app" hx-push-url="/chat/{{.ID}}">{{if .Title}}{{.Title}}{{else}}Chat #{{.ID}}{{end}}</a>
+            <div class="work-meta">updated {{datetime .UpdatedAt}}</div>
+          </div>
+          <div class="work-signals"><span class="chip chip-{{.Status}}">{{.Status}}</span></div>
+          <div class="work-next">
+            <a class="btn" href="/chat/{{.ID}}" hx-get="/chat/{{.ID}}/fragment" hx-target="#app" hx-push-url="/chat/{{.ID}}">Open</a>
+            <button class="btn btn-danger" data-json-delete="/api/chat/sessions/{{.ID}}" data-refresh="/chat/fragment">Delete</button>
+          </div>
+        </article>
+      {{end}}
+    </div>
+  {{else}}
+    <div class="empty empty-action">No chat sessions yet. Start one to talk with cerberus.</div>
+  {{end}}
+</div>
+{{end}}

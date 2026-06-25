@@ -13,7 +13,7 @@ func (s *Handler) handleUIShell(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	s.renderShell(w, "backlog", "/backlog/fragment")
+	s.renderShell(w, "chat", "/chat/fragment")
 }
 
 // renderShell renders the shell template with the given page and fragment

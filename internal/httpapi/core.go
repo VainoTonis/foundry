@@ -6,6 +6,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tonis2/foundry/internal/authoring"
 	"github.com/tonis2/foundry/internal/cerberus"
+	"github.com/tonis2/foundry/internal/chat"
 )
 
 type Config struct {
@@ -19,6 +20,7 @@ type Config struct {
 	}
 	DefaultBudget          float64
 	SpecDraftsService      func() *authoring.Service
+	ChatService            func() *chat.Service
 	Cerberus               *cerberus.Client
 	ProjectRepoForWorkflow func(context.Context, int64) (string, error)
 	RemoveProfileFile      func(string)
@@ -36,6 +38,7 @@ type Handler struct {
 	}
 	defaultBudget          float64
 	specDraftsService      func() *authoring.Service
+	chatSvc                func() *chat.Service
 	cerb                   *cerberus.Client
 	projectRepoForWorkflow func(context.Context, int64) (string, error)
 	removeProfileFile      func(string)
@@ -51,6 +54,7 @@ func New(pool *pgxpool.Pool, cfg Config) *Handler {
 		workflowRunner:         cfg.WorkflowRunner,
 		defaultBudget:          cfg.DefaultBudget,
 		specDraftsService:      cfg.SpecDraftsService,
+		chatSvc:                cfg.ChatService,
 		cerb:                   cfg.Cerberus,
 		projectRepoForWorkflow: cfg.ProjectRepoForWorkflow,
 		removeProfileFile:      cfg.RemoveProfileFile,

@@ -47,8 +47,10 @@ async function refreshWorkflowPreservingPhase(url) {
 }
 
 function fragmentURL(url) {
-  if (url.endsWith('/fragment')) return url;
-  return url.replace(/\/$/, '') + '/fragment';
+  const next = new URL(url, location.origin);
+  let path = next.pathname === '/' ? '/chat' : next.pathname.replace(/\/$/, '');
+  if (!path.endsWith('/fragment')) path += '/fragment';
+  return path + next.search;
 }
 
 function go(url) {
@@ -148,20 +150,7 @@ function redirectFrom(el, data) {
 }
 
 function appendChatMessage(role, content, extraClass) {
-  const box = document.getElementById('draft-messages');
-  if (!box) return null;
-  const msg = document.createElement('div');
-  msg.className = `chat-msg chat-msg-${role}${extraClass ? ' ' + extraClass : ''}`;
-  const label = document.createElement('div');
-  label.className = 'chat-msg-label';
-  label.textContent = role;
-  const body = document.createElement('div');
-  body.className = 'chat-msg-body';
-  body.textContent = content;
-  msg.append(label, body);
-  box.appendChild(msg);
-  box.scrollTop = box.scrollHeight;
-  return body;
+  return appendChatMessageToBox('draft-messages', role, content, extraClass);
 }
 
 function setDraftInputDisabled(disabled) {
@@ -196,6 +185,11 @@ document.addEventListener('submit', async (event) => {
     submitDraftMessage(form);
     return;
   }
+  if (form.matches('[data-chat-message]')) {
+    event.preventDefault();
+    submitChatMessage(form);
+    return;
+  }
   if (!form.matches('[data-json], [data-settings]')) return;
   event.preventDefault();
   try {
@@ -212,6 +206,16 @@ document.addEventListener('submit', async (event) => {
   } finally {
     setPending(form, false);
   }
+});
+
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
+  const textarea = event.target;
+  if (!(textarea instanceof HTMLTextAreaElement)) return;
+  const form = textarea.closest('form[data-chat-message]');
+  if (!form) return;
+  event.preventDefault();
+  form.requestSubmit();
 });
 
 document.addEventListener('click', async (event) => {
@@ -268,8 +272,10 @@ document.addEventListener('click', async (event) => {
 let workflowSource;
 let draftSource;
 let logSource;
+let chatSource;
 let refreshTimer;
 let liveAssistantBody;
+let liveChatAssistantBody;
 let currentPhaseDetail;
 
 const STATUS_CLASSES = ['pending', 'queued', 'paused', 'idle', 'running', 'progress', 'streaming', 'awaiting_review', 'awaiting', 'review', 'warning', 'done', 'pass', 'accepted', 'failed', 'fail', 'error', 'blocked', 'rejected', 'stopping'];
@@ -492,10 +498,117 @@ function initLogStream(root) {
   logSource.addEventListener('done', () => { if (logSource) { logSource.close(); logSource = null; } });
 }
 
+function setChatInputDisabled(disabled) {
+  const form = document.querySelector('form[data-chat-message]');
+  if (!form) return;
+  form.querySelectorAll('textarea, button').forEach((el) => { el.disabled = disabled; });
+}
+
+function setChatDebug(message, eventName) {
+  const line = document.querySelector('[data-chat-debug-line]');
+  const conn = document.querySelector('[data-chat-connection]');
+  const last = document.querySelector('[data-chat-last-event]');
+  const count = document.querySelector('[data-chat-event-count]');
+  if (line && message) line.textContent = message;
+  if (conn && message) conn.textContent = message;
+  if (last && eventName) last.textContent = eventName;
+  if (count && eventName) count.textContent = String(Number(count.textContent || 0) + 1);
+}
+
+function isChatAtBottom(box) {
+  return !box || (box.scrollHeight - box.scrollTop - box.clientHeight) < 48;
+}
+
+function setChatAutoScroll(box) {
+  if (box) box.dataset.autoScroll = isChatAtBottom(box) ? '1' : '0';
+}
+
+function scrollChatIfFollowing(box) {
+  if (!box || box.dataset.autoScroll === '0') return;
+  box.scrollTop = box.scrollHeight;
+}
+
+function appendChatMessageToBox(boxId, role, content, extraClass) {
+  const box = document.getElementById(boxId);
+  if (!box) return null;
+  const msg = document.createElement('div');
+  msg.className = `chat-msg chat-msg-${role}${extraClass ? ' ' + extraClass : ''}`;
+  const label = document.createElement('div');
+  label.className = 'chat-msg-label';
+  label.textContent = role;
+  const body = document.createElement('div');
+  body.className = 'chat-msg-body';
+  body.textContent = content;
+  msg.append(label, body);
+  box.appendChild(msg);
+  scrollChatIfFollowing(box);
+  return body;
+}
+
+async function submitChatMessage(form) {
+  const textarea = form.querySelector('textarea[name="content"]');
+  const content = textarea ? textarea.value.trim() : '';
+  if (!content) return;
+  const box = document.getElementById('chat-messages');
+  if (box) box.dataset.autoScroll = '1';
+  appendChatMessageToBox('chat-messages', 'user', content);
+  textarea.value = '';
+  liveChatAssistantBody = appendChatMessageToBox('chat-messages', 'assistant', 'Thinking…', 'chat-typing');
+  setChatDebug('Sending prompt...', 'submit');
+  setChatInputDisabled(true);
+  try {
+    await sendJSON((form.method || 'POST').toUpperCase(), form.action, { content });
+  } catch (err) {
+    setChatInputDisabled(false);
+    setChatDebug('Request failed: ' + (err.message || String(err)), 'request_error');
+    if (liveChatAssistantBody) liveChatAssistantBody.textContent = 'Error: ' + (err.message || String(err));
+    showError(err.message || String(err));
+    toast(err.message || String(err), 'error');
+  }
+}
+
+function initChatStream(root) {
+  const el = root.querySelector?.('[data-chat-stream]');
+  if (!el) return;
+  if (chatSource) { chatSource.close(); chatSource = null; }
+  const finish = () => {
+    setChatDebug('Turn complete. Refreshing transcript...', 'finish');
+    setChatInputDisabled(false);
+    liveChatAssistantBody = null;
+    clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(() => refresh(`/chat/${el.dataset.chatId}/fragment`, '#app'), 250);
+  };
+  chatSource = new EventSource(el.dataset.chatStream);
+  setChatDebug('Stream connected. Waiting for events...', 'open');
+  chatSource.addEventListener('text_delta', (ev) => {
+    try {
+      setChatDebug('Streaming response...', 'text_delta');
+      const text = JSON.parse(ev.data).content || '';
+      if (!liveChatAssistantBody) liveChatAssistantBody = appendChatMessageToBox('chat-messages', 'assistant', '');
+      if (liveChatAssistantBody) {
+        if (liveChatAssistantBody.textContent === 'Thinking…') liveChatAssistantBody.textContent = '';
+        liveChatAssistantBody.parentElement?.classList.remove('chat-typing');
+        liveChatAssistantBody.textContent += text;
+        scrollChatIfFollowing(liveChatAssistantBody.closest('.chat-messages'));
+      }
+    } catch (_) {}
+  });
+  ['message_end', 'turn_complete', 'error'].forEach((name) => chatSource.addEventListener(name, finish));
+  chatSource.onerror = () => {
+    setChatDebug('Stream closed or failed. Refreshing transcript...', 'error');
+    finish();
+  };
+}
+
+document.addEventListener('scroll', (event) => {
+  if (event.target?.classList?.contains('chat-messages')) setChatAutoScroll(event.target);
+}, true);
+
 function initStreams(root) {
   initWorkflowStream(root);
   initDraftStream(root);
   initLogStream(root);
+  initChatStream(root);
 }
 
 document.body.addEventListener('htmx:beforeRequest', (event) => {
@@ -521,9 +634,18 @@ document.body.addEventListener('htmx:afterSwap', (event) => {
     document.querySelectorAll('nav a').forEach((a) => a.classList.toggle('active', a.dataset.nav === page));
     if (!event.detail.target.querySelector('[data-workflow-stream]') && workflowSource) { workflowSource.close(); workflowSource = null; }
     if (!event.detail.target.querySelector('[data-draft-stream]') && draftSource) { draftSource.close(); draftSource = null; }
+    if (!event.detail.target.querySelector('[data-chat-stream]') && chatSource) { chatSource.close(); chatSource = null; }
     if (logSource) { logSource.close(); logSource = null; }
   }
   initStreams(event.detail.target);
+});
+
+window.addEventListener('popstate', () => {
+  setTimeout(() => refresh(fragmentURL(location.href), '#app'), 50);
+});
+
+document.body.addEventListener('htmx:historyRestore', () => {
+  setTimeout(() => refresh(fragmentURL(location.href), '#app'), 0);
 });
 
 document.addEventListener('DOMContentLoaded', () => initStreams(document));

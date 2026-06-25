@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tonis2/foundry/internal/cerberus"
+	"github.com/tonis2/foundry/internal/chat"
 	"github.com/tonis2/foundry/internal/config"
 	"github.com/tonis2/foundry/internal/db"
 	"github.com/tonis2/foundry/internal/httpapi"
@@ -22,6 +23,7 @@ type Server struct {
 	pool            *pgxpool.Pool
 	runner          *workflow.Runner
 	cerb            *cerberus.Client
+	chatSvc         *chat.Service
 	jsonAPI         *httpapi.Handler
 	webUI           *webui.Handler
 	mux             *http.ServeMux
@@ -38,6 +40,7 @@ type Server struct {
 
 func NewServer(pool *pgxpool.Pool, runner *workflow.Runner, cerb *cerberus.Client, eventHub *hub.EventHub, defaultBudget float64, gitRoot string, cfgPath string, cerberusProfile string, serverPort int) *Server {
 	s := &Server{pool: pool, runner: runner, cerb: cerb, eventHub: eventHub, defaultBudget: defaultBudget, gitRoot: gitRoot, cfgPath: cfgPath, serverPort: serverPort, cerberusProfile: cerberusProfile, cerbBuffers: make(map[string]*cerberusTextBuffer)}
+	s.chatSvc = chat.NewService(pool, cerb, s.callbackURL())
 	s.jsonAPI = httpapi.New(pool, httpapi.Config{
 		GitRoot: func() string {
 			gitRoot, _ := s.runtimeSettings()
@@ -49,6 +52,7 @@ func NewServer(pool *pgxpool.Pool, runner *workflow.Runner, cerb *cerberus.Clien
 		WorkflowRunner:      runner,
 		DefaultBudget:       defaultBudget,
 		SpecDraftsService:   s.newSpecDraftsService,
+		ChatService:         func() *chat.Service { return s.chatSvc },
 		Cerberus:            cerb,
 		ProjectRepoForWorkflow: func(ctx context.Context, workflowID int64) (string, error) {
 			_, _, project, err := s.workflowProject(ctx, workflowID)
@@ -143,4 +147,6 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/api/cerberus/events", s.handleCerberusCallback)
 	s.mux.HandleFunc("/api/spec-drafts", s.jsonAPI.HandleSpecDrafts)
 	s.mux.HandleFunc("/api/spec-drafts/", s.handleSpecDraft)
+	s.mux.HandleFunc("/api/chat/sessions", s.jsonAPI.HandleChatSessions)
+	s.mux.HandleFunc("/api/chat/sessions/", s.handleChatSessionRoute)
 }

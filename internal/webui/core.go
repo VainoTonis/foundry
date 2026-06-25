@@ -55,4 +55,7 @@ func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/spec-builder", h.handleUISpecBuilderPage)
 	mux.HandleFunc("/spec-builder/fragment", h.handleUISpecBuilderStartFragment)
 	mux.HandleFunc("/spec-builder/", h.handleUISpecBuilder)
+	mux.HandleFunc("/chat", h.handleUIChatPage)
+	mux.HandleFunc("/chat/fragment", h.handleUIChatFragment)
+	mux.HandleFunc("/chat/", h.handleUIChat)
 }

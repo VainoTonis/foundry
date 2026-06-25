@@ -12,11 +12,12 @@
   <header>
     <h1><a class="brand" href="/">Foundry</a></h1>
     <nav>
-      <a class="active" href="/backlog">Backlog</a>
+      <a class="active" href="/chat">Chat</a>
+      <a href="/backlog">Backlog</a>
       <a href="/projects">Projects</a>
       <a href="/settings">Settings</a>
     </nav>
   </header>
-  <main id="app" hx-get="/backlog/fragment" hx-trigger="load" hx-swap="innerHTML"></main>
+  <main id="app" hx-get="/chat/fragment" hx-trigger="load" hx-swap="innerHTML"></main>
 </body>
 </html>

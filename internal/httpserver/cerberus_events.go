@@ -64,7 +64,11 @@ func (s *Server) handleCompactCerberusEvent(ctx context.Context, raw []byte) err
 			return fmt.Errorf("store event: %w", err)
 		}
 		if evt.Type == "message_end" || evt.Type == "turn_complete" {
-			s.assembleAndAppend(ctx, evt.Session, true)
+			if _, chatErr := db.GetChatSessionByCerberusSession(ctx, s.pool, evt.Session); chatErr == nil {
+				s.chatSvc.AssembleMessages(ctx, evt.Session)
+			} else {
+				s.assembleAndAppend(ctx, evt.Session, true)
+			}
 		}
 		return nil
 

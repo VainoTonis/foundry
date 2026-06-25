@@ -1,0 +1,42 @@
+{{define "chat.detail"}}
+<div class="chat-page" data-page="chat" data-chat-stream="/api/chat/sessions/{{.Session.ID}}/stream" data-chat-id="{{.Session.ID}}">
+  <div class="context-nav chat-top-nav">
+    <a class="btn" href="/chat" hx-get="/chat/fragment" hx-target="#app" hx-push-url="/chat">← Chat</a>
+  </div>
+  <div class="page-header spec-hero chat-hero">
+    <div>
+      <p class="eyebrow">Chat #{{.Session.ID}}</p>
+      <h2>{{if .Session.Title}}{{.Session.Title}}{{else}}New conversation{{end}}</h2>
+      <div class="card-meta">{{.Session.Status}} · updated {{datetime .Session.UpdatedAt}}</div>
+    </div>
+    <div class="card-actions">
+      <button class="btn btn-danger" data-json-delete="/api/chat/sessions/{{.Session.ID}}" data-redirect="/chat">Delete</button>
+    </div>
+  </div>
+  <div class="chat-shell">
+    <section class="chat-panel">
+      <div class="chat-statusbar" aria-live="polite">
+        <span class="chip chip-{{.Session.Status}}" data-chat-status>{{.Session.Status}}</span>
+        <span data-chat-connection>idle</span>
+        <span>events: <strong data-chat-event-count>0</strong></span>
+        <span>last: <strong data-chat-last-event>none</strong></span>
+      </div>
+      <div id="chat-messages" class="chat-messages">
+        {{range .Messages}}
+          <div class="chat-msg chat-msg-{{.Role}}">
+            <div class="chat-msg-label">{{.Role}}</div>
+            <div class="chat-msg-body">{{.Content}}</div>
+          </div>
+        {{end}}
+      </div>
+      <form data-json data-chat-message method="post" action="/api/chat/sessions/{{.Session.ID}}/message">
+        <div class="chat-input-row">
+          <textarea class="chat-textarea" name="content" required placeholder="Type a message…"></textarea>
+          <button class="btn btn-primary">Send</button>
+        </div>
+        <div class="chat-debug-line" data-chat-debug-line>Ready. Send prompt to start stream.</div>
+      </form>
+    </section>
+  </div>
+</div>
+{{end}}

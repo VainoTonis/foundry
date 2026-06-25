@@ -3,11 +3,47 @@ package cerberus
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 )
+
+// TurnMessage mirrors cerberus config.Message for history replay.
+type TurnMessage struct {
+	ID       string `json:"id"`
+	ParentID string `json:"parent_id,omitempty"`
+	Role     string `json:"role"`
+	Content  string `json:"content"`
+}
+
+// TurnInput is the JSON payload sent to `cerberus turn` on stdin.
+type TurnInput struct {
+	Name        string        `json:"name,omitempty"`
+	UUID        string        `json:"uuid,omitempty"`
+	NoRepo      bool          `json:"no_repo,omitempty"`
+	Agent       string        `json:"agent,omitempty"`
+	Model       string        `json:"model,omitempty"`
+	Image       string        `json:"image,omitempty"`
+	Message     string        `json:"message"`
+	History     []TurnMessage `json:"history,omitempty"`
+	CallbackURL string        `json:"callback_url,omitempty"`
+}
+
+// TurnOutput is the JSON response from `cerberus turn` on stdout.
+type TurnOutput struct {
+	Status       string  `json:"status"`
+	UUID         string  `json:"uuid"`
+	SessionID    string  `json:"session_id,omitempty"`
+	InputTokens  int     `json:"input_tokens,omitempty"`
+	OutputTokens int     `json:"output_tokens,omitempty"`
+	CostUSD      float64 `json:"cost_usd,omitempty"`
+	Error        string  `json:"error,omitempty"`
+}
+
+// ErrSessionNotFound is returned by Turn when cerberus reports the session uuid is gone.
+const ErrSessionNotFound = "session not found"
 
 // Client wraps the cerberus binary.
 type Client struct {
@@ -108,6 +144,36 @@ func (c *Client) Review(ctx context.Context, session string) (string, error) {
 // cerberus clean --name <session>
 func (c *Client) Clean(ctx context.Context, session string) error {
 	return c.run(ctx, "clean", "--name", session)
+}
+
+// Turn executes a single conversation turn via `cerberus turn` (JSON stdin/stdout).
+// Set NoRepo: true on input for context-free chat sessions (no git worktree).
+// If TurnOutput.Status is "error" and TurnOutput.Error is ErrSessionNotFound,
+// the caller should retry with UUID="" and History populated from DB.
+func (c *Client) Turn(ctx context.Context, input TurnInput) (TurnOutput, error) {
+	if input.Model == "" && c.model != "" {
+		input.Model = c.model
+	}
+	if input.Image == "" && c.image != "" {
+		input.Image = c.image
+	}
+	payload, err := json.Marshal(input)
+	if err != nil {
+		return TurnOutput{}, fmt.Errorf("marshal turn input: %w", err)
+	}
+	cmd := exec.CommandContext(ctx, c.bin, "turn")
+	cmd.Stdin = bytes.NewReader(payload)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return TurnOutput{}, fmt.Errorf("cerberus turn: %w%s", err, formatCommandOutput(stdout.String(), stderr.String()))
+	}
+	var out TurnOutput
+	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &out); err != nil {
+		return TurnOutput{}, fmt.Errorf("cerberus turn: parse response: %w\nstdout: %s", err, stdout.String())
+	}
+	return out, nil
 }
 
 func (c *Client) run(ctx context.Context, args ...string) error {
