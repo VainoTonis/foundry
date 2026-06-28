@@ -1,8 +1,5 @@
 {{define "chat.detail"}}
 <div class="chat-page" data-page="chat" data-chat-stream="/api/chat/sessions/{{.Session.ID}}/stream" data-chat-id="{{.Session.ID}}">
-  <div class="context-nav chat-top-nav">
-    <a class="btn" href="/chat" hx-get="/chat/fragment" hx-target="#app" hx-push-url="/chat">← Chat</a>
-  </div>
   <div class="page-header spec-hero chat-hero">
     <div>
       <p class="eyebrow">Chat #{{.Session.ID}}</p>
@@ -31,7 +28,7 @@
         {{range .Messages}}
           <div class="chat-msg chat-msg-{{.Role}}">
             <div class="chat-msg-label">{{.Role}}</div>
-            <div class="chat-msg-body">{{.Content}}</div>
+            <div class="chat-msg-body">{{if eq .Role "assistant"}}{{markdown .Content}}{{else}}{{.Content}}{{end}}</div>
           </div>
         {{end}}
       </div>

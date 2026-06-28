@@ -1,1 +1,1 @@
-{{define "builder.messages"}}{{range .Messages}}<div class="chat-msg chat-msg-{{.Role}}"><div class="chat-msg-label">{{.Role}}</div><div class="chat-msg-body">{{.Content}}</div></div>{{end}}{{end}}
+{{define "builder.messages"}}{{range .Messages}}<div class="chat-msg chat-msg-{{.Role}}"><div class="chat-msg-label">{{.Role}}</div><div class="chat-msg-body">{{if eq .Role "assistant"}}{{markdown .Content}}{{else}}{{.Content}}{{end}}</div></div>{{end}}{{end}}

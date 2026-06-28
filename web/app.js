@@ -416,9 +416,7 @@ function initDraftStream(root) {
       const text = JSON.parse(ev.data).content || '';
       if (!liveAssistantBody) liveAssistantBody = appendChatMessage('assistant', '');
       if (liveAssistantBody) {
-        if (liveAssistantBody.textContent === 'Thinking…') liveAssistantBody.textContent = '';
-        liveAssistantBody.parentElement?.classList.remove('chat-typing');
-        liveAssistantBody.textContent += text;
+        appendAssistantMarkdown(liveAssistantBody, text);
         const box = liveAssistantBody.closest('.chat-messages');
         if (box) box.scrollTop = box.scrollHeight;
       } else if (out) out.textContent += text;
@@ -515,9 +513,108 @@ function setChatDebug(message, eventName) {
   if (count && eventName) count.textContent = String(Number(count.textContent || 0) + 1);
 }
 
+function escapeHTML(value) {
+  return String(value || '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+}
+
+function renderMarkdownInline(value) {
+  let rest = String(value || '');
+  let out = '';
+  while (rest) {
+    const code = rest.indexOf('`');
+    const bold = rest.indexOf('**');
+    if (code < 0 && bold < 0) return out + escapeHTML(rest);
+    if (code >= 0 && (bold < 0 || code < bold)) {
+      const end = rest.indexOf('`', code + 1);
+      if (end < 0) return out + escapeHTML(rest);
+      out += escapeHTML(rest.slice(0, code)) + `<code>${escapeHTML(rest.slice(code + 1, end))}</code>`;
+      rest = rest.slice(end + 1);
+      continue;
+    }
+    const end = rest.indexOf('**', bold + 2);
+    if (end < 0) return out + escapeHTML(rest);
+    out += escapeHTML(rest.slice(0, bold)) + `<strong>${escapeHTML(rest.slice(bold + 2, end))}</strong>`;
+    rest = rest.slice(end + 2);
+  }
+  return out;
+}
+
+function renderChatMarkdown(value) {
+  const lines = String(value || '').replace(/\r\n/g, '\n').split('\n');
+  const out = [];
+  let para = [];
+  let listKind = '';
+  let codeOpen = false;
+  const flushPara = () => {
+    if (!para.length) return;
+    out.push(`<p>${renderMarkdownInline(para.join(' '))}</p>`);
+    para = [];
+  };
+  const flushList = () => {
+    if (!listKind) return;
+    out.push(`</${listKind}>`);
+    listKind = '';
+  };
+  const openList = (kind) => {
+    if (listKind === kind) return;
+    flushList();
+    out.push(`<${kind}>`);
+    listKind = kind;
+  };
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('```')) {
+      if (codeOpen) { out.push('</code></pre>'); codeOpen = false; }
+      else { flushPara(); flushList(); out.push('<pre><code>'); codeOpen = true; }
+      continue;
+    }
+    if (codeOpen) { out.push(escapeHTML(line) + '\n'); continue; }
+    if (!trimmed) { flushPara(); flushList(); continue; }
+    const heading = trimmed.match(/^(#{1,4})\s+(.+)$/);
+    if (heading) {
+      flushPara(); flushList();
+      out.push(`<h${heading[1].length}>${renderMarkdownInline(heading[2])}</h${heading[1].length}>`);
+      continue;
+    }
+    if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
+      flushPara();
+      openList('ul');
+      out.push(`<li>${renderMarkdownInline(trimmed.slice(2).trim())}</li>`);
+      continue;
+    }
+    const ordered = trimmed.match(/^\d+\.\s+(.+)$/);
+    if (ordered) {
+      flushPara();
+      openList('ol');
+      out.push(`<li>${renderMarkdownInline(ordered[1])}</li>`);
+      continue;
+    }
+    if (/^\*\*[^*]+:\*\*/.test(trimmed)) {
+      flushPara();
+      openList('ul');
+      out.push(`<li>${renderMarkdownInline(trimmed)}</li>`);
+      continue;
+    }
+    flushList();
+    para.push(trimmed);
+  }
+  flushPara();
+  flushList();
+  if (codeOpen) out.push('</code></pre>');
+  return out.join('');
+}
+
 function focusChatInput(root) {
   const textarea = root.querySelector?.('[data-chat-input]');
   if (textarea && !textarea.disabled) textarea.focus({ preventScroll: true });
+}
+
+function appendAssistantMarkdown(body, text) {
+  if (!body) return;
+  if (body.textContent === 'Thinking…') body.textContent = '';
+  body.parentElement?.classList.remove('chat-typing');
+  body.dataset.markdown = (body.dataset.markdown || '') + text;
+  body.innerHTML = renderChatMarkdown(body.dataset.markdown);
 }
 
 function isChatAtBottom(box) {
@@ -628,9 +725,7 @@ function initChatStream(root) {
       const text = JSON.parse(ev.data).content || '';
       if (!liveChatAssistantBody) liveChatAssistantBody = appendChatMessageToBox('chat-messages', 'assistant', '');
       if (liveChatAssistantBody) {
-        if (liveChatAssistantBody.textContent === 'Thinking…') liveChatAssistantBody.textContent = '';
-        liveChatAssistantBody.parentElement?.classList.remove('chat-typing');
-        liveChatAssistantBody.textContent += text;
+        appendAssistantMarkdown(liveChatAssistantBody, text);
         scrollChatIfFollowing(liveChatAssistantBody.closest('.chat-messages'));
       }
     } catch (_) {}
