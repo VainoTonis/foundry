@@ -93,15 +93,20 @@ func (h *Handler) HandleChatSession(w http.ResponseWriter, r *http.Request) {
 
 	case suffix == "message" && r.Method == http.MethodPost:
 		var body struct {
-			Content string `json:"content"`
+			Content     string  `json:"content"`
+			ProfileName *string `json:"profile_name"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Content == "" {
 			jsonErr(w, "content required", http.StatusBadRequest)
 			return
 		}
-		if err := svc.SendMessage(r.Context(), id, body.Content); err != nil {
+		if err := svc.SendMessageWithProfile(r.Context(), id, body.Content, body.ProfileName); err != nil {
 			if errors.Is(err, chat.ErrSessionBusy) {
 				jsonErr(w, "session has an active turn", http.StatusConflict)
+				return
+			}
+			if errors.Is(err, chat.ErrProfileNotFound) {
+				jsonErr(w, "profile not found", http.StatusBadRequest)
 				return
 			}
 			if errors.Is(err, db.ErrNotFound) {

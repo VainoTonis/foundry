@@ -499,7 +499,7 @@ function initLogStream(root) {
 function setChatInputDisabled(disabled) {
   const form = document.querySelector('form[data-chat-message]');
   if (!form) return;
-  form.querySelectorAll('textarea, button').forEach((el) => { el.disabled = disabled; });
+  form.querySelectorAll('textarea, select, button').forEach((el) => { el.disabled = disabled; });
 }
 
 function setChatDebug(message, eventName) {
@@ -684,6 +684,7 @@ function appendChatMessageToBox(boxId, role, content, extraClass) {
 
 async function submitChatMessage(form) {
   const textarea = form.querySelector('textarea[name="content"]');
+  const profile = form.querySelector('select[name="profile_name"]');
   const content = textarea ? textarea.value.trim() : '';
   if (!content) return;
   const box = document.getElementById('chat-messages');
@@ -694,7 +695,7 @@ async function submitChatMessage(form) {
   setChatDebug('Sending prompt to Cerberus...', 'submit');
   setChatInputDisabled(true);
   try {
-    await sendJSON((form.method || 'POST').toUpperCase(), form.action, { content });
+    await sendJSON((form.method || 'POST').toUpperCase(), form.action, { content, profile_name: profile ? profile.value : undefined });
   } catch (err) {
     setChatInputDisabled(false);
     setChatDebug('Request failed: ' + (err.message || String(err)), 'request_error');

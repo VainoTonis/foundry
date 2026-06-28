@@ -377,6 +377,7 @@ button:disabled, .btn:disabled, [aria-busy="true"] { opacity: .62; cursor: not-a
   .field input, .field select, .field textarea { width: 100%; }
   .card-actions, .modal-actions, .chat-input-row { flex-direction: column; align-items: stretch; }
   .card-actions .btn, .card-actions button, .modal-actions .btn, .modal-actions button, .chat-input-row button { width: 100%; }
+  .chat-profile-picker, .chat-profile-picker select { width: 100%; }
   .work-row { grid-template-columns: 1fr; align-items: stretch; }
   .work-signals, .work-next { justify-content: flex-start; }
   .work-next .btn, .work-next button, .work-next form { width: 100%; }
@@ -477,6 +478,8 @@ button:disabled, .btn:disabled, [aria-busy="true"] { opacity: .62; cursor: not-a
   border-left: 3px solid var(--accent); padding-left: .75rem; color: var(--muted); margin: .5em 0;
 }
 .chat-input-row { display: flex; gap: .5rem; align-items: flex-end; }
+.chat-profile-picker { display: flex; flex-direction: column; gap: .25rem; min-width: 12rem; font-family: var(--mono); font-size: .72rem; font-weight: 950; text-transform: uppercase; color: var(--muted); }
+.chat-profile-picker select { min-height: 2.5rem; padding: .45rem .55rem; border: 3px solid var(--border); background: #fffaf0; color: var(--ink); font-family: var(--font); font-size: .84rem; font-weight: 850; text-transform: none; }
 .chat-textarea {
   flex: 1; padding: .55rem .65rem; background: #fffaf0; border: 3px solid var(--border);
   border-radius: 0; color: var(--text); font-family: var(--font); font-size: .95rem;

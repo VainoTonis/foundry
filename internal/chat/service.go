@@ -87,12 +87,28 @@ func (s *Service) ListMessages(ctx context.Context, sessionID int64) ([]db.ChatM
 
 // SendMessage persists the user message and launches a cerberus turn in the background.
 func (s *Service) SendMessage(ctx context.Context, sessionID int64, content string) error {
+	return s.SendMessageWithProfile(ctx, sessionID, content, nil)
+}
+
+func (s *Service) SendMessageWithProfile(ctx context.Context, sessionID int64, content string, profileName *string) error {
 	sess, err := db.GetChatSession(ctx, s.pool, sessionID)
 	if err != nil {
 		return fmt.Errorf("get session: %w", err)
 	}
 	if sess.Status == "streaming" {
 		return ErrSessionBusy
+	}
+	if profileName != nil {
+		nextProfile := strings.TrimSpace(*profileName)
+		if err := s.validateProfile(ctx, nextProfile); err != nil {
+			return err
+		}
+		if nextProfile != sess.ProfileName {
+			if err := db.UpdateChatSessionProfileName(ctx, s.pool, sessionID, nextProfile); err != nil {
+				return fmt.Errorf("update session profile: %w", err)
+			}
+			sess.ProfileName = nextProfile
+		}
 	}
 	if err := db.MarkChatSessionStreaming(ctx, s.pool, sessionID); err != nil {
 		return fmt.Errorf("mark session streaming: %w", err)
