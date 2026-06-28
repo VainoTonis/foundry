@@ -515,6 +515,11 @@ function setChatDebug(message, eventName) {
   if (count && eventName) count.textContent = String(Number(count.textContent || 0) + 1);
 }
 
+function focusChatInput(root) {
+  const textarea = root.querySelector?.('[data-chat-input]');
+  if (textarea && !textarea.disabled) textarea.focus({ preventScroll: true });
+}
+
 function isChatAtBottom(box) {
   return !box || (box.scrollHeight - box.scrollTop - box.clientHeight) < 48;
 }
@@ -565,6 +570,7 @@ function scrollChatIfFollowing(box) {
 function appendChatMessageToBox(boxId, role, content, extraClass) {
   const box = document.getElementById(boxId);
   if (!box) return null;
+  box.querySelector(':scope > .chat-empty')?.remove();
   const msg = document.createElement('div');
   msg.className = `chat-msg chat-msg-${role}${extraClass ? ' ' + extraClass : ''}`;
   const label = document.createElement('div');
@@ -588,7 +594,7 @@ async function submitChatMessage(form) {
   appendChatMessageToBox('chat-messages', 'user', content);
   textarea.value = '';
   liveChatAssistantBody = appendChatMessageToBox('chat-messages', 'assistant', 'Thinking…', 'chat-typing');
-  setChatDebug('Sending prompt...', 'submit');
+  setChatDebug('Sending prompt to Cerberus...', 'submit');
   setChatInputDisabled(true);
   try {
     await sendJSON((form.method || 'POST').toUpperCase(), form.action, { content });
@@ -614,7 +620,8 @@ function initChatStream(root) {
     refreshTimer = setTimeout(() => refresh(`/chat/${el.dataset.chatId}/fragment`, '#app'), 250);
   };
   chatSource = new EventSource(el.dataset.chatStream);
-  setChatDebug('Stream connected. Waiting for events...', 'open');
+  setChatDebug('Stream connected. Ready for prompt.', 'open');
+  focusChatInput(root);
   chatSource.addEventListener('text_delta', (ev) => {
     try {
       setChatDebug('Streaming response...', 'text_delta');
@@ -630,7 +637,7 @@ function initChatStream(root) {
   });
   ['message_end', 'turn_complete', 'error'].forEach((name) => chatSource.addEventListener(name, finish));
   chatSource.onerror = () => {
-    setChatDebug('Stream closed or failed. Refreshing transcript...', 'error');
+    setChatDebug('Stream closed. Refreshing transcript...', 'error');
     finish();
   };
 }

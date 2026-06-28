@@ -17,7 +17,11 @@ func (h *Handler) handleUIChatPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleUIChatFragment(w http.ResponseWriter, r *http.Request) {
-	sessions, _ := db.ListChatSessions(r.Context(), h.pool)
+	sessions, err := db.ListChatSessions(r.Context(), h.pool)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	if sessions == nil {
 		sessions = []db.ChatSession{}
 	}
