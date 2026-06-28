@@ -99,8 +99,9 @@ button:disabled, .btn:disabled, [aria-busy="true"] { opacity: .62; cursor: not-a
   font-size: .73rem; font-weight: 950; letter-spacing: .05em; text-transform: uppercase; background: var(--paper);
 }
 .chip::before { content: ""; width: .55em; height: .55em; display: inline-block; background: currentColor; }
-.chip-pending, .chip-queued, .chip-paused, .chip-idle, .chip-normal, .chip-draft { color: var(--tan); }
+.chip-active, .chip-pending, .chip-queued, .chip-paused, .chip-idle, .chip-normal, .chip-draft { color: var(--tan); }
 .chip-running, .chip-progress, .chip-streaming { color: var(--blue); }
+.chip-suspended { color: var(--muted); }
 .chip-awaiting_review, .chip-awaiting, .chip-review, .chip-warning, .chip-stopping { color: var(--yellow); }
 .chip-done, .chip-pass, .chip-accepted, .chip-imported { color: var(--green); }
 .chip-failed, .chip-fail, .chip-error, .chip-blocked, .chip-rejected { color: var(--red); }

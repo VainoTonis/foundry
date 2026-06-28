@@ -151,6 +151,9 @@ func (s *Server) storeAndPublishCerberusEvent(ctx context.Context, session, even
 	if err != nil {
 		return err
 	}
+	if chatSess, err := db.GetChatSessionByCerberusSession(ctx, s.pool, session); err == nil {
+		_ = db.TouchChatSession(ctx, s.pool, chatSess.ID)
+	}
 	sseData, _ := json.Marshal(dbEvt)
 	s.eventHub.Publish(session, sseData)
 	return nil

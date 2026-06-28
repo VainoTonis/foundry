@@ -278,7 +278,7 @@ let liveAssistantBody;
 let liveChatAssistantBody;
 let currentPhaseDetail;
 
-const STATUS_CLASSES = ['pending', 'queued', 'paused', 'idle', 'running', 'progress', 'streaming', 'awaiting_review', 'awaiting', 'review', 'warning', 'done', 'pass', 'accepted', 'failed', 'fail', 'error', 'blocked', 'rejected', 'stopping'];
+const STATUS_CLASSES = ['active', 'pending', 'queued', 'paused', 'idle', 'running', 'progress', 'streaming', 'suspended', 'awaiting_review', 'awaiting', 'review', 'warning', 'done', 'pass', 'accepted', 'failed', 'fail', 'error', 'blocked', 'rejected', 'stopping'];
 
 function displayStatus(status) {
   return String(status || '').replace(/_/g, ' ');

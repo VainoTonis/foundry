@@ -9,14 +9,16 @@ import (
 )
 
 type ChatSession struct {
-	ID              int64     `json:"id"`
-	Title           string    `json:"title"`
-	CerberusSession string    `json:"cerberus_session"`
-	CerberusUUID    string    `json:"cerberus_uuid"`
-	ProfileName     string    `json:"profile_name"`
-	Status          string    `json:"status"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	ID              int64      `json:"id"`
+	Title           string     `json:"title"`
+	CerberusSession string     `json:"cerberus_session"`
+	CerberusUUID    string     `json:"cerberus_uuid"`
+	ProfileName     string     `json:"profile_name"`
+	Status          string     `json:"status"`
+	LastActiveAt    time.Time  `json:"last_active_at"`
+	SuspendedAt     *time.Time `json:"suspended_at,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
 }
 
 type ChatMessage struct {
@@ -31,19 +33,19 @@ func CreateChatSession(ctx context.Context, pool *pgxpool.Pool, cerberusSession,
 	var s ChatSession
 	err := pool.QueryRow(ctx,
 		`INSERT INTO chat_sessions (cerberus_session, profile_name) VALUES ($1, $2)
-		 RETURNING id, title, cerberus_session, cerberus_uuid, profile_name, status, created_at, updated_at`,
+		 RETURNING id, title, cerberus_session, cerberus_uuid, profile_name, status, last_active_at, suspended_at, created_at, updated_at`,
 		cerberusSession, profileName,
-	).Scan(&s.ID, &s.Title, &s.CerberusSession, &s.CerberusUUID, &s.ProfileName, &s.Status, &s.CreatedAt, &s.UpdatedAt)
+	).Scan(&s.ID, &s.Title, &s.CerberusSession, &s.CerberusUUID, &s.ProfileName, &s.Status, &s.LastActiveAt, &s.SuspendedAt, &s.CreatedAt, &s.UpdatedAt)
 	return s, err
 }
 
 func GetChatSession(ctx context.Context, pool *pgxpool.Pool, id int64) (ChatSession, error) {
 	var s ChatSession
 	err := pool.QueryRow(ctx,
-		`SELECT id, title, cerberus_session, cerberus_uuid, profile_name, status, created_at, updated_at
+		`SELECT id, title, cerberus_session, cerberus_uuid, profile_name, status, last_active_at, suspended_at, created_at, updated_at
 		 FROM chat_sessions WHERE id = $1`,
 		id,
-	).Scan(&s.ID, &s.Title, &s.CerberusSession, &s.CerberusUUID, &s.ProfileName, &s.Status, &s.CreatedAt, &s.UpdatedAt)
+	).Scan(&s.ID, &s.Title, &s.CerberusSession, &s.CerberusUUID, &s.ProfileName, &s.Status, &s.LastActiveAt, &s.SuspendedAt, &s.CreatedAt, &s.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		return ChatSession{}, ErrNotFound
 	}
@@ -53,10 +55,10 @@ func GetChatSession(ctx context.Context, pool *pgxpool.Pool, id int64) (ChatSess
 func GetChatSessionByCerberusSession(ctx context.Context, pool *pgxpool.Pool, cerberusSession string) (ChatSession, error) {
 	var s ChatSession
 	err := pool.QueryRow(ctx,
-		`SELECT id, title, cerberus_session, cerberus_uuid, profile_name, status, created_at, updated_at
+		`SELECT id, title, cerberus_session, cerberus_uuid, profile_name, status, last_active_at, suspended_at, created_at, updated_at
 		 FROM chat_sessions WHERE cerberus_session = $1`,
 		cerberusSession,
-	).Scan(&s.ID, &s.Title, &s.CerberusSession, &s.CerberusUUID, &s.ProfileName, &s.Status, &s.CreatedAt, &s.UpdatedAt)
+	).Scan(&s.ID, &s.Title, &s.CerberusSession, &s.CerberusUUID, &s.ProfileName, &s.Status, &s.LastActiveAt, &s.SuspendedAt, &s.CreatedAt, &s.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		return ChatSession{}, ErrNotFound
 	}
@@ -65,7 +67,7 @@ func GetChatSessionByCerberusSession(ctx context.Context, pool *pgxpool.Pool, ce
 
 func ListChatSessions(ctx context.Context, pool *pgxpool.Pool) ([]ChatSession, error) {
 	rows, err := pool.Query(ctx,
-		`SELECT id, title, cerberus_session, cerberus_uuid, profile_name, status, created_at, updated_at
+		`SELECT id, title, cerberus_session, cerberus_uuid, profile_name, status, last_active_at, suspended_at, created_at, updated_at
 		 FROM chat_sessions ORDER BY updated_at DESC`,
 	)
 	if err != nil {
@@ -75,7 +77,7 @@ func ListChatSessions(ctx context.Context, pool *pgxpool.Pool) ([]ChatSession, e
 	var out []ChatSession
 	for rows.Next() {
 		var s ChatSession
-		if err := rows.Scan(&s.ID, &s.Title, &s.CerberusSession, &s.CerberusUUID, &s.ProfileName, &s.Status, &s.CreatedAt, &s.UpdatedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.Title, &s.CerberusSession, &s.CerberusUUID, &s.ProfileName, &s.Status, &s.LastActiveAt, &s.SuspendedAt, &s.CreatedAt, &s.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, s)
@@ -111,6 +113,69 @@ func UpdateChatSessionStatus(ctx context.Context, pool *pgxpool.Pool, id int64, 
 		status, id,
 	)
 	return err
+}
+
+func TouchChatSession(ctx context.Context, pool *pgxpool.Pool, id int64) error {
+	_, err := pool.Exec(ctx,
+		`UPDATE chat_sessions SET last_active_at = NOW(), updated_at = NOW() WHERE id = $1`,
+		id,
+	)
+	return err
+}
+
+func MarkChatSessionStreaming(ctx context.Context, pool *pgxpool.Pool, id int64) error {
+	_, err := pool.Exec(ctx,
+		`UPDATE chat_sessions SET status = 'streaming', suspended_at = NULL, last_active_at = NOW(), updated_at = NOW() WHERE id = $1`,
+		id,
+	)
+	return err
+}
+
+func MarkChatSessionActive(ctx context.Context, pool *pgxpool.Pool, id int64) error {
+	_, err := pool.Exec(ctx,
+		`UPDATE chat_sessions SET status = 'active', last_active_at = NOW(), updated_at = NOW() WHERE id = $1`,
+		id,
+	)
+	return err
+}
+
+func MarkChatSessionSuspended(ctx context.Context, pool *pgxpool.Pool, id int64) error {
+	tag, err := pool.Exec(ctx,
+		`UPDATE chat_sessions
+		 SET status = 'suspended', suspended_at = NOW(), updated_at = NOW()
+		 WHERE id = $1 AND status <> 'streaming'`,
+		id,
+	)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func ListIdleChatSessions(ctx context.Context, pool *pgxpool.Pool, idleFor time.Duration) ([]ChatSession, error) {
+	rows, err := pool.Query(ctx,
+		`SELECT id, title, cerberus_session, cerberus_uuid, profile_name, status, last_active_at, suspended_at, created_at, updated_at
+		 FROM chat_sessions
+		 WHERE suspended_at IS NULL AND status <> 'streaming' AND last_active_at < NOW() - make_interval(secs => $1)
+		 ORDER BY last_active_at ASC`,
+		int(idleFor.Seconds()),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ChatSession
+	for rows.Next() {
+		var s ChatSession
+		if err := rows.Scan(&s.ID, &s.Title, &s.CerberusSession, &s.CerberusUUID, &s.ProfileName, &s.Status, &s.LastActiveAt, &s.SuspendedAt, &s.CreatedAt, &s.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
 }
 
 func UpdateChatSessionTitle(ctx context.Context, pool *pgxpool.Pool, id int64, title string) error {

@@ -100,6 +100,25 @@ func (h *Handler) HandleChatSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := svc.SendMessage(r.Context(), id, body.Content); err != nil {
+			if errors.Is(err, chat.ErrSessionBusy) {
+				jsonErr(w, "session has an active turn", http.StatusConflict)
+				return
+			}
+			if errors.Is(err, db.ErrNotFound) {
+				jsonErr(w, "not found", http.StatusNotFound)
+				return
+			}
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	case suffix == "suspend" && r.Method == http.MethodPost:
+		if err := svc.SuspendSession(r.Context(), id); err != nil {
+			if errors.Is(err, chat.ErrSessionBusy) {
+				jsonErr(w, "session has an active turn", http.StatusConflict)
+				return
+			}
 			if errors.Is(err, db.ErrNotFound) {
 				jsonErr(w, "not found", http.StatusNotFound)
 				return

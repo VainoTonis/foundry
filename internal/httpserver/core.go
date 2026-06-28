@@ -3,9 +3,11 @@ package httpserver
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tonis2/foundry/internal/cerberus"
@@ -17,6 +19,8 @@ import (
 	"github.com/tonis2/foundry/internal/webui"
 	"github.com/tonis2/foundry/internal/workflow"
 )
+
+const chatIdleSuspendAfter = 20 * time.Minute
 
 // Server wires HTTP routes and shared edge dependencies.
 type Server struct {
@@ -71,7 +75,23 @@ func NewServer(pool *pgxpool.Pool, runner *workflow.Runner, cerb *cerberus.Clien
 	})
 	s.mux = http.NewServeMux()
 	s.routes()
+	go s.runChatIdleJanitor(context.Background())
 	return s
+}
+
+func (s *Server) runChatIdleJanitor(ctx context.Context) {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := s.chatSvc.AutoSuspendIdleSessions(ctx, chatIdleSuspendAfter); err != nil {
+				log.Printf("chat idle suspend: %v", err)
+			}
+		}
+	}
 }
 
 func (s *Server) callbackURL() string {

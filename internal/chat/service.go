@@ -15,7 +15,10 @@ import (
 	"github.com/tonis2/foundry/internal/db"
 )
 
-var ErrProfileNotFound = errors.New("profile not found")
+var (
+	ErrProfileNotFound = errors.New("profile not found")
+	ErrSessionBusy     = errors.New("chat session has an active turn")
+)
 
 type Service struct {
 	pool           *pgxpool.Pool
@@ -88,6 +91,12 @@ func (s *Service) SendMessage(ctx context.Context, sessionID int64, content stri
 	if err != nil {
 		return fmt.Errorf("get session: %w", err)
 	}
+	if sess.Status == "streaming" {
+		return ErrSessionBusy
+	}
+	if err := db.MarkChatSessionStreaming(ctx, s.pool, sessionID); err != nil {
+		return fmt.Errorf("mark session streaming: %w", err)
+	}
 
 	// Set title from first user message if not yet set.
 	if sess.Title == "" {
@@ -99,6 +108,7 @@ func (s *Service) SendMessage(ctx context.Context, sessionID int64, content stri
 	}
 
 	if _, err := db.InsertChatMessage(ctx, s.pool, sessionID, "user", content); err != nil {
+		_ = db.MarkChatSessionActive(ctx, s.pool, sessionID)
 		return fmt.Errorf("insert user message: %w", err)
 	}
 
@@ -113,6 +123,7 @@ func (s *Service) AssembleMessages(ctx context.Context, cerberusSession string) 
 	if err != nil {
 		return
 	}
+	_ = db.TouchChatSession(ctx, s.pool, sess.ID)
 
 	events, err := db.ListCerberusEvents(ctx, s.pool, cerberusSession, 0)
 	if err != nil {
@@ -147,6 +158,40 @@ func (s *Service) AssembleMessages(ctx context.Context, cerberusSession string) 
 	}
 
 	db.DeleteCerberusEvents(ctx, s.pool, cerberusSession)
+	_ = db.MarkChatSessionActive(ctx, s.pool, sess.ID)
+}
+
+func (s *Service) SuspendSession(ctx context.Context, id int64) error {
+	sess, err := db.GetChatSession(ctx, s.pool, id)
+	if err != nil {
+		return fmt.Errorf("get session: %w", err)
+	}
+	if sess.Status == "streaming" {
+		return ErrSessionBusy
+	}
+	if err := db.MarkChatSessionSuspended(ctx, s.pool, id); err != nil {
+		if err == db.ErrNotFound {
+			return ErrSessionBusy
+		}
+		return fmt.Errorf("mark session suspended: %w", err)
+	}
+	_ = s.cerb.Clean(ctx, sess.CerberusSession)
+	_ = db.DeleteCerberusEvents(ctx, s.pool, sess.CerberusSession)
+	_ = os.Remove(profileFilePath(sess.CerberusSession))
+	return nil
+}
+
+func (s *Service) AutoSuspendIdleSessions(ctx context.Context, idleFor time.Duration) error {
+	sessions, err := db.ListIdleChatSessions(ctx, s.pool, idleFor)
+	if err != nil {
+		return fmt.Errorf("list idle chat sessions: %w", err)
+	}
+	for _, sess := range sessions {
+		if err := s.SuspendSession(ctx, sess.ID); err != nil && !errors.Is(err, ErrSessionBusy) && !errors.Is(err, db.ErrNotFound) {
+			log.Printf("chat idle suspend %d: %v", sess.ID, err)
+		}
+	}
+	return nil
 }
 
 // DeleteSession cleans up the cerberus session and removes DB rows.
@@ -177,6 +222,14 @@ func (s *Service) sendTurn(sess db.ChatSession, content string) {
 		log.Printf("chat turn %d: write profile file: %v (proceeding without profile)", sess.ID, err)
 	} else if profilePath != "" {
 		input.ProfileFile = profilePath
+	}
+	if sess.Status == "suspended" {
+		input.UUID = ""
+		if msgs, dbErr := db.ListChatMessages(ctx, s.pool, sess.ID); dbErr == nil {
+			input.History = buildHistory(msgs)
+		} else {
+			log.Printf("chat turn %d: load suspended history: %v", sess.ID, dbErr)
+		}
 	}
 
 	out, err := s.cerb.Turn(ctx, input)
@@ -213,6 +266,7 @@ func (s *Service) sendTurn(sess db.ChatSession, content string) {
 	if out.UUID != "" && out.UUID != sess.CerberusUUID {
 		_ = db.UpdateChatSessionUUID(ctx, s.pool, sess.ID, out.UUID)
 	}
+	_ = db.MarkChatSessionActive(ctx, s.pool, sess.ID)
 }
 
 func effectiveProfileName(sessionProfile, runtimeProfile string) string {

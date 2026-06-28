@@ -7,6 +7,7 @@
       <div class="card-meta">{{.Session.Status}} · profile {{if .ActiveProfileName}}{{.ActiveProfileName}}{{if not .Session.ProfileName}} (runtime){{end}}{{else}}none{{end}} · updated {{datetime .Session.UpdatedAt}}</div>
     </div>
     <div class="card-actions">
+      <button class="btn" data-json-post="/api/chat/sessions/{{.Session.ID}}/suspend" data-refresh="/chat/{{.Session.ID}}/fragment" data-target="#app" {{if eq .Session.Status "streaming"}}disabled title="active turn is running"{{end}}>Suspend runtime</button>
       <button class="btn btn-danger" data-json-delete="/api/chat/sessions/{{.Session.ID}}" data-redirect="/chat">Delete</button>
     </div>
   </div>

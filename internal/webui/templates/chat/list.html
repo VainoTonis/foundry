@@ -22,6 +22,7 @@
           <div class="work-signals"><span class="chip chip-{{.Status}}">{{.Status}}</span></div>
           <div class="work-next">
             <a class="btn" href="/chat/{{.ID}}" hx-get="/chat/{{.ID}}/fragment" hx-target="#app" hx-push-url="/chat/{{.ID}}">Open</a>
+            <button class="btn" data-json-post="/api/chat/sessions/{{.ID}}/suspend" data-refresh="/chat/fragment" {{if eq .Status "streaming"}}disabled title="active turn is running"{{end}}>Suspend</button>
             <button class="btn btn-danger" data-json-delete="/api/chat/sessions/{{.ID}}" data-refresh="/chat/fragment">Delete</button>
           </div>
         </article>
