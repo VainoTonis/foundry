@@ -8,6 +8,12 @@ import (
 	"github.com/tonis2/foundry/internal/db"
 )
 
+type chatSessionView struct {
+	db.ChatSession
+	ActiveProfileName  string
+	UsesRuntimeProfile bool
+}
+
 func (h *Handler) handleUIChatPage(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/chat" {
 		http.NotFound(w, r)
@@ -25,10 +31,14 @@ func (h *Handler) handleUIChatFragment(w http.ResponseWriter, r *http.Request) {
 	if sessions == nil {
 		sessions = []db.ChatSession{}
 	}
+	profiles, _ := db.ListProfiles(r.Context(), h.pool)
+	_, runtimeProfile := h.runtimeProfiles()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := templates.ExecuteTemplate(w, "chat.list", struct {
-		Sessions []db.ChatSession
-	}{sessions}); err != nil {
+		Sessions       []chatSessionView
+		Profiles       []db.Profile
+		RuntimeProfile string
+	}{chatSessionViews(sessions, runtimeProfile), profiles, runtimeProfile}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -64,11 +74,42 @@ func (h *Handler) handleUIChatDetailFragment(w http.ResponseWriter, r *http.Requ
 	if msgs == nil {
 		msgs = []db.ChatMessage{}
 	}
+	profiles, _ := db.ListProfiles(r.Context(), h.pool)
+	_, runtimeProfile := h.runtimeProfiles()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := templates.ExecuteTemplate(w, "chat.detail", struct {
-		Session  db.ChatSession
-		Messages []db.ChatMessage
-	}{sess, msgs}); err != nil {
+		Session           db.ChatSession
+		Messages          []db.ChatMessage
+		Profiles          []db.Profile
+		ActiveProfileName string
+		RuntimeProfile    string
+	}{sess, msgs, profiles, activeProfileName(sess.ProfileName, runtimeProfile), runtimeProfile}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+func (h *Handler) runtimeProfiles() (string, string) {
+	if h.runtimeSettings == nil {
+		return "", ""
+	}
+	return h.runtimeSettings()
+}
+
+func chatSessionViews(sessions []db.ChatSession, runtimeProfile string) []chatSessionView {
+	out := make([]chatSessionView, len(sessions))
+	for i, sess := range sessions {
+		out[i] = chatSessionView{
+			ChatSession:        sess,
+			ActiveProfileName:  activeProfileName(sess.ProfileName, runtimeProfile),
+			UsesRuntimeProfile: sess.ProfileName == "" && runtimeProfile != "",
+		}
+	}
+	return out
+}
+
+func activeProfileName(sessionProfile, runtimeProfile string) string {
+	if sessionProfile != "" {
+		return sessionProfile
+	}
+	return runtimeProfile
 }

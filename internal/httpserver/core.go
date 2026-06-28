@@ -40,7 +40,10 @@ type Server struct {
 
 func NewServer(pool *pgxpool.Pool, runner *workflow.Runner, cerb *cerberus.Client, eventHub *hub.EventHub, defaultBudget float64, gitRoot string, cfgPath string, cerberusProfile string, serverPort int) *Server {
 	s := &Server{pool: pool, runner: runner, cerb: cerb, eventHub: eventHub, defaultBudget: defaultBudget, gitRoot: gitRoot, cfgPath: cfgPath, serverPort: serverPort, cerberusProfile: cerberusProfile, cerbBuffers: make(map[string]*cerberusTextBuffer)}
-	s.chatSvc = chat.NewService(pool, cerb, s.callbackURL())
+	s.chatSvc = chat.NewService(pool, cerb, s.callbackURL(), func() string {
+		_, profile := s.runtimeSettings()
+		return profile
+	})
 	s.jsonAPI = httpapi.New(pool, httpapi.Config{
 		GitRoot: func() string {
 			gitRoot, _ := s.runtimeSettings()

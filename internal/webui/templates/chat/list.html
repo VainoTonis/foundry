@@ -6,9 +6,10 @@
       <h2>Cerberus conversations</h2>
       <p class="hint">Context-free chat sessions with the cerberus agent.</p>
     </div>
-    <div class="card-actions">
-      <button class="btn btn-primary" data-json-post="/api/chat/sessions" data-body="{}" data-redirect-template="/chat/{id}">New chat</button>
-    </div>
+    <form class="card-actions" data-json data-include-empty method="post" action="/api/chat/sessions" data-redirect-template="/chat/{id}">
+      <select name="profile_name" aria-label="Cerberus profile"><option value="">Runtime{{if .RuntimeProfile}}: {{.RuntimeProfile}}{{else}} / no profile{{end}}</option>{{range .Profiles}}<option value="{{.Name}}" {{if eq .Name $.RuntimeProfile}}selected{{end}}>{{.Name}}</option>{{end}}</select>
+      <button class="btn btn-primary">New chat</button>
+    </form>
   </div>
   {{if .Sessions}}
     <div class="worklist" aria-label="Chat sessions">
@@ -16,7 +17,7 @@
         <article class="work-row">
           <div class="work-main">
             <a class="work-title" href="/chat/{{.ID}}" hx-get="/chat/{{.ID}}/fragment" hx-target="#app" hx-push-url="/chat/{{.ID}}">{{if .Title}}{{.Title}}{{else}}Chat #{{.ID}}{{end}}</a>
-            <div class="work-meta">updated {{datetime .UpdatedAt}}</div>
+            <div class="work-meta">updated {{datetime .UpdatedAt}} · profile {{if .ActiveProfileName}}{{.ActiveProfileName}}{{if .UsesRuntimeProfile}} (runtime){{end}}{{else}}none{{end}}</div>
           </div>
           <div class="work-signals"><span class="chip chip-{{.Status}}">{{.Status}}</span></div>
           <div class="work-next">

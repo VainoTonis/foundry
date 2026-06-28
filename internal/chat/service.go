@@ -3,8 +3,10 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"time"
 
@@ -13,21 +15,28 @@ import (
 	"github.com/tonis2/foundry/internal/db"
 )
 
+var ErrProfileNotFound = errors.New("profile not found")
+
 type Service struct {
-	pool        *pgxpool.Pool
-	cerb        *cerberus.Client
-	callbackURL string
+	pool           *pgxpool.Pool
+	cerb           *cerberus.Client
+	callbackURL    string
+	runtimeProfile func() string
 }
 
-func NewService(pool *pgxpool.Pool, cerb *cerberus.Client, callbackURL string) *Service {
-	return &Service{pool: pool, cerb: cerb, callbackURL: callbackURL}
+func NewService(pool *pgxpool.Pool, cerb *cerberus.Client, callbackURL string, runtimeProfile func() string) *Service {
+	return &Service{pool: pool, cerb: cerb, callbackURL: callbackURL, runtimeProfile: runtimeProfile}
 }
 
 // CreateSession creates a new chat session row. No cerberus call yet — session starts lazily on first message.
-func (s *Service) CreateSession(ctx context.Context) (db.ChatSession, error) {
+func (s *Service) CreateSession(ctx context.Context, profileName string) (db.ChatSession, error) {
+	profileName = strings.TrimSpace(profileName)
+	if err := s.validateProfile(ctx, profileName); err != nil {
+		return db.ChatSession{}, err
+	}
 	// Use a temp session name; we'll rename after we know the ID.
 	// Insert with placeholder and update immediately.
-	sess, err := db.CreateChatSession(ctx, s.pool, fmt.Sprintf("foundry-chat-tmp-%d", time.Now().UnixNano()))
+	sess, err := db.CreateChatSession(ctx, s.pool, fmt.Sprintf("foundry-chat-tmp-%d", time.Now().UnixNano()), profileName)
 	if err != nil {
 		return db.ChatSession{}, fmt.Errorf("create chat session: %w", err)
 	}
@@ -45,6 +54,17 @@ func (s *Service) CreateSession(ctx context.Context) (db.ChatSession, error) {
 	}
 	sess.CerberusSession = realSession
 	return sess, nil
+}
+
+func (s *Service) UpdateSessionProfile(ctx context.Context, id int64, profileName string) error {
+	profileName = strings.TrimSpace(profileName)
+	if _, err := db.GetChatSession(ctx, s.pool, id); err != nil {
+		return fmt.Errorf("get session: %w", err)
+	}
+	if err := s.validateProfile(ctx, profileName); err != nil {
+		return err
+	}
+	return db.UpdateChatSessionProfileName(ctx, s.pool, id, profileName)
 }
 
 // GetSession returns the session by ID.
@@ -138,6 +158,7 @@ func (s *Service) DeleteSession(ctx context.Context, id int64) error {
 	// Best-effort cerberus clean — session may already be gone.
 	_ = s.cerb.Clean(ctx, sess.CerberusSession)
 	_ = db.DeleteCerberusEvents(ctx, s.pool, sess.CerberusSession)
+	_ = os.Remove(profileFilePath(sess.CerberusSession))
 	return db.DeleteChatSession(ctx, s.pool, id)
 }
 
@@ -151,6 +172,11 @@ func (s *Service) sendTurn(sess db.ChatSession, content string) {
 		UUID:        sess.CerberusUUID,
 		Message:     content,
 		CallbackURL: s.callbackURL,
+	}
+	if profilePath, err := s.writeProfileFile(ctx, effectiveProfileName(sess.ProfileName, s.runtimeProfileName()), sess.CerberusSession); err != nil {
+		log.Printf("chat turn %d: write profile file: %v (proceeding without profile)", sess.ID, err)
+	} else if profilePath != "" {
+		input.ProfileFile = profilePath
 	}
 
 	out, err := s.cerb.Turn(ctx, input)
@@ -187,6 +213,75 @@ func (s *Service) sendTurn(sess db.ChatSession, content string) {
 	if out.UUID != "" && out.UUID != sess.CerberusUUID {
 		_ = db.UpdateChatSessionUUID(ctx, s.pool, sess.ID, out.UUID)
 	}
+}
+
+func effectiveProfileName(sessionProfile, runtimeProfile string) string {
+	if strings.TrimSpace(sessionProfile) != "" {
+		return strings.TrimSpace(sessionProfile)
+	}
+	return strings.TrimSpace(runtimeProfile)
+}
+
+func (s *Service) runtimeProfileName() string {
+	if s.runtimeProfile == nil {
+		return ""
+	}
+	return s.runtimeProfile()
+}
+
+func (s *Service) validateProfile(ctx context.Context, profileName string) error {
+	if profileName == "" {
+		return nil
+	}
+	if _, err := db.GetProfileByName(ctx, s.pool, profileName); err != nil {
+		if err == db.ErrNotFound {
+			return fmt.Errorf("profile %q: %w", profileName, ErrProfileNotFound)
+		}
+		return fmt.Errorf("lookup profile %q: %w", profileName, err)
+	}
+	return nil
+}
+
+func (s *Service) writeProfileFile(ctx context.Context, profileName, session string) (string, error) {
+	if profileName == "" {
+		return "", nil
+	}
+	p, err := db.GetProfileByName(ctx, s.pool, profileName)
+	if err == db.ErrNotFound {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("lookup profile %q: %w", profileName, err)
+	}
+	payload := map[string]any{}
+	if p.DefaultModel != "" {
+		payload["default_model"] = p.DefaultModel
+	}
+	if p.DefaultImage != "" {
+		payload["default_image"] = p.DefaultImage
+	}
+	if p.AWSProfile != "" {
+		payload["aws_profile"] = p.AWSProfile
+	}
+	if p.AWSRegion != "" {
+		payload["aws_region"] = p.AWSRegion
+	}
+	if len(p.ExtraEnv) > 0 {
+		payload["extra_env"] = p.ExtraEnv
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("marshal profile: %w", err)
+	}
+	path := profileFilePath(session)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return "", fmt.Errorf("write profile file: %w", err)
+	}
+	return path, nil
+}
+
+func profileFilePath(session string) string {
+	return "/tmp/foundry-profile-" + session + ".json"
 }
 
 // buildHistory converts DB chat messages to cerberus TurnMessage history.

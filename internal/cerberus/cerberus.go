@@ -29,6 +29,7 @@ type TurnInput struct {
 	Message     string        `json:"message"`
 	History     []TurnMessage `json:"history,omitempty"`
 	CallbackURL string        `json:"callback_url,omitempty"`
+	ProfileFile string        `json:"profile_file,omitempty"`
 }
 
 // TurnOutput is the JSON response from `cerberus turn` on stdout.

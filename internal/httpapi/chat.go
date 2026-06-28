@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -27,8 +28,21 @@ func (h *Handler) HandleChatSessions(w http.ResponseWriter, r *http.Request) {
 		jsonOK(w, sessions, http.StatusOK)
 
 	case http.MethodPost:
-		sess, err := svc.CreateSession(r.Context())
+		var body struct {
+			ProfileName string `json:"profile_name"`
+		}
+		if r.Body != nil {
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil && err != io.EOF {
+				jsonErr(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+		}
+		sess, err := svc.CreateSession(r.Context(), body.ProfileName)
 		if err != nil {
+			if errors.Is(err, chat.ErrProfileNotFound) {
+				jsonErr(w, "profile not found", http.StatusBadRequest)
+				return
+			}
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -86,6 +100,28 @@ func (h *Handler) HandleChatSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := svc.SendMessage(r.Context(), id, body.Content); err != nil {
+			if errors.Is(err, db.ErrNotFound) {
+				jsonErr(w, "not found", http.StatusNotFound)
+				return
+			}
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	case suffix == "profile" && r.Method == http.MethodPatch:
+		var body struct {
+			ProfileName string `json:"profile_name"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			jsonErr(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := svc.UpdateSessionProfile(r.Context(), id, body.ProfileName); err != nil {
+			if errors.Is(err, chat.ErrProfileNotFound) {
+				jsonErr(w, "profile not found", http.StatusBadRequest)
+				return
+			}
 			if errors.Is(err, db.ErrNotFound) {
 				jsonErr(w, "not found", http.StatusNotFound)
 				return

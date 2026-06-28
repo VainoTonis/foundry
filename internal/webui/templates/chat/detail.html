@@ -4,7 +4,7 @@
     <div>
       <p class="eyebrow">Chat #{{.Session.ID}}</p>
       <h2>{{if .Session.Title}}{{.Session.Title}}{{else}}New conversation{{end}}</h2>
-      <div class="card-meta">{{.Session.Status}} · updated {{datetime .Session.UpdatedAt}}</div>
+      <div class="card-meta">{{.Session.Status}} · profile {{if .ActiveProfileName}}{{.ActiveProfileName}}{{if not .Session.ProfileName}} (runtime){{end}}{{else}}none{{end}} · updated {{datetime .Session.UpdatedAt}}</div>
     </div>
     <div class="card-actions">
       <button class="btn btn-danger" data-json-delete="/api/chat/sessions/{{.Session.ID}}" data-redirect="/chat">Delete</button>
@@ -14,6 +14,11 @@
     <section class="chat-panel">
       <div class="chat-statusbar" aria-live="polite">
         <span class="chip chip-{{.Session.Status}}" data-chat-status>{{.Session.Status}}</span>
+        <form class="chat-profile-form" data-json data-include-empty data-method="PATCH" method="post" action="/api/chat/sessions/{{.Session.ID}}/profile" data-refresh="/chat/{{.Session.ID}}/fragment" data-target="#app">
+          <label for="chat-profile-{{.Session.ID}}">Profile</label>
+          <select id="chat-profile-{{.Session.ID}}" name="profile_name"><option value="" {{if eq .Session.ProfileName ""}}selected{{end}}>Runtime{{if .RuntimeProfile}}: {{.RuntimeProfile}}{{else}} / no profile{{end}}</option>{{range .Profiles}}<option value="{{.Name}}" {{if eq .Name $.Session.ProfileName}}selected{{end}}>{{.Name}}</option>{{end}}</select>
+          <button class="btn">Use for future turns</button>
+        </form>
         <strong data-chat-connection>Ready</strong>
         <span class="chat-debug-meta">events <strong data-chat-event-count>0</strong></span>
         <span class="chat-debug-meta">last <strong data-chat-last-event>none</strong></span>
