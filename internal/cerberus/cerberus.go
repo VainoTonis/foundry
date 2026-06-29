@@ -18,18 +18,27 @@ type TurnMessage struct {
 	Content  string `json:"content"`
 }
 
+// Mount describes a host path to bind-mount into the cerberus container.
+type Mount struct {
+	Host      string `json:"host"`
+	Container string `json:"container"`
+	ReadOnly  bool   `json:"read_only,omitempty"`
+}
+
 // TurnInput is the JSON payload sent to `cerberus turn` on stdin.
 type TurnInput struct {
-	Name        string        `json:"name,omitempty"`
-	UUID        string        `json:"uuid,omitempty"`
-	NoRepo      bool          `json:"no_repo,omitempty"`
-	Agent       string        `json:"agent,omitempty"`
-	Model       string        `json:"model,omitempty"`
-	Image       string        `json:"image,omitempty"`
-	Message     string        `json:"message"`
-	History     []TurnMessage `json:"history,omitempty"`
-	CallbackURL string        `json:"callback_url,omitempty"`
-	ProfileFile string        `json:"profile_file,omitempty"`
+	Name         string        `json:"name,omitempty"`
+	UUID         string        `json:"uuid,omitempty"`
+	NoRepo       bool          `json:"no_repo,omitempty"`
+	Agent        string        `json:"agent,omitempty"`
+	Model        string        `json:"model,omitempty"`
+	Image        string        `json:"image,omitempty"`
+	Message      string        `json:"message"`
+	History      []TurnMessage `json:"history,omitempty"`
+	CallbackURL  string        `json:"callback_url,omitempty"`
+	ProfileFile  string        `json:"profile_file,omitempty"`
+	Instructions string        `json:"instructions,omitempty"`
+	ExtraMounts  []Mount       `json:"extra_mounts,omitempty"`
 }
 
 // TurnOutput is the JSON response from `cerberus turn` on stdout.
@@ -45,6 +54,9 @@ type TurnOutput struct {
 
 // ErrSessionNotFound is returned by Turn when cerberus reports the session uuid is gone.
 const ErrSessionNotFound = "session not found"
+
+// ErrSessionAlreadyExists is returned by Turn when UUID is empty but the session name already exists.
+const ErrSessionAlreadyExists = "already exists"
 
 // Client wraps the cerberus binary.
 type Client struct {

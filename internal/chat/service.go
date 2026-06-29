@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -223,6 +224,58 @@ func (s *Service) DeleteSession(ctx context.Context, id int64) error {
 	return db.DeleteChatSession(ctx, s.pool, id)
 }
 
+// AttachProject attaches a project to a session and resets the cerberus container.
+func (s *Service) AttachProject(ctx context.Context, sessionID, projectID int64) error {
+	sess, err := db.GetChatSession(ctx, s.pool, sessionID)
+	if err != nil {
+		return fmt.Errorf("get session: %w", err)
+	}
+	if sess.Status == "streaming" {
+		return ErrSessionBusy
+	}
+	if err := db.AttachProjectToSession(ctx, s.pool, sessionID, projectID); err != nil {
+		return fmt.Errorf("attach project: %w", err)
+	}
+	if sess.CerberusUUID != "" {
+		_ = s.cerb.Clean(ctx, sess.CerberusSession)
+		_ = db.ClearChatSessionUUID(ctx, s.pool, sessionID)
+	}
+	return nil
+}
+
+// DetachProject detaches a project from a session and resets the cerberus container.
+func (s *Service) DetachProject(ctx context.Context, sessionID, projectID int64) error {
+	sess, err := db.GetChatSession(ctx, s.pool, sessionID)
+	if err != nil {
+		return fmt.Errorf("get session: %w", err)
+	}
+	if sess.Status == "streaming" {
+		return ErrSessionBusy
+	}
+	if err := db.DetachProjectFromSession(ctx, s.pool, sessionID, projectID); err != nil {
+		return fmt.Errorf("detach project: %w", err)
+	}
+	if sess.CerberusUUID != "" {
+		_ = s.cerb.Clean(ctx, sess.CerberusSession)
+		_ = db.ClearChatSessionUUID(ctx, s.pool, sessionID)
+	}
+	return nil
+}
+
+// ListSessionProjects returns all projects attached to a session.
+func (s *Service) ListSessionProjects(ctx context.Context, sessionID int64) ([]db.Project, error) {
+	return db.ListSessionProjects(ctx, s.pool, sessionID)
+}
+
+var nonAlphaNum = regexp.MustCompile(`[^a-z0-9]+`)
+
+func slugify(name string) string {
+	s := strings.ToLower(name)
+	s = nonAlphaNum.ReplaceAllString(s, "-")
+	s = strings.Trim(s, "-")
+	return s
+}
+
 func (s *Service) sendTurn(sess db.ChatSession, content string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
@@ -248,6 +301,30 @@ func (s *Service) sendTurn(sess db.ChatSession, content string) {
 		}
 	}
 
+	projects, err := db.ListSessionProjects(ctx, s.pool, sess.ID)
+	if err != nil {
+		log.Printf("chat turn %d: list session projects: %v", sess.ID, err)
+	}
+	for _, p := range projects {
+		slug := slugify(p.Name)
+		input.ExtraMounts = append(input.ExtraMounts, cerberus.Mount{
+			Host:      p.RepoPath,
+			Container: "/mnt/projects/" + slug,
+			ReadOnly:  true,
+		})
+	}
+	if len(input.ExtraMounts) > 0 {
+		lines := []string{
+			"The following project directories are mounted read-only in this container.",
+			"Use these paths directly — do NOT look in /workspace, they are not there.",
+			"Mounted projects:",
+		}
+		for i, m := range input.ExtraMounts {
+			lines = append(lines, fmt.Sprintf("  %d. %s", i+1, m.Container))
+		}
+		input.Instructions = strings.Join(lines, "\n")
+	}
+
 	out, err := s.cerb.Turn(ctx, input)
 	if err != nil {
 		log.Printf("chat turn %d: %v", sess.ID, err)
@@ -268,6 +345,27 @@ func (s *Service) sendTurn(sess db.ChatSession, content string) {
 		out, err = s.cerb.Turn(ctx, input)
 		if err != nil {
 			log.Printf("chat turn %d (recovery): %v", sess.ID, err)
+			_ = db.UpdateChatSessionStatus(ctx, s.pool, sess.ID, "error")
+			return
+		}
+	}
+
+	// Stale session name exists in cerberus but our UUID is gone — clean it and retry fresh.
+	if out.Status == "error" && strings.Contains(out.Error, cerberus.ErrSessionAlreadyExists) {
+		log.Printf("chat turn %d: stale cerberus session %q — cleaning and retrying", sess.ID, sess.CerberusSession)
+		_ = s.cerb.Clean(ctx, sess.CerberusSession)
+		_ = db.ClearChatSessionUUID(ctx, s.pool, sess.ID)
+		msgs, dbErr := db.ListChatMessages(ctx, s.pool, sess.ID)
+		if dbErr != nil {
+			log.Printf("chat turn %d: load history for stale-session recovery: %v", sess.ID, dbErr)
+			_ = db.UpdateChatSessionStatus(ctx, s.pool, sess.ID, "error")
+			return
+		}
+		input.UUID = ""
+		input.History = buildHistory(msgs)
+		out, err = s.cerb.Turn(ctx, input)
+		if err != nil {
+			log.Printf("chat turn %d (stale-session recovery): %v", sess.ID, err)
 			_ = db.UpdateChatSessionStatus(ctx, s.pool, sess.ID, "error")
 			return
 		}
