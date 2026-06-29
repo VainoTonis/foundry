@@ -710,6 +710,12 @@ function initChatStream(root) {
   if (!el) return;
   bindChatAutoScroll(root.querySelector('#chat-messages'));
   if (chatSource) { chatSource.close(); chatSource = null; }
+
+  // Move dialog to body so it isn't clipped by any ancestor overflow/transform.
+  // Remove any stale orphaned dialog from a previous fragment swap first.
+  document.querySelectorAll('body > .chat-settings-dialog').forEach((stale) => stale.remove());
+  const dialog = root.querySelector?.('.chat-settings-dialog');
+  if (dialog) document.body.appendChild(dialog);
   const finish = () => {
     setChatDebug('Turn complete. Refreshing transcript...', 'finish');
     setChatInputDisabled(false);
@@ -783,3 +789,76 @@ document.body.addEventListener('htmx:historyRestore', () => {
 });
 
 document.addEventListener('DOMContentLoaded', () => initStreams(document));
+
+// --- chat settings dialog ---
+
+function openChatSettings() {
+  const dialog = document.getElementById('chat-settings-dialog');
+  if (dialog) dialog.showModal();
+}
+
+function closeChatSettings() {
+  const dialog = document.getElementById('chat-settings-dialog');
+  if (dialog) dialog.close();
+}
+
+document.addEventListener('click', (event) => {
+  if (event.target.closest('#chat-settings-btn')) {
+    event.preventDefault();
+    openChatSettings();
+    return;
+  }
+
+  if (event.target.closest('#chat-settings-close')) {
+    closeChatSettings();
+    return;
+  }
+
+  // "Add" button in the settings dialog project section.
+  const addProjectBtn = event.target.closest('#chat-add-project-btn');
+  if (addProjectBtn) {
+    event.preventDefault();
+    const sessionId = addProjectBtn.dataset.sessionId;
+    const select = document.getElementById('chat-add-project-select');
+    const projectId = select?.value;
+    if (!projectId) return;
+    sendJSON('POST', `/api/chat/sessions/${sessionId}/projects`, { project_id: Number(projectId) })
+      .then(() => { closeChatSettings(); refresh(`/chat/${sessionId}/fragment`, '#app'); })
+      .catch((err) => toast(err.message || String(err), 'error'));
+    return;
+  }
+
+  // Remove project chip inside dialog.
+  const detachBtn = event.target.closest('[data-detach-project]');
+  if (detachBtn) {
+    event.preventDefault();
+    const sessionId = detachBtn.dataset.sessionId;
+    const projectId = detachBtn.dataset.projectId;
+    sendJSON('DELETE', `/api/chat/sessions/${sessionId}/projects/${projectId}`)
+      .then(() => { closeChatSettings(); refresh(`/chat/${sessionId}/fragment`, '#app'); })
+      .catch((err) => toast(err.message || String(err), 'error'));
+    return;
+  }
+});
+
+// Profile select change → PATCH immediately.
+document.addEventListener('change', (event) => {
+  const select = event.target.closest('#chat-profile-select');
+  if (!select) return;
+  const sessionId = select.dataset.sessionId;
+  sendJSON('PATCH', `/api/chat/sessions/${sessionId}/profile`, { profile_name: select.value })
+    .then(() => toast('Profile updated', 'success'))
+    .catch((err) => { toast(err.message || String(err), 'error'); });
+});
+
+// Close dialog on backdrop click.
+// Guard: ignore the click that opened the dialog (the settings button itself).
+document.addEventListener('click', (event) => {
+  if (event.target.closest('#chat-settings-btn')) return;
+  const dialog = document.getElementById('chat-settings-dialog');
+  if (!dialog || !dialog.open) return;
+  const rect = dialog.getBoundingClientRect();
+  if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) {
+    dialog.close();
+  }
+});
