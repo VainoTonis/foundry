@@ -852,13 +852,9 @@ document.addEventListener('change', (event) => {
 });
 
 // Close dialog on backdrop click.
-// Guard: ignore the click that opened the dialog (the settings button itself).
+// When the backdrop is clicked, event.target is the <dialog> element itself.
+// Clicking children inside the dialog gives a different target, so this is safe.
 document.addEventListener('click', (event) => {
-  if (event.target.closest('#chat-settings-btn')) return;
   const dialog = document.getElementById('chat-settings-dialog');
-  if (!dialog || !dialog.open) return;
-  const rect = dialog.getBoundingClientRect();
-  if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) {
-    dialog.close();
-  }
+  if (event.target === dialog) dialog.close();
 });
