@@ -166,6 +166,60 @@ func (h *Handler) HandleChatSession(w http.ResponseWriter, r *http.Request) {
 		}
 		w.WriteHeader(http.StatusNoContent)
 
+	case suffix == "projects" && r.Method == http.MethodGet:
+		projects, err := svc.ListSessionProjects(r.Context(), id)
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if projects == nil {
+			projects = []db.Project{}
+		}
+		jsonOK(w, projects, http.StatusOK)
+
+	case suffix == "projects" && r.Method == http.MethodPost:
+		var body struct {
+			ProjectID int64 `json:"project_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ProjectID == 0 {
+			jsonErr(w, "project_id required", http.StatusBadRequest)
+			return
+		}
+		if err := svc.AttachProject(r.Context(), id, body.ProjectID); err != nil {
+			if errors.Is(err, chat.ErrSessionBusy) {
+				jsonErr(w, "session has an active turn", http.StatusConflict)
+				return
+			}
+			if errors.Is(err, db.ErrNotFound) {
+				jsonErr(w, "not found", http.StatusNotFound)
+				return
+			}
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	case strings.HasPrefix(suffix, "projects/") && r.Method == http.MethodDelete:
+		pidStr := strings.TrimPrefix(suffix, "projects/")
+		pid, err := strconv.ParseInt(pidStr, 10, 64)
+		if err != nil {
+			jsonErr(w, "invalid project id", http.StatusBadRequest)
+			return
+		}
+		if err := svc.DetachProject(r.Context(), id, pid); err != nil {
+			if errors.Is(err, chat.ErrSessionBusy) {
+				jsonErr(w, "session has an active turn", http.StatusConflict)
+				return
+			}
+			if errors.Is(err, db.ErrNotFound) {
+				jsonErr(w, "not found", http.StatusNotFound)
+				return
+			}
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
 	default:
 		jsonErr(w, "not found", http.StatusNotFound)
 	}

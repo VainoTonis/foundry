@@ -75,15 +75,37 @@ func (h *Handler) handleUIChatDetailFragment(w http.ResponseWriter, r *http.Requ
 		msgs = []db.ChatMessage{}
 	}
 	profiles, _ := db.ListProfiles(r.Context(), h.pool)
+	attachedProjects, _ := db.ListSessionProjects(r.Context(), h.pool, id)
+	allProjects, _ := db.ListProjects(r.Context(), h.pool)
+	if attachedProjects == nil {
+		attachedProjects = []db.Project{}
+	}
+
+	attachedSet := make(map[int64]bool, len(attachedProjects))
+	for _, p := range attachedProjects {
+		attachedSet[p.ID] = true
+	}
+	var availableProjects []db.Project
+	for _, p := range allProjects {
+		if !attachedSet[p.ID] {
+			availableProjects = append(availableProjects, p)
+		}
+	}
+	if availableProjects == nil {
+		availableProjects = []db.Project{}
+	}
+
 	_, runtimeProfile := h.runtimeProfiles()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := templates.ExecuteTemplate(w, "chat.detail", struct {
-		Session           db.ChatSession
-		Messages          []db.ChatMessage
-		Profiles          []db.Profile
-		ActiveProfileName string
-		RuntimeProfile    string
-	}{sess, msgs, profiles, activeProfileName(sess.ProfileName, runtimeProfile), runtimeProfile}); err != nil {
+		Session            db.ChatSession
+		Messages           []db.ChatMessage
+		Profiles           []db.Profile
+		ActiveProfileName  string
+		RuntimeProfile     string
+		AttachedProjects   []db.Project
+		AvailableProjects  []db.Project
+	}{sess, msgs, profiles, activeProfileName(sess.ProfileName, runtimeProfile), runtimeProfile, attachedProjects, availableProjects}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }

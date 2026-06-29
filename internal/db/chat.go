@@ -191,6 +191,14 @@ func DeleteChatSession(ctx context.Context, pool *pgxpool.Pool, id int64) error 
 	return err
 }
 
+func ClearChatSessionUUID(ctx context.Context, pool *pgxpool.Pool, id int64) error {
+	_, err := pool.Exec(ctx,
+		`UPDATE chat_sessions SET cerberus_uuid = '', updated_at = NOW() WHERE id = $1`,
+		id,
+	)
+	return err
+}
+
 func InsertChatMessage(ctx context.Context, pool *pgxpool.Pool, sessionID int64, role, content string) (ChatMessage, error) {
 	var m ChatMessage
 	err := pool.QueryRow(ctx,
