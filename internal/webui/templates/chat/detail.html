@@ -51,18 +51,14 @@
     </div>
   </dialog>
 
-  <div class="page-header spec-hero chat-hero">
-    <div>
-      <p class="eyebrow">Chat #{{.Session.ID}}</p>
-      <h2>{{if .Session.Title}}{{.Session.Title}}{{else}}New conversation{{end}}</h2>
-      <div class="card-meta">{{.Session.Status}} · {{if .ActiveProfileName}}{{.ActiveProfileName}}{{else}}no profile{{end}}{{if .AttachedProjects}} · {{len .AttachedProjects}} project(s){{end}}</div>
-    </div>
-  </div>
-
   <div class="chat-shell">
     <section class="chat-panel">
       <div class="chat-panel-title">
-        <span class="chat-panel-title-text">{{if .Session.Title}}{{.Session.Title}}{{else}}New conversation{{end}}</span>
+        <div class="chat-panel-title-meta">
+          <span class="eyebrow">Chat #{{.Session.ID}}</span>
+          <span class="chat-panel-title-text">{{if .Session.Title}}{{.Session.Title}}{{else}}New conversation{{end}}</span>
+          <span class="card-meta">{{.Session.Status}} · {{if .ActiveProfileName}}{{.ActiveProfileName}}{{else}}no profile{{end}}{{if .AttachedProjects}} · {{len .AttachedProjects}} project(s){{end}}</span>
+        </div>
         <button type="button" class="btn chat-panel-settings-btn" id="chat-settings-btn" aria-haspopup="dialog">Settings</button>
       </div>
       <div class="chat-statusbar" aria-live="polite">
