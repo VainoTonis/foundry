@@ -305,22 +305,21 @@ func (s *Service) sendTurn(sess db.ChatSession, content string) {
 	if err != nil {
 		log.Printf("chat turn %d: list session projects: %v", sess.ID, err)
 	}
-	for _, p := range projects {
-		slug := slugify(p.Name)
+	for i, p := range projects {
+		containerPath := "/workspace"
+		if i > 0 {
+			containerPath = "/workspace/" + slugify(p.Name)
+		}
 		input.ExtraMounts = append(input.ExtraMounts, cerberus.Mount{
 			Host:      p.RepoPath,
-			Container: "/mnt/projects/" + slug,
+			Container: containerPath,
 			ReadOnly:  true,
 		})
 	}
 	if len(input.ExtraMounts) > 0 {
-		lines := []string{
-			"The following project directories are mounted read-only in this container.",
-			"Use these paths directly — do NOT look in /workspace, they are not there.",
-			"Mounted projects:",
-		}
-		for i, m := range input.ExtraMounts {
-			lines = append(lines, fmt.Sprintf("  %d. %s", i+1, m.Container))
+		lines := []string{"Attached project dirs (read-only):"}
+		for _, m := range input.ExtraMounts {
+			lines = append(lines, "  "+m.Container)
 		}
 		input.Instructions = strings.Join(lines, "\n")
 	}
