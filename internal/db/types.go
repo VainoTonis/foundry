@@ -157,3 +157,23 @@ type Profile struct {
 	CreatedAt    time.Time         `json:"created_at"`
 	UpdatedAt    time.Time         `json:"updated_at"`
 }
+
+type Plan struct {
+	ID        int64     `json:"id"`
+	RepoName  string    `json:"repo_name"`
+	Title     string    `json:"title"`
+	Summary   string    `json:"summary"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type PlanStep struct {
+	ID        int64     `json:"id"`
+	PlanID    int64     `json:"plan_id"`
+	Position  int       `json:"position"`
+	Text      string    `json:"text"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
