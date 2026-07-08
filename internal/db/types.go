@@ -178,3 +178,11 @@ type PlanStep struct {
 	UpdatedAt     time.Time `json:"updated_at"`
 	ParallelGroup *int      `json:"parallel_group,omitempty"`
 }
+
+type Feedback struct {
+	ID        int64     `json:"id"`
+	Body      string    `json:"body"`
+	Model     string    `json:"model"`
+	SessionID string    `json:"session_id"`
+	CreatedAt time.Time `json:"created_at"`
+}
