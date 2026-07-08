@@ -24,6 +24,7 @@
       <div class="plan-step-meta">
         <span>ID: {{.ID}}</span>
         <span>Created: {{.CreatedAt.Format "2006-01-02 15:04"}}</span>
+        {{if .ParallelGroup}}<span class="plan-step-parallel-group">Parallel Group: {{.ParallelGroup}}</span>{{end}}
       </div>
     </article>{{end}}</div>
   </section>{{else}}<div class="empty empty-action">No steps in this plan.</div>{{end}}
