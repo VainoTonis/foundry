@@ -152,6 +152,31 @@ button:disabled, .btn:disabled, [aria-busy="true"] { opacity: .62; cursor: not-a
 .empty-action { border: 3px dashed var(--border); background: var(--paper); padding: 1.2rem; color: var(--ink); font-weight: 800; }
 .empty-error { border: 3px solid var(--red); background: #ffe1dd; color: var(--ink); font-weight: 800; }
 
+/* --- plans --- */
+.plan-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: .9rem; }
+.plan-slab { border: 3px solid var(--border); background: var(--paper); padding: 1rem; box-shadow: 4px 4px 0 var(--border); }
+.plan-head { display: flex; align-items: flex-start; justify-content: space-between; gap: .75rem; margin-bottom: .75rem; }
+.plan-title { color: var(--ink); font-weight: 950; text-decoration: none; font-size: 1rem; overflow-wrap: anywhere; }
+.plan-title:hover { text-decoration: underline; }
+.plan-summary { color: var(--muted); font-size: .84rem; margin-bottom: .75rem; line-height: 1.4; }
+.plan-local-nav { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: 1rem; }
+.plan-local-nav a { color: var(--ink); text-decoration: none; font-size: .84rem; }
+.plan-local-nav a:hover { text-decoration: underline; }
+.plan-hero { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1.5rem; border-bottom: 3px solid var(--border); padding-bottom: 1rem; }
+.plan-hero h1 { font-size: clamp(1.6rem, 4vw, 2.5rem); line-height: .95; text-transform: uppercase; letter-spacing: -.04em; }
+.plan-meta { color: var(--muted); font-size: .84rem; margin-top: .3rem; }
+.plan-summary-section { margin-bottom: 1.5rem; border: 3px solid var(--border); background: var(--paper-2); padding: 1rem; }
+.plan-summary-section h2 { font-size: 1rem; text-transform: uppercase; font-weight: 950; margin-bottom: .5rem; }
+.plan-details { margin-bottom: 1.5rem; }
+.plan-steps-section { margin-top: 1.5rem; }
+.plan-steps-section h2 { font-size: 1rem; text-transform: uppercase; font-weight: 950; margin-bottom: 1rem; }
+.plan-steps-list { display: flex; flex-direction: column; gap: .75rem; }
+.plan-step-item { border: 3px solid var(--border); background: var(--paper-2); padding: 1rem; }
+.plan-step-header { display: flex; align-items: center; gap: .75rem; margin-bottom: .5rem; }
+.plan-step-position { font-weight: 950; font-size: .9rem; text-transform: uppercase; }
+.plan-step-text { font-family: var(--mono); font-size: .84rem; margin-bottom: .5rem; line-height: 1.5; overflow-wrap: anywhere; }
+.plan-step-meta { font-size: .72rem; color: var(--muted); display: flex; flex-wrap: wrap; gap: 1rem; }
+
 /* --- groups --- */
 .group-label {
   font-size: .78rem; font-weight: 950; letter-spacing: .09em; text-transform: uppercase;

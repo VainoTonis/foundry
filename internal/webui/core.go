@@ -58,4 +58,7 @@ func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/chat", h.handleUIChatPage)
 	mux.HandleFunc("/chat/fragment", h.handleUIChatFragment)
 	mux.HandleFunc("/chat/", h.handleUIChat)
+	mux.HandleFunc("/plans", h.handleUIPlansPage)
+	mux.HandleFunc("/plans/fragment", h.handleUIPlansFragment)
+	mux.HandleFunc("/plans/", h.handleUIPlan)
 }

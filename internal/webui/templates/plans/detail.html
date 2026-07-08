@@ -1,0 +1,31 @@
+{{define "plans.detail"}}
+<div data-page="plans" data-plan-id="{{.Plan.ID}}">
+  <nav class="plan-local-nav" aria-label="Plan context"><a href="/plans" hx-get="/plans/fragment" hx-target="#app" hx-push-url="/plans">Plans</a></nav>
+  <header class="plan-hero">
+    <div><p class="eyebrow">Plan #{{.Plan.ID}}</p><h1>{{.Plan.Title}}</h1><div class="plan-meta">Status: {{.Plan.Status}}</div></div>
+    <span class="chip chip-{{.Plan.Status}}">{{.Plan.Status}}</span>
+  </header>
+  {{if .Plan.Summary}}<section class="plan-summary-section"><h2>Summary</h2><p>{{.Plan.Summary}}</p></section>{{end}}
+  <section class="plan-details">
+    <dl class="fact-list">
+      <div><dt>Repository</dt><dd>{{.Plan.RepoName}}</dd></div>
+      <div><dt>Created</dt><dd>{{.Plan.CreatedAt.Format "2006-01-02 15:04"}}</dd></div>
+      <div><dt>Updated</dt><dd>{{.Plan.UpdatedAt.Format "2006-01-02 15:04"}}</dd></div>
+    </dl>
+  </section>
+  {{if .Steps}}<section class="plan-steps-section">
+    <h2>Steps</h2>
+    <div class="plan-steps-list">{{range .Steps}}<article class="plan-step-item">
+      <div class="plan-step-header">
+        <span class="plan-step-position">Step {{.Position}}</span>
+        <span class="chip chip-{{.Status}}">{{.Status}}</span>
+      </div>
+      <p class="plan-step-text">{{.Text}}</p>
+      <div class="plan-step-meta">
+        <span>ID: {{.ID}}</span>
+        <span>Created: {{.CreatedAt.Format "2006-01-02 15:04"}}</span>
+      </div>
+    </article>{{end}}</div>
+  </section>{{else}}<div class="empty empty-action">No steps in this plan.</div>{{end}}
+</div>
+{{end}}

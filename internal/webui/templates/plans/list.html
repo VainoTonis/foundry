@@ -1,0 +1,6 @@
+{{define "plans.list"}}
+<div data-page="plans">
+  <div class="page-header command-header"><div><p class="eyebrow">Foundry / plans</p><h2>Plans</h2><p class="hint">Read-only view of system plans and their steps.</p></div></div>
+  {{if .Plans}}<div class="plan-grid">{{range .Plans}}<article class="plan-slab"><div class="plan-head"><a class="plan-title" href="/plans/{{.ID}}" hx-get="/plans/{{.ID}}/fragment" hx-target="#app" hx-push-url="/plans/{{.ID}}">{{.Title}}</a><span class="chip chip-{{.Status}}">{{.Status}}</span></div><div class="plan-summary">{{.Summary}}</div><dl class="fact-list"><div><dt>Repo</dt><dd>{{.RepoName}}</dd></div><div><dt>Created</dt><dd>{{.CreatedAt.Format "2006-01-02 15:04"}}</dd></div></dl><div class="card-actions"><a class="btn btn-primary" href="/plans/{{.ID}}" hx-get="/plans/{{.ID}}/fragment" hx-target="#app" hx-push-url="/plans/{{.ID}}">View plan</a></div></article>{{end}}</div>{{else}}<div class="empty empty-action">No plans yet.</div>{{end}}
+</div>
+{{end}}
