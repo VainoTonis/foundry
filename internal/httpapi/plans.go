@@ -101,7 +101,7 @@ func (h *Handler) HandlePlan(w http.ResponseWriter, r *http.Request) {
 			jsonErr(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		step, err := db.CreatePlanStep(r.Context(), h.pool, id, body.Position, body.Text)
+		step, err := db.CreatePlanStep(r.Context(), h.pool, id, body.Position, body.Text, nil)
 		if err != nil {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
