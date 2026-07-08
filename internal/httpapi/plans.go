@@ -94,14 +94,15 @@ func (h *Handler) HandlePlan(w http.ResponseWriter, r *http.Request) {
 		jsonOK(w, steps, http.StatusOK)
 	case suffix == "steps" && r.Method == http.MethodPost:
 		var body struct {
-			Position int    `json:"position"`
-			Text     string `json:"text"`
+			Position       int   `json:"position"`
+			Text           string `json:"text"`
+			ParallelGroup  *int  `json:"parallel_group"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			jsonErr(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		step, err := db.CreatePlanStep(r.Context(), h.pool, id, body.Position, body.Text, nil)
+		step, err := db.CreatePlanStep(r.Context(), h.pool, id, body.Position, body.Text, body.ParallelGroup)
 		if err != nil {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -131,14 +132,15 @@ func (h *Handler) HandlePlan(w http.ResponseWriter, r *http.Request) {
 			jsonOK(w, step, http.StatusOK)
 		case http.MethodPatch:
 			var body struct {
-				Status *string `json:"status"`
-				Text   *string `json:"text"`
+				Status        *string `json:"status"`
+				Text          *string `json:"text"`
+				ParallelGroup *int    `json:"parallel_group"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				jsonErr(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			updated, err := db.UpdatePlanStep(r.Context(), h.pool, id, stepID, db.UpdatePlanStepParams{Status: body.Status, Text: body.Text})
+			updated, err := db.UpdatePlanStep(r.Context(), h.pool, id, stepID, db.UpdatePlanStepParams{Status: body.Status, Text: body.Text, ParallelGroup: body.ParallelGroup})
 			if errors.Is(err, db.ErrNotFound) {
 				jsonErr(w, "not found", http.StatusNotFound)
 				return
