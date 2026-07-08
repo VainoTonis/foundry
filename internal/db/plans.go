@@ -14,8 +14,9 @@ type UpdatePlanParams struct {
 }
 
 type UpdatePlanStepParams struct {
-	Status *string
-	Text   *string
+	Status        *string
+	Text          *string
+	ParallelGroup *int
 }
 
 func CreatePlan(ctx context.Context, pool *pgxpool.Pool, repoName, title, summary string) (Plan, error) {
@@ -91,12 +92,12 @@ func UpdatePlan(ctx context.Context, pool *pgxpool.Pool, id int64, p UpdatePlanP
 
 // ---- plan_steps ----
 
-func CreatePlanStep(ctx context.Context, pool *pgxpool.Pool, planID int64, position int, text string) (PlanStep, error) {
+func CreatePlanStep(ctx context.Context, pool *pgxpool.Pool, planID int64, position int, text string, parallelGroup *int) (PlanStep, error) {
 	var s PlanStep
 	err := pool.QueryRow(ctx,
-		`INSERT INTO plan_steps (plan_id, position, text, status) VALUES ($1, $2, $3, 'pending') RETURNING id, plan_id, position, text, status, created_at, updated_at`,
-		planID, position, text,
-	).Scan(&s.ID, &s.PlanID, &s.Position, &s.Text, &s.Status, &s.CreatedAt, &s.UpdatedAt)
+		`INSERT INTO plan_steps (plan_id, position, text, status, parallel_group) VALUES ($1, $2, $3, 'pending', $4) RETURNING id, plan_id, position, text, status, created_at, updated_at, parallel_group`,
+		planID, position, text, parallelGroup,
+	).Scan(&s.ID, &s.PlanID, &s.Position, &s.Text, &s.Status, &s.CreatedAt, &s.UpdatedAt, &s.ParallelGroup)
 	return s, err
 }
 
@@ -114,15 +115,20 @@ func UpdatePlanStep(ctx context.Context, pool *pgxpool.Pool, planID, id int64, p
 		args = append(args, *p.Text)
 		n++
 	}
+	if p.ParallelGroup != nil {
+		set = append(set, "parallel_group = $"+itoa(n))
+		args = append(args, *p.ParallelGroup)
+		n++
+	}
 	if len(set) == 0 {
 		return GetPlanStepByID(ctx, pool, planID, id)
 	}
 	set = append(set, "updated_at = NOW()")
 	args = append(args, id, planID)
 	q := `UPDATE plan_steps SET ` + joinComma(set) + ` WHERE id = $` + itoa(n) + ` AND plan_id = $` + itoa(n+1) +
-		` RETURNING id, plan_id, position, text, status, created_at, updated_at`
+		` RETURNING id, plan_id, position, text, status, created_at, updated_at, parallel_group`
 	var out PlanStep
-	err := pool.QueryRow(ctx, q, args...).Scan(&out.ID, &out.PlanID, &out.Position, &out.Text, &out.Status, &out.CreatedAt, &out.UpdatedAt)
+	err := pool.QueryRow(ctx, q, args...).Scan(&out.ID, &out.PlanID, &out.Position, &out.Text, &out.Status, &out.CreatedAt, &out.UpdatedAt, &out.ParallelGroup)
 	if err == pgx.ErrNoRows {
 		return out, ErrNotFound
 	}
@@ -132,8 +138,8 @@ func UpdatePlanStep(ctx context.Context, pool *pgxpool.Pool, planID, id int64, p
 func GetPlanStep(ctx context.Context, pool *pgxpool.Pool, id int64) (PlanStep, error) {
 	var s PlanStep
 	err := pool.QueryRow(ctx,
-		`SELECT id, plan_id, position, text, status, created_at, updated_at FROM plan_steps WHERE id = $1`, id,
-	).Scan(&s.ID, &s.PlanID, &s.Position, &s.Text, &s.Status, &s.CreatedAt, &s.UpdatedAt)
+		`SELECT id, plan_id, position, text, status, created_at, updated_at, parallel_group FROM plan_steps WHERE id = $1`, id,
+	).Scan(&s.ID, &s.PlanID, &s.Position, &s.Text, &s.Status, &s.CreatedAt, &s.UpdatedAt, &s.ParallelGroup)
 	if err == pgx.ErrNoRows {
 		return s, ErrNotFound
 	}
@@ -143,8 +149,8 @@ func GetPlanStep(ctx context.Context, pool *pgxpool.Pool, id int64) (PlanStep, e
 func GetPlanStepByID(ctx context.Context, pool *pgxpool.Pool, planID, stepID int64) (PlanStep, error) {
 	var s PlanStep
 	err := pool.QueryRow(ctx,
-		`SELECT id, plan_id, position, text, status, created_at, updated_at FROM plan_steps WHERE id = $1 AND plan_id = $2`, stepID, planID,
-	).Scan(&s.ID, &s.PlanID, &s.Position, &s.Text, &s.Status, &s.CreatedAt, &s.UpdatedAt)
+		`SELECT id, plan_id, position, text, status, created_at, updated_at, parallel_group FROM plan_steps WHERE id = $1 AND plan_id = $2`, stepID, planID,
+	).Scan(&s.ID, &s.PlanID, &s.Position, &s.Text, &s.Status, &s.CreatedAt, &s.UpdatedAt, &s.ParallelGroup)
 	if err == pgx.ErrNoRows {
 		return s, ErrNotFound
 	}
@@ -153,7 +159,7 @@ func GetPlanStepByID(ctx context.Context, pool *pgxpool.Pool, planID, stepID int
 
 func ListPlanSteps(ctx context.Context, pool *pgxpool.Pool, planID int64) ([]PlanStep, error) {
 	rows, err := pool.Query(ctx,
-		`SELECT id, plan_id, position, text, status, created_at, updated_at FROM plan_steps WHERE plan_id = $1 ORDER BY position`, planID)
+		`SELECT id, plan_id, position, text, status, created_at, updated_at, parallel_group FROM plan_steps WHERE plan_id = $1 ORDER BY position`, planID)
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +167,7 @@ func ListPlanSteps(ctx context.Context, pool *pgxpool.Pool, planID int64) ([]Pla
 	var out []PlanStep
 	for rows.Next() {
 		var s PlanStep
-		if err := rows.Scan(&s.ID, &s.PlanID, &s.Position, &s.Text, &s.Status, &s.CreatedAt, &s.UpdatedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.PlanID, &s.Position, &s.Text, &s.Status, &s.CreatedAt, &s.UpdatedAt, &s.ParallelGroup); err != nil {
 			return nil, err
 		}
 		out = append(out, s)
