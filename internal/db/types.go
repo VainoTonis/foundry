@@ -184,5 +184,6 @@ type Feedback struct {
 	Body      string    `json:"body"`
 	Model     string    `json:"model"`
 	SessionID string    `json:"session_id"`
+	Processed bool      `json:"processed"`
 	CreatedAt time.Time `json:"created_at"`
 }
