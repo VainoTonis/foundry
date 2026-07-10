@@ -163,6 +163,4 @@ func init() {
 	projectsCmd.AddCommand(projectsUpdateCmd)
 	projectsCmd.AddCommand(projectsDeleteCmd)
 	projectsCmd.AddCommand(projectsDiscoverCmd)
-	
-	rootCmd.AddCommand(projectsCmd)
 }
