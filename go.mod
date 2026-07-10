@@ -1,6 +1,6 @@
 module github.com/tonis2/foundry
 
-go 1.25.6
+go 1.24
 
 require (
 	github.com/golang-migrate/migrate/v4 v4.19.1

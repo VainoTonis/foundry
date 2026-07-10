@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"strconv"
-	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/tonis2/foundry/internal/apiclient"
@@ -279,9 +278,12 @@ var updateStepCmd = &cobra.Command{
 		if hasStepID {
 			stepID = fmt.Sprintf("%v", stepIDVal)
 		} else {
-			// Use position as the identifier - we'll need to resolve it
-			// For now, use position as step_id (this assumes position is passed)
-			stepID = fmt.Sprintf("%v", positionVal)
+			// Parse position as an integer for step lookup
+			positionStr := fmt.Sprintf("%v", positionVal)
+			if _, err := strconv.Atoi(positionStr); err != nil {
+				return fmt.Errorf("invalid position value: %v (must be an integer)", positionVal)
+			}
+			stepID = positionStr
 		}
 
 		// Build update request with generic field forwarding
