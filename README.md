@@ -38,12 +38,12 @@ Run PostgreSQL with Docker Compose, then build and run Foundry on the host:
 
 ```sh
 docker compose up -d postgres
-go build -o ./foundry ./cmd/server
+go build -o ./foundry-server ./cmd/server
 $EDITOR config.yaml
-./foundry config.yaml
+./foundry-server config.yaml
 ```
 
-Compose starts PostgreSQL only. Foundry runs as the host binary `./foundry`, using `config.yaml`. Open `http://localhost:8080`.
+Compose starts PostgreSQL only. Foundry runs as the host binary `./foundry-server`, using `config.yaml`. Open `http://localhost:8080`.
 
 If port `8080` is already in use, stop the conflicting service or change `server_port` in `config.yaml`.
 
