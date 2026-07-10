@@ -55,6 +55,49 @@ Minimum useful config:
 
 On startup, Foundry loads config, runs migrations, connects to PostgreSQL, and serves the UI/API.
 
+## Foundry CLI
+
+The `foundry` CLI is the programmatic/agent interface to Foundry. Build it separately:
+
+```sh
+go build -o foundry ./cmd/foundry
+```
+
+The CLI communicates with a running Foundry server via HTTP (default `http://localhost:8080`).
+
+### Plans subcommands
+
+```sh
+foundry plans create [...]     # Create a new plan
+foundry plans get <id>         # Get a plan by ID
+foundry plans list             # List all plans
+foundry plans update <id> [...] # Update a plan
+foundry plans update-step [...] # Update a plan step
+```
+
+### Projects subcommands
+
+```sh
+foundry projects create [...]  # Create a new project
+foundry projects list          # List all projects
+foundry projects get <id>      # Get a project by ID
+foundry projects update <id> [...] # Update a project
+foundry projects delete <id>   # Delete a project
+foundry projects discover      # Discover projects
+```
+
+### Global options
+
+```sh
+--url string   # Foundry server URL (default "http://localhost:8080")
+```
+
+Example with custom server:
+
+```sh
+foundry --url http://localhost:9000 plans list
+```
+
 ## Notes
 
 Internal package rules live in [docs/internal-package-boundaries.md](./docs/internal-package-boundaries.md).
