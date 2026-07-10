@@ -25,6 +25,7 @@ func init() {
 func main() {
 	// Add subcommands
 	rootCmd.AddCommand(plansCmd)
+	rootCmd.AddCommand(projectsCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
