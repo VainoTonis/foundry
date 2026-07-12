@@ -38,6 +38,7 @@ type Phase struct {
 	ID                int64      `json:"id"`
 	WorkflowID        int64      `json:"workflow_id"`
 	Position          int        `json:"position"`
+	ParallelGroup     *int       `json:"parallel_group,omitempty"`
 	Name              string     `json:"name"`
 	Goal              string     `json:"goal"`
 	PromptSent        *string    `json:"prompt_sent"`

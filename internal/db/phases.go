@@ -27,15 +27,19 @@ type UpdatePhaseParams struct {
 }
 
 func CreatePhase(ctx context.Context, pool *pgxpool.Pool, workflowID int64, position int, name, goal string, timeoutSeconds int) (Phase, error) {
+	return CreatePhaseWithParallelGroup(ctx, pool, workflowID, position, name, goal, timeoutSeconds, nil)
+}
+
+func CreatePhaseWithParallelGroup(ctx context.Context, pool *pgxpool.Pool, workflowID int64, position int, name, goal string, timeoutSeconds int, parallelGroup *int) (Phase, error) {
 	var ph Phase
 	err := pool.QueryRow(ctx,
-		`INSERT INTO phases (workflow_id, position, name, goal, timeout_seconds)
-		 VALUES ($1, $2, $3, $4, $5)
-		 RETURNING id, workflow_id, position, name, goal, prompt_sent, status, retry_count,
+		`INSERT INTO phases (workflow_id, position, name, goal, timeout_seconds, parallel_group)
+		 VALUES ($1, $2, $3, $4, $5, $6)
+		 RETURNING id, workflow_id, position, parallel_group, name, goal, prompt_sent, status, retry_count,
 		           timeout_seconds, cerberus_session, cerberus_commit, cost_usd,
 		           started_at, finished_at, review_verdict, review_notes,
 		           adjusted_prompt, decision_summary, decision_rationale, files_touched, phase_feedback`,
-		workflowID, position, name, goal, timeoutSeconds,
+		workflowID, position, name, goal, timeoutSeconds, parallelGroup,
 	).Scan(phaseScans(&ph)...)
 	return ph, err
 }
@@ -43,7 +47,7 @@ func CreatePhase(ctx context.Context, pool *pgxpool.Pool, workflowID int64, posi
 func GetPhase(ctx context.Context, pool *pgxpool.Pool, id int64) (Phase, error) {
 	var ph Phase
 	err := pool.QueryRow(ctx,
-		`SELECT id, workflow_id, position, name, goal, prompt_sent, status, retry_count,
+		`SELECT id, workflow_id, position, parallel_group, name, goal, prompt_sent, status, retry_count,
 		        timeout_seconds, cerberus_session, cerberus_commit, cost_usd,
 		        started_at, finished_at, review_verdict, review_notes,
 		        adjusted_prompt, decision_summary, decision_rationale, files_touched, phase_feedback
@@ -58,7 +62,7 @@ func GetPhase(ctx context.Context, pool *pgxpool.Pool, id int64) (Phase, error) 
 func GetPhaseByCerberusSession(ctx context.Context, pool *pgxpool.Pool, session string) (Phase, error) {
 	var ph Phase
 	err := pool.QueryRow(ctx,
-		`SELECT id, workflow_id, position, name, goal, prompt_sent, status, retry_count,
+		`SELECT id, workflow_id, position, parallel_group, name, goal, prompt_sent, status, retry_count,
 		        timeout_seconds, cerberus_session, cerberus_commit, cost_usd,
 		        started_at, finished_at, review_verdict, review_notes,
 		        adjusted_prompt, decision_summary, decision_rationale, files_touched, phase_feedback
@@ -72,7 +76,7 @@ func GetPhaseByCerberusSession(ctx context.Context, pool *pgxpool.Pool, session 
 
 func ListPhasesByWorkflow(ctx context.Context, pool *pgxpool.Pool, workflowID int64) ([]Phase, error) {
 	rows, err := pool.Query(ctx,
-		`SELECT id, workflow_id, position, name, goal, prompt_sent, status, retry_count,
+		`SELECT id, workflow_id, position, parallel_group, name, goal, prompt_sent, status, retry_count,
 		        timeout_seconds, cerberus_session, cerberus_commit, cost_usd,
 		        started_at, finished_at, review_verdict, review_notes,
 		        adjusted_prompt, decision_summary, decision_rationale, files_touched, phase_feedback
@@ -147,7 +151,7 @@ func UpdatePhase(ctx context.Context, pool *pgxpool.Pool, id int64, p UpdatePhas
 	}
 	args = append(args, id)
 	q := `UPDATE phases SET ` + joinComma(set) + ` WHERE id = $` + itoa(n) +
-		` RETURNING id, workflow_id, position, name, goal, prompt_sent, status, retry_count,
+		` RETURNING id, workflow_id, position, parallel_group, name, goal, prompt_sent, status, retry_count,
 		            timeout_seconds, cerberus_session, cerberus_commit, cost_usd,
 		            started_at, finished_at, review_verdict, review_notes,
 		            adjusted_prompt, decision_summary, decision_rationale, files_touched, phase_feedback`
@@ -162,7 +166,7 @@ func UpdatePhase(ctx context.Context, pool *pgxpool.Pool, id int64, p UpdatePhas
 func NextPendingPhase(ctx context.Context, pool *pgxpool.Pool, workflowID int64) (Phase, error) {
 	var ph Phase
 	err := pool.QueryRow(ctx,
-		`SELECT id, workflow_id, position, name, goal, prompt_sent, status, retry_count,
+		`SELECT id, workflow_id, position, parallel_group, name, goal, prompt_sent, status, retry_count,
 		        timeout_seconds, cerberus_session, cerberus_commit, cost_usd,
 		        started_at, finished_at, review_verdict, review_notes,
 		        adjusted_prompt, decision_summary, decision_rationale, files_touched, phase_feedback
@@ -176,7 +180,7 @@ func NextPendingPhase(ctx context.Context, pool *pgxpool.Pool, workflowID int64)
 
 func phaseScans(ph *Phase) []any {
 	return []any{
-		&ph.ID, &ph.WorkflowID, &ph.Position, &ph.Name, &ph.Goal,
+		&ph.ID, &ph.WorkflowID, &ph.Position, &ph.ParallelGroup, &ph.Name, &ph.Goal,
 		&ph.PromptSent, &ph.Status, &ph.RetryCount,
 		&ph.TimeoutSeconds, &ph.CerberusSession, &ph.CerberusCommit, &ph.CostUSD,
 		&ph.StartedAt, &ph.FinishedAt, &ph.ReviewVerdict, &ph.ReviewNotes,

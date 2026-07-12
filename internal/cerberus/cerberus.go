@@ -71,6 +71,7 @@ type Client struct {
 type PerRepoView struct {
 	client   *Client
 	repoPath string
+	profile  string
 }
 
 func New(bin, image, model, profile string) *Client {
@@ -81,7 +82,12 @@ func New(bin, image, model, profile string) *Client {
 // All commands executed via the returned PerRepoView use the specified repo path
 // without mutating the shared Client state.
 func (c *Client) WithRepo(repoPath string) *PerRepoView {
-	return &PerRepoView{client: c, repoPath: repoPath}
+	return &PerRepoView{client: c, repoPath: repoPath, profile: c.profile}
+}
+
+// WithRepoProfile returns an immutable command view suitable for concurrent sessions.
+func (c *Client) WithRepoProfile(repoPath, profile string) *PerRepoView {
+	return &PerRepoView{client: c, repoPath: repoPath, profile: profile}
 }
 
 // SetRepoPath sets the working directory for all cerberus commands.
@@ -316,8 +322,8 @@ func (v *PerRepoView) Start(ctx context.Context, session, prompt, callbackURL st
 	if v.client.model != "" {
 		args = append(args, "--model", v.client.model)
 	}
-	if v.client.profile != "" {
-		args = append(args, "--profile-file", v.client.profile)
+	if v.profile != "" {
+		args = append(args, "--profile-file", v.profile)
 	}
 	if callbackURL != "" {
 		args = append(args, "--callback", callbackURL, "--output", "jsonl")
@@ -364,8 +370,8 @@ func (v *PerRepoView) Chat(ctx context.Context, session, prompt, callbackURL str
 	if v.client.model != "" {
 		args = append(args, "--model", v.client.model)
 	}
-	if v.client.profile != "" {
-		args = append(args, "--profile-file", v.client.profile)
+	if v.profile != "" {
+		args = append(args, "--profile-file", v.profile)
 	}
 	if callbackURL != "" {
 		args = append(args, "--callback", callbackURL, "--output", "jsonl")
@@ -392,8 +398,8 @@ func (v *PerRepoView) Generate(ctx context.Context, session, prompt string) (str
 	if v.client.model != "" {
 		args = append(args, "--model", v.client.model)
 	}
-	if v.client.profile != "" {
-		args = append(args, "--profile-file", v.client.profile)
+	if v.profile != "" {
+		args = append(args, "--profile-file", v.profile)
 	}
 	return v.client.outputWith(ctx, v.repoPath, args...)
 }

@@ -72,16 +72,16 @@ func (h *Handler) runPlan(w http.ResponseWriter, r *http.Request, id int64) {
 		jsonErr(w, "plan has no project; update project_id before running", http.StatusConflict)
 		return
 	}
+	steps, err := db.ListPlanSteps(r.Context(), h.pool, id)
+	if err != nil {
+		jsonErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	content := strings.TrimSpace(plan.Content)
 	if content == "" {
 		content = "# " + plan.Title
 		if plan.Summary != "" {
 			content += "\n\n" + plan.Summary
-		}
-		steps, listErr := db.ListPlanSteps(r.Context(), h.pool, id)
-		if listErr != nil {
-			jsonErr(w, listErr.Error(), http.StatusInternalServerError)
-			return
 		}
 		for i, step := range steps {
 			content += "\n\n## Phase " + strconv.Itoa(i+1) + ": Step " + strconv.Itoa(i+1) + "\n\n" + step.Text

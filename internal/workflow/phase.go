@@ -17,9 +17,10 @@ func (r *Runner) runPhase(
 	proj db.Project,
 	phase db.Phase,
 	globalCtx, trackOverlay string,
+	beforeApply func() error,
 ) error {
 	prompt := buildPhasePrompt(proj.RepoPath, globalCtx, phase.Goal, trackOverlay, phase.AdjustedPrompt)
-	return r.execPhase(ctx, wf, proj, phase, prompt, false)
+	return r.execPhase(ctx, wf, proj, phase, prompt, false, beforeApply)
 }
 
 func (r *Runner) execPhase(
@@ -29,19 +30,24 @@ func (r *Runner) execPhase(
 	phase db.Phase,
 	prompt string,
 	isRetry bool,
+	beforeApply func() error,
 ) error {
 	sessionName := phaseSessionName(wf.ID, phase.ID)
 
-	r.cerb.SetRepoPath(proj.RepoPath)
+	profilePath, err := r.writeProfileFile(ctx, r.cerberusProfile(), sessionName)
+	if err != nil {
+		log.Printf("phase %d: write profile file: %v (proceeding without profile)", phase.ID, err)
+	}
+	cerb := r.cerb.WithRepoProfile(proj.RepoPath, profilePath)
 
-	if err := r.cerb.Clean(ctx, sessionName); err != nil {
+	if err := cerb.Clean(ctx, sessionName); err != nil {
 		log.Printf("pre-clean session %s: %v (ignored)", sessionName, err)
 		cleanupCerberusGitState(ctx, proj.RepoPath, sessionName)
 	}
 
 	now := time.Now()
 	status := "running"
-	_, err := db.UpdatePhase(ctx, r.pool, phase.ID, db.UpdatePhaseParams{
+	_, err = db.UpdatePhase(ctx, r.pool, phase.ID, db.UpdatePhaseParams{
 		Status:          &status,
 		PromptSent:      &prompt,
 		CerberusSession: &sessionName,
@@ -55,18 +61,10 @@ func (r *Runner) execPhase(
 	phaseCtx, cancel := context.WithTimeout(ctx, time.Duration(phase.TimeoutSeconds)*time.Second)
 	defer cancel()
 
-	profilePath, err := r.writeProfileFile(ctx, r.cerberusProfile(), sessionName)
-	if err != nil {
-		log.Printf("phase %d: write profile file: %v (proceeding without profile)", phase.ID, err)
-	}
-	if profilePath != "" {
-		r.cerb.SetProfile(profilePath)
-	}
-
 	cerberusDone := make(chan error, 1)
 	callbackURL := r.cfg.CerberusCallbackURL
 	go func() {
-		cerberusDone <- r.cerb.Start(phaseCtx, sessionName, prompt, callbackURL)
+		cerberusDone <- cerb.Start(phaseCtx, sessionName, prompt, callbackURL)
 	}()
 
 	var logTicker *time.Ticker
@@ -80,10 +78,10 @@ loop:
 	for {
 		select {
 		case <-tickerC(logTicker):
-			r.collectLogs(ctx, wf.ID, phase.ID, sessionName, &lastLogLine)
+			r.collectLogs(ctx, cerb, wf.ID, phase.ID, sessionName, &lastLogLine)
 		case cerberusErr := <-cerberusDone:
 			if callbackURL == "" {
-				r.collectLogs(ctx, wf.ID, phase.ID, sessionName, &lastLogLine)
+				r.collectLogs(ctx, cerb, wf.ID, phase.ID, sessionName, &lastLogLine)
 			}
 			if cerberusErr != nil {
 				failStatus := "failed"
@@ -126,7 +124,7 @@ loop:
 	_, _ = db.UpdatePhase(ctx, r.pool, phase.ID, db.UpdatePhaseParams{Status: &awaitStatus})
 	r.publishPhaseUpdate(wf.ID, phase.ID, "awaiting_review")
 
-	diff, err := r.cerb.Diff(ctx, sessionName)
+	diff, err := cerb.Diff(ctx, sessionName)
 	if err != nil {
 		diff = ""
 	}
@@ -139,7 +137,7 @@ loop:
 		notes = "cerberus exited 0 but produced no diff"
 	}
 
-	reviewOut, _ := r.cerb.Review(ctx, sessionName)
+	reviewOut, _ := cerb.Review(ctx, sessionName)
 	filesJSON := extractFilesJSON(reviewOut)
 	commitHash := cerberusCommitHash(ctx, proj.RepoPath, sessionName)
 
@@ -164,6 +162,19 @@ loop:
 				PhaseFeedback: phaseFeedback,
 			})
 		} else {
+			if beforeApply != nil {
+				if err := beforeApply(); err != nil {
+					failed := "failed"
+					failVerdict := "fail"
+					notes := err.Error()
+					feedback := buildPhaseFeedback(failVerdict, notes, filesJSON, commitHash)
+					_, _ = db.UpdatePhase(context.Background(), r.pool, phase.ID, db.UpdatePhaseParams{
+						Status: &failed, ReviewVerdict: &failVerdict, ReviewNotes: &notes, PhaseFeedback: feedback,
+					})
+					r.publishPhaseUpdate(wf.ID, phase.ID, failed)
+					return err
+				}
+			}
 			cmd := exec.CommandContext(ctx, "git", "-C", proj.RepoPath, "cherry-pick", commitHash)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				_ = exec.CommandContext(ctx, "git", "-C", proj.RepoPath, "cherry-pick", "--abort").Run()
@@ -206,11 +217,13 @@ loop:
 	if err != nil {
 		return fmt.Errorf("reload phase for retry: %w", err)
 	}
-	return r.execPhase(ctx, wf, proj, phase2, adjusted, true)
+	return r.execPhase(ctx, wf, proj, phase2, adjusted, true, beforeApply)
 }
 
-func (r *Runner) collectLogs(ctx context.Context, workflowID, phaseID int64, session string, lastLine *string) {
-	logs, err := r.cerb.Logs(ctx, session)
+func (r *Runner) collectLogs(ctx context.Context, cerb interface {
+	Logs(context.Context, string) (string, error)
+}, workflowID, phaseID int64, session string, lastLine *string) {
+	logs, err := cerb.Logs(ctx, session)
 	if err != nil {
 		return
 	}
