@@ -59,7 +59,7 @@ func NewServer(pool *pgxpool.Pool, runner *workflow.Runner, cerb *cerberus.Clien
 		WorkflowRunner:      runner,
 		DefaultBudget:       defaultBudget,
 		SpecDraftsService:   s.newSpecDraftsService,
-		ChatService:         func() *chat.Service { return s.chatSvc },
+		ChatService:         func() httpapi.ChatService { return s.chatSvc },
 		Cerberus:            cerb,
 		ProjectRepoForWorkflow: func(ctx context.Context, workflowID int64) (string, error) {
 			_, _, project, err := s.workflowProject(ctx, workflowID)

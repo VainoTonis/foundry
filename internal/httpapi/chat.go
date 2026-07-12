@@ -225,6 +225,6 @@ func (h *Handler) HandleChatSession(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *Handler) chatService() *chat.Service {
+func (h *Handler) chatService() ChatService {
 	return h.chatSvc()
 }

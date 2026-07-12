@@ -1,13 +1,17 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/tonis2/foundry/internal/authoring"
+	"github.com/tonis2/foundry/internal/chat"
 	"github.com/tonis2/foundry/internal/db"
 )
 
@@ -132,3 +136,134 @@ func TestBuildFollowUpContextIncludesRecentLogs(t *testing.T) {
 }
 
 func strPtr(s string) *string { return &s }
+
+func TestHandleChatSessionsCreatePassesProfileThroughAPI(t *testing.T) {
+	svc := &fakeChatService{createSession: db.ChatSession{ID: 44, ProfileName: "dev"}}
+	h := New(nil, Config{ChatService: func() ChatService { return svc }})
+	req := httptest.NewRequest(http.MethodPost, "/api/chat/sessions", bytes.NewBufferString(`{"profile_name":"dev"}`))
+	rec := httptest.NewRecorder()
+
+	h.HandleChatSessions(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if svc.createdProfile != "dev" {
+		t.Fatalf("created profile = %q, want dev", svc.createdProfile)
+	}
+}
+
+func TestHandleChatSessionMessagePassesProfileThroughAPI(t *testing.T) {
+	svc := &fakeChatService{}
+	h := New(nil, Config{ChatService: func() ChatService { return svc }})
+	req := httptest.NewRequest(http.MethodPost, "/api/chat/sessions/22/message", bytes.NewBufferString(`{"content":"hello","profile_name":"dev"}`))
+	rec := httptest.NewRecorder()
+
+	h.HandleChatSession(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if svc.sentSessionID != 22 || svc.sentContent != "hello" || svc.sentProfile == nil || *svc.sentProfile != "dev" {
+		t.Fatalf("sent = id %d content %q profile %#v", svc.sentSessionID, svc.sentContent, svc.sentProfile)
+	}
+}
+
+func TestHandleChatSessionMessageMapsBusyToConflict(t *testing.T) {
+	svc := &fakeChatService{sendErr: chat.ErrSessionBusy}
+	h := New(nil, Config{ChatService: func() ChatService { return svc }})
+	req := httptest.NewRequest(http.MethodPost, "/api/chat/sessions/22/message", bytes.NewBufferString(`{"content":"hello"}`))
+	rec := httptest.NewRecorder()
+
+	h.HandleChatSession(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleChatSessionProjectsThroughAPI(t *testing.T) {
+	svc := &fakeChatService{projects: []db.Project{{ID: 7, Name: "repo", RepoPath: "/repo"}}}
+	h := New(nil, Config{ChatService: func() ChatService { return svc }})
+
+	rec := httptest.NewRecorder()
+	h.HandleChatSession(rec, httptest.NewRequest(http.MethodGet, "/api/chat/sessions/3/projects", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"repo_path":"/repo"`) {
+		t.Fatalf("GET status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	h.HandleChatSession(rec, httptest.NewRequest(http.MethodPost, "/api/chat/sessions/3/projects", bytes.NewBufferString(`{"project_id":7}`)))
+	if rec.Code != http.StatusNoContent || svc.attachedSessionID != 3 || svc.attachedProjectID != 7 {
+		t.Fatalf("POST status = %d attach = %d/%d body = %s", rec.Code, svc.attachedSessionID, svc.attachedProjectID, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	h.HandleChatSession(rec, httptest.NewRequest(http.MethodDelete, "/api/chat/sessions/3/projects/7", nil))
+	if rec.Code != http.StatusNoContent || svc.detachedSessionID != 3 || svc.detachedProjectID != 7 {
+		t.Fatalf("DELETE status = %d detach = %d/%d body = %s", rec.Code, svc.detachedSessionID, svc.detachedProjectID, rec.Body.String())
+	}
+}
+
+type fakeChatService struct {
+	createSession db.ChatSession
+	createErr     error
+
+	createdProfile string
+	sentSessionID  int64
+	sentContent    string
+	sentProfile    *string
+	sendErr        error
+
+	projects          []db.Project
+	attachedSessionID int64
+	attachedProjectID int64
+	detachedSessionID int64
+	detachedProjectID int64
+}
+
+func (f *fakeChatService) CreateSession(_ context.Context, profileName string) (db.ChatSession, error) {
+	f.createdProfile = profileName
+	return f.createSession, f.createErr
+}
+
+func (f *fakeChatService) GetSession(context.Context, int64) (db.ChatSession, error) {
+	return db.ChatSession{}, nil
+}
+
+func (f *fakeChatService) ListSessions(context.Context) ([]db.ChatSession, error) { return nil, nil }
+
+func (f *fakeChatService) ListMessages(context.Context, int64) ([]db.ChatMessage, error) {
+	return nil, nil
+}
+
+func (f *fakeChatService) SendMessageWithProfile(_ context.Context, sessionID int64, content string, profileName *string) error {
+	f.sentSessionID = sessionID
+	f.sentContent = content
+	f.sentProfile = profileName
+	return f.sendErr
+}
+
+func (f *fakeChatService) SuspendSession(context.Context, int64) error { return nil }
+
+func (f *fakeChatService) UpdateSessionProfile(context.Context, int64, string) error { return nil }
+
+func (f *fakeChatService) DeleteSession(context.Context, int64) error { return nil }
+
+func (f *fakeChatService) AttachProject(_ context.Context, sessionID, projectID int64) error {
+	f.attachedSessionID = sessionID
+	f.attachedProjectID = projectID
+	return nil
+}
+
+func (f *fakeChatService) DetachProject(_ context.Context, sessionID, projectID int64) error {
+	f.detachedSessionID = sessionID
+	f.detachedProjectID = projectID
+	return nil
+}
+
+func (f *fakeChatService) ListSessionProjects(context.Context, int64) ([]db.Project, error) {
+	return f.projects, nil
+}
+
+var _ ChatService = (*fakeChatService)(nil)
