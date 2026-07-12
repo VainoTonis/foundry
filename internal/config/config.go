@@ -21,11 +21,7 @@ type Config struct {
 	MaxConcurrentWorkflows     int     `yaml:"max_concurrent_workflows"`
 	DefaultWorkflowBudgetUSD   float64 `yaml:"default_workflow_budget_usd"`
 	DefaultPhaseTimeoutSeconds int     `yaml:"default_phase_timeout_seconds"`
-	ReviewBaseURL              string  `yaml:"review_base_url"`
-	ReviewAPIKey               string  `yaml:"review_api_key"`
-	ReviewModel                string  `yaml:"review_model"`
 	GitRoot                    string  `yaml:"git_root"`
-	MemoryRepoPath             string  `yaml:"memory_repo_path"`
 }
 
 func Load(path string) (Config, error) {
@@ -52,11 +48,7 @@ func RuntimeSettingKeys() map[string]bool {
 		"max_concurrent_workflows":      true,
 		"default_workflow_budget_usd":   true,
 		"default_phase_timeout_seconds": true,
-		"review_base_url":               true,
-		"review_api_key":                true,
-		"review_model":                  true,
 		"git_root":                      true,
-		"memory_repo_path":              true,
 	}
 }
 
@@ -70,11 +62,7 @@ func RuntimeDefaults(c Config) map[string]string {
 		"max_concurrent_workflows":      strconv.Itoa(c.MaxConcurrentWorkflows),
 		"default_workflow_budget_usd":   strconv.FormatFloat(c.DefaultWorkflowBudgetUSD, 'f', -1, 64),
 		"default_phase_timeout_seconds": strconv.Itoa(c.DefaultPhaseTimeoutSeconds),
-		"review_base_url":               c.ReviewBaseURL,
-		"review_api_key":                c.ReviewAPIKey,
-		"review_model":                  c.ReviewModel,
 		"git_root":                      c.GitRoot,
-		"memory_repo_path":              c.MemoryRepoPath,
 	}
 }
 
@@ -109,16 +97,8 @@ func ApplyRuntimeSettings(c *Config, values map[string]string) error {
 				return fmt.Errorf("parse %s: %w", k, err)
 			}
 			c.DefaultPhaseTimeoutSeconds = n
-		case "review_base_url":
-			c.ReviewBaseURL = v
-		case "review_api_key":
-			c.ReviewAPIKey = v
-		case "review_model":
-			c.ReviewModel = v
 		case "git_root":
 			c.GitRoot = expandHome(v)
-		case "memory_repo_path":
-			c.MemoryRepoPath = expandHome(v)
 		}
 	}
 	setDefaults(c)
@@ -144,17 +124,8 @@ func setDefaults(c *Config) {
 	if c.DefaultPhaseTimeoutSeconds == 0 {
 		c.DefaultPhaseTimeoutSeconds = 1800
 	}
-	if c.ReviewModel == "" {
-		c.ReviewModel = "claude-haiku-4-5"
-	}
-	if c.ReviewBaseURL == "" {
-		c.ReviewBaseURL = "https://api.openai.com/v1"
-	}
 	if c.GitRoot != "" {
 		c.GitRoot = expandHome(c.GitRoot)
-	}
-	if c.MemoryRepoPath != "" {
-		c.MemoryRepoPath = expandHome(c.MemoryRepoPath)
 	}
 }
 

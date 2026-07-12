@@ -1,0 +1,12 @@
+{{define "builder.start"}}
+<div data-page="builder">
+  <div class="page-header command-header"><div><p class="eyebrow">Draft Studio</p><h2>Explore intent before it becomes a spec</h2><p class="hint">Choose a project, steer the assistant through goals, constraints, and phase shape, then save only when the markdown matches your intent.</p></div></div>
+  <div class="builder-start-grid"><form class="panel-form builder-start-form" data-json method="post" action="/api/spec-drafts" data-redirect-template="/spec-builder/{id}">
+    <h3>Start a draft</h3>
+    <div class="field"><label>Project</label><select name="project_id" required>{{range .Projects}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select></div>
+    <div class="field"><label>What intent should we explore?</label><textarea name="description" required placeholder="Describe the goal, constraints, open questions, evidence needed, and possible phases."></textarea><p class="hint">Use the conversation to steer the draft; for runnable work, ask for visible ## Phase N: headings before saving.</p></div>
+    <button class="btn btn-primary">Start draft</button>
+  </form><aside class="context-panel"><h3>How Draft Studio helps</h3><dl class="fact-list"><div><dt>Input</dt><dd>Your project and initial intent.</dd></div><div><dt>Exploration</dt><dd>Steer goals, scope, constraints, evidence, and phase boundaries in conversation.</dd></div><div><dt>Safe point</dt><dd>The draft is not executable until you save it as a plan.</dd></div></dl></aside></div>
+  {{if .Drafts}}<div class="group-label">Resume active drafts</div><div class="worklist">{{range .Drafts}}<article class="work-row"><div class="work-main"><a class="work-title" href="/spec-builder/{{.ID}}" hx-get="/spec-builder/{{.ID}}/fragment" hx-target="#app" hx-push-url="/spec-builder/{{.ID}}">{{.Title}}</a><div class="work-meta">updated {{datetime .UpdatedAt}}</div></div><div class="work-signals"><span class="chip chip-{{.Status}}">{{.Status}}</span></div><div class="work-next"><a class="btn btn-primary" href="/spec-builder/{{.ID}}" hx-get="/spec-builder/{{.ID}}/fragment" hx-target="#app" hx-push-url="/spec-builder/{{.ID}}">Continue</a></div></article>{{end}}</div>{{else}}<div class="empty empty-action">No active drafts. Start in Draft Studio to explore and refine intent before it becomes a plan.</div>{{end}}
+</div>
+{{end}}

@@ -12,10 +12,11 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/tonis2/foundry/internal/api"
+	"github.com/tonis2/foundry/internal/authoring"
 	"github.com/tonis2/foundry/internal/cerberus"
 	"github.com/tonis2/foundry/internal/config"
 	"github.com/tonis2/foundry/internal/db"
+	"github.com/tonis2/foundry/internal/httpserver"
 	"github.com/tonis2/foundry/internal/hub"
 	"github.com/tonis2/foundry/internal/workflow"
 )
@@ -72,21 +73,22 @@ func main() {
 		MaxConcurrentWorkflows:     runtime.MaxConcurrentWorkflows,
 		CerberusProfile:            runtime.CerberusProfile,
 		CerberusCallbackURL:        fmt.Sprintf("http://localhost:%d/api/cerberus/events", cfg.ServerPort),
-		MemoryRepoPath:             runtime.MemoryRepoPath,
 	}
 	runner := workflow.NewRunner(pool, cerb, runnerCfg, eventHub)
 
 	// orphan draft recovery (non-blocking)
-	go api.RecoverOrphanDrafts(context.Background(), pool, cerb)
+	go authoring.RecoverOrphanDrafts(context.Background(), pool, cerb)
 
-	// API server
-	srv := api.NewServer(pool, runner, cerb, eventHub, runtime.DefaultWorkflowBudgetUSD, runtime.GitRoot, runtime.MemoryRepoPath, cfgPath, runtime.CerberusProfile, cfg.ServerPort)
+	// HTTP edge server
+	srv := httpserver.NewServer(pool, runner, cerb, eventHub, runtime.DefaultWorkflowBudgetUSD, runtime.GitRoot, cfgPath, runtime.CerberusProfile, cfg.ServerPort)
 
-	// serve API, server-rendered UI, and static assets
+	// Serve JSON API, server-rendered UI, and static assets.
 	mux := http.NewServeMux()
 	mux.Handle("/api/", srv)
-	mux.Handle("/style.css", noCacheMiddleware(http.FileServer(http.Dir("web"))))
-	mux.Handle("/app.js", noCacheMiddleware(http.FileServer(http.Dir("web"))))
+	static := noCacheMiddleware(http.FileServer(http.Dir("web")))
+	mux.Handle("/style.css", static)
+	mux.Handle("/js/", static)
+	mux.Handle("/vendor/", static)
 	mux.Handle("/", srv)
 
 	addr := fmt.Sprintf(":%d", cfg.ServerPort)

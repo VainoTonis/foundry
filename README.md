@@ -4,22 +4,21 @@ Foundry is a spec-driven, self-running development loop.
 
 Here is intent. Here is agent work. Here is evidence. Here is decision.
 
-Foundry is where ideas get turned into code. You write a spec, define phases, and Foundry runs them overnight via [cerberus](https://github.com/VainoTonis/cerberus) — automatically reviewing output, applying commits, and recording every decision made along the way.
-
-The durable project memory lives in the [intent wiki](./intent/README.md), which is plain Markdown and Obsidian-friendly.
+Foundry is where ideas get turned into code. You write a spec, define phases, and Foundry runs them via [cerberus](https://github.com/VainoTonis/cerberus), applying successful commits and recording what happened along the way.
 
 ## What it does
 
-- **Spec backlog** — dump ideas as markdown specs, they auto-queue and run as PoC
+- **Spec backlog** — save markdown specs and run them as PoC or polish workflows
 - **Two tracks** — PoC (fast, prove it works) and Polish (proper, tested, maintainable)
-- **Automated phase loop** — cerberus runs each phase, an LLM reviews the diff, commits get applied, next phase starts
-- **Decision memory** — every phase records what changed, why, and which files were touched
+- **Automated phase loop** — cerberus runs each phase, produced commits get applied, next phase starts
+- **Phase evidence** — every phase records status, logs, files touched, and failure context
+- **Draft Studio** — chat with cerberus to shape a spec before saving it
 
 ## How it works
 
 ```
 spec (markdown) → phases parsed → cerberus runs each phase in a container
-→ LLM reviews diff vs goal → pass: commit applied, next phase
+→ diff and commit captured → pass: commit applied, next phase
 → fail: retry once with adjusted prompt → fail again: paused
 → all done: workflow complete
 ```
@@ -39,12 +38,12 @@ Run PostgreSQL with Docker Compose, then build and run Foundry on the host:
 
 ```sh
 docker compose up -d postgres
-go build -o ./foundry ./cmd/server
+go build -o ./foundry-server ./cmd/server
 $EDITOR config.yaml
-./foundry config.yaml
+./foundry-server config.yaml
 ```
 
-Compose starts PostgreSQL only. Foundry runs as the host binary `./foundry`, using `config.yaml`. Open `http://localhost:8080`.
+Compose starts PostgreSQL only. Foundry runs as the host binary `./foundry-server`, using `config.yaml`. Open `http://localhost:8080`.
 
 If port `8080` is already in use, stop the conflicting service or change `server_port` in `config.yaml`.
 
@@ -52,19 +51,57 @@ Minimum useful config:
 
 - `db_url` points to PostgreSQL.
 - `git_root` points at the directory to scan for target repos.
-- `memory_repo_path` points at a private git repo for approved Markdown memory.
 - `cerberus_bin` points at the Cerberus CLI, or `cerberus` is on `PATH`.
 
 On startup, Foundry loads config, runs migrations, connects to PostgreSQL, and serves the UI/API.
 
-## Documentation
+## Foundry CLI
 
-- [Install](./docs/install.md)
-- [Self-hosting](./docs/self-hosting.md)
-- [Private memory repo](./docs/private-memory.md)
-- [Cerberus integration](./docs/cerberus.md)
-- [Troubleshooting](./docs/troubleshooting.md)
+The `foundry` CLI is the programmatic/agent interface to Foundry. Build it separately:
+
+```sh
+go build -o foundry ./cmd/foundry
+```
+
+The CLI communicates with a running Foundry server via HTTP (default `http://localhost:8080`).
+
+### Plans subcommands
+
+```sh
+foundry plans create [...]     # Create a new plan
+foundry plans get <id>         # Get a plan by ID
+foundry plans list             # List all plans
+foundry plans update <id> [...] # Update a plan
+foundry plans update-step [...] # Update a plan step
+```
+
+### Projects subcommands
+
+```sh
+foundry projects create [...]  # Create a new project
+foundry projects list          # List all projects
+foundry projects get <id>      # Get a project by ID
+foundry projects update <id> [...] # Update a project
+foundry projects delete <id>   # Delete a project
+foundry projects discover      # Discover projects
+```
+
+### Global options
+
+```sh
+--url string   # Foundry server URL (default "http://localhost:8080")
+```
+
+Example with custom server:
+
+```sh
+foundry --url http://localhost:9000 plans list
+```
+
+## Notes
+
+Internal package rules live in [docs/internal-package-boundaries.md](./docs/internal-package-boundaries.md).
 
 ## Status
 
-Pre-alpha. See [SPEC.md](./SPEC.md) for the full design.
+Pre-alpha. Internal cleanup still in progress.

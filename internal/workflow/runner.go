@@ -2,40 +2,17 @@ package workflow
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
-	"os"
-	"os/exec"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tonis2/foundry/internal/cerberus"
 	"github.com/tonis2/foundry/internal/db"
 	"github.com/tonis2/foundry/internal/hub"
-	"github.com/tonis2/foundry/internal/memory"
 	"github.com/tonis2/foundry/internal/spec"
 )
-
-type Config struct {
-	DefaultPhaseTimeoutSeconds int
-	DefaultWorkflowBudgetUSD   float64
-	MaxConcurrentWorkflows     int
-	CerberusProfile            string
-	CerberusCallbackURL        string
-	MemoryRepoPath             string
-}
-
-type Runner struct {
-	pool    *pgxpool.Pool
-	cerb    *cerberus.Client
-	cfg     Config
-	hub     *hub.EventHub
-	mu      sync.Mutex
-	cancels map[int64]context.CancelFunc
-}
 
 func NewRunner(pool *pgxpool.Pool, cerb *cerberus.Client, cfg Config, eventHub *hub.EventHub) *Runner {
 	return &Runner{
@@ -53,24 +30,11 @@ func (r *Runner) SetCerberusProfile(profile string) {
 	r.mu.Unlock()
 }
 
-func (r *Runner) SetMemoryRepoPath(path string) {
-	r.mu.Lock()
-	r.cfg.MemoryRepoPath = strings.TrimSpace(path)
-	r.mu.Unlock()
-}
-
 func (r *Runner) cerberusProfile() string {
 	r.mu.Lock()
 	profile := r.cfg.CerberusProfile
 	r.mu.Unlock()
 	return profile
-}
-
-func (r *Runner) memoryRepoPath() string {
-	r.mu.Lock()
-	path := r.cfg.MemoryRepoPath
-	r.mu.Unlock()
-	return path
 }
 
 func (r *Runner) Stop(workflowID int64) {
@@ -115,22 +79,35 @@ func (r *Runner) run(ctx context.Context, workflowID int64) error {
 	}
 
 	parsed := spec.Parse(sp.Content)
-	if len(parsed.Phases) == 0 {
-		log.Printf("workflow %d: spec has no phases, pausing", workflowID)
+	existing, _ := db.ListPhasesByWorkflow(ctx, r.pool, workflowID)
+	if len(existing) == 0 {
+		plan, planErr := db.GetPlanByWorkflow(ctx, r.pool, workflowID)
+		steps, stepsErr := db.ListPlanSteps(ctx, r.pool, plan.ID)
+		if planErr == nil && stepsErr == nil && len(steps) > 0 {
+			for _, step := range steps {
+				if _, err := db.CreatePhaseWithParallelGroup(ctx, r.pool, workflowID, step.Position, fmt.Sprintf("Step %d", step.Position), step.Text, r.cfg.DefaultPhaseTimeoutSeconds, step.ParallelGroup); err != nil {
+					return fmt.Errorf("create phase at position %d: %w", step.Position, err)
+				}
+			}
+		} else {
+			for _, ph := range parsed.Phases {
+				if _, err := db.CreatePhase(ctx, r.pool, workflowID, ph.Position, ph.Name, ph.Goal, r.cfg.DefaultPhaseTimeoutSeconds); err != nil {
+					return fmt.Errorf("create phase at position %d: %w", ph.Position, err)
+				}
+			}
+		}
+	}
+	phases, err := db.ListPhasesByWorkflow(ctx, r.pool, workflowID)
+	if err != nil {
+		return fmt.Errorf("list phases: %w", err)
+	}
+	if len(phases) == 0 {
+		log.Printf("workflow %d: plan has no executable steps or phases, pausing", workflowID)
 		_ = db.UpdateWorkflowStatus(ctx, r.pool, workflowID, "paused")
 		r.publishWorkflowUpdate(workflowID, "paused")
 		failStatus := "paused"
 		_, _ = db.UpdateSpec(ctx, r.pool, sp.ID, db.UpdateSpecParams{Status: &failStatus})
-		return fmt.Errorf("spec %d has no ## Phase N: sections", sp.ID)
-	}
-	existing, _ := db.ListPhasesByWorkflow(ctx, r.pool, workflowID)
-	if len(existing) == 0 {
-		for _, ph := range parsed.Phases {
-			timeout := r.cfg.DefaultPhaseTimeoutSeconds
-			if _, err := db.CreatePhase(ctx, r.pool, workflowID, ph.Position, ph.Name, ph.Goal, timeout); err != nil {
-				log.Printf("createPhase pos=%d: %v", ph.Position, err)
-			}
-		}
+		return fmt.Errorf("workflow %d has no executable steps", workflowID)
 	}
 
 	trackOverlay := spec.OverlayPoC
@@ -170,8 +147,18 @@ func (r *Runner) run(ctx context.Context, workflowID int64) error {
 			return fmt.Errorf("next phase: %w", err)
 		}
 
-		if err := r.runPhase(ctx, wf, proj, phase, parsed.GlobalContext, trackOverlay); err != nil {
-			log.Printf("phase %d failed: %v", phase.ID, err)
+		var runErr error
+		if phase.ParallelGroup == nil {
+			runErr = r.runPhase(ctx, wf, proj, phase, parsed.GlobalContext, trackOverlay, nil)
+		} else {
+			phases, listErr := db.ListPhasesByWorkflow(ctx, r.pool, workflowID)
+			if listErr != nil {
+				return fmt.Errorf("list parallel phases: %w", listErr)
+			}
+			runErr = r.runParallelGroup(ctx, wf, proj, pendingParallelBatch(phases, *phase.ParallelGroup), parsed.GlobalContext, trackOverlay)
+		}
+		if runErr != nil {
+			log.Printf("phase/group starting at %d failed: %v", phase.ID, runErr)
 			r.finishWorkflow(workflowID, "failed")
 			specStatus := "failed"
 			_, _ = db.UpdateSpec(context.Background(), r.pool, sp.ID, db.UpdateSpecParams{Status: &specStatus})
@@ -180,247 +167,64 @@ func (r *Runner) run(ctx context.Context, workflowID int64) error {
 	}
 }
 
-func (r *Runner) runPhase(
-	ctx context.Context,
-	wf db.Workflow,
-	proj db.Project,
-	phase db.Phase,
-	globalCtx, trackOverlay string,
-) error {
-	prompt := spec.BuildPrompt(globalCtx, phase.Goal, trackOverlay)
-	if phase.AdjustedPrompt != nil && *phase.AdjustedPrompt != "" {
-		prompt = *phase.AdjustedPrompt
+func pendingParallelBatch(phases []db.Phase, group int) []db.Phase {
+	batch := make([]db.Phase, 0)
+	for _, phase := range phases {
+		if phase.Status == "pending" && phase.ParallelGroup != nil && *phase.ParallelGroup == group {
+			batch = append(batch, phase)
+		}
 	}
-	memoryRepoPath := r.memoryRepoPath()
-	if mem, err := memory.LoadApproved(memoryRepoPath, proj.MemoryNamespace, extractTags(phase.Goal)); err == nil {
-		prompt = memory.Prepend(mem.Markdown, prompt)
-	} else {
-		log.Printf("phase %d: load memory: %v", phase.ID, err)
-	}
-	prompt = prependRepoRootContext(proj.RepoPath, prompt)
-	return r.execPhase(ctx, wf, proj, phase, prompt, false)
+	return batch
 }
 
-func (r *Runner) execPhase(
-	ctx context.Context,
-	wf db.Workflow,
-	proj db.Project,
-	phase db.Phase,
-	prompt string,
-	isRetry bool,
-) error {
-	sessionName := cerberus.SessionName(wf.ID, phase.ID)
-
-	r.cerb.SetRepoPath(proj.RepoPath)
-
-	if err := r.cerb.Clean(ctx, sessionName); err != nil {
-		log.Printf("pre-clean session %s: %v (ignored)", sessionName, err)
-		// cerberus state file may be gone but git branch/worktree can linger after a crash.
-		// Force-remove worktree then branch so the next Start can create them fresh.
-		_ = exec.CommandContext(ctx, "git", "-C", proj.RepoPath, "worktree", "remove", "--force",
-			".cerberus/sessions/"+sessionName+"/worktrees/solve").Run()
-		_ = exec.CommandContext(ctx, "git", "-C", proj.RepoPath, "worktree", "prune").Run()
-		_ = exec.CommandContext(ctx, "git", "-C", proj.RepoPath, "branch", "-D", "cerberus/"+sessionName).Run()
+func (r *Runner) runParallelGroup(ctx context.Context, wf db.Workflow, proj db.Project, phases []db.Phase, globalContext, trackOverlay string) error {
+	if len(phases) == 0 {
+		return nil
 	}
-
-	now := time.Now()
-	status := "running"
-	_, err := db.UpdatePhase(ctx, r.pool, phase.ID, db.UpdatePhaseParams{
-		Status:          &status,
-		PromptSent:      &prompt,
-		CerberusSession: &sessionName,
-		StartedAt:       &now,
-	})
-	if err != nil {
-		return fmt.Errorf("update phase running: %w", err)
+	// Agents execute concurrently in isolated Cerberus worktrees. Application is
+	// gated by zero-based position so commits reach the target repository in a
+	// deterministic order; a conflict fails the group and pauses progression.
+	gates := make([]chan struct{}, len(phases)+1)
+	for i := range gates {
+		gates[i] = make(chan struct{})
 	}
-	r.publishPhaseUpdate(wf.ID, phase.ID, "running")
+	close(gates[0])
 
-	phaseCtx, cancel := context.WithTimeout(ctx, time.Duration(phase.TimeoutSeconds)*time.Second)
-	defer cancel()
-
-	profilePath, err := r.writeProfileFile(ctx, r.cerberusProfile(), sessionName)
-	if err != nil {
-		log.Printf("phase %d: write profile file: %v (proceeding without profile)", phase.ID, err)
-	}
-	if profilePath != "" {
-		r.cerb.SetProfile(profilePath)
-	}
-
-	cerberusDone := make(chan error, 1)
-	callbackURL := r.cfg.CerberusCallbackURL
-	go func() {
-		cerberusDone <- r.cerb.Start(phaseCtx, sessionName, prompt, callbackURL)
-	}()
-
-	var logTicker *time.Ticker
-	if callbackURL == "" {
-		// Legacy fallback: only poll full logs when callback delivery is unavailable.
-		logTicker = time.NewTicker(2 * time.Second)
-		defer logTicker.Stop()
-	}
-
-	var lastLogLine string
-loop:
-	for {
-		select {
-		case <-tickerC(logTicker):
-			r.collectLogs(ctx, wf.ID, phase.ID, sessionName, &lastLogLine)
-		case cerberusErr := <-cerberusDone:
-			if callbackURL == "" {
-				r.collectLogs(ctx, wf.ID, phase.ID, sessionName, &lastLogLine)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var firstErr error
+	for i, phase := range phases {
+		i, phase := i, phase
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			beforeApply := func() error {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-gates[i]:
+				}
+				mu.Lock()
+				defer mu.Unlock()
+				if firstErr != nil {
+					return fmt.Errorf("parallel group blocked by earlier phase: %w", firstErr)
+				}
+				return nil
 			}
-			if cerberusErr != nil {
-				failStatus := "failed"
-				failVerdict := "fail"
-				now2 := time.Now()
-				notes := fmt.Sprintf("cerberus start failed:\n%v", cerberusErr)
-				phaseFeedback := buildPhaseFeedback(failVerdict, notes, []byte("[]"), "")
-				_, _ = db.UpdatePhase(context.Background(), r.pool, phase.ID, db.UpdatePhaseParams{
-					Status:        &failStatus,
-					FinishedAt:    &now2,
-					ReviewVerdict: &failVerdict,
-					ReviewNotes:   &notes,
-					PhaseFeedback: phaseFeedback,
-				})
-				r.publishPhaseUpdate(wf.ID, phase.ID, "failed")
-				return fmt.Errorf("cerberus: %w", cerberusErr)
+			err := r.runPhase(ctx, wf, proj, phase, globalContext, trackOverlay, beforeApply)
+			// Even a phase that fails before integration must not release the next
+			// position until all earlier positions have finished.
+			<-gates[i]
+			mu.Lock()
+			if err != nil && firstErr == nil {
+				firstErr = err
 			}
-			break loop
-		}
+			mu.Unlock()
+			close(gates[i+1])
+		}()
 	}
-
-	if ctx.Err() != nil {
-		failStatus := "failed"
-		failVerdict := "fail"
-		now2 := time.Now()
-		notes := ctx.Err().Error()
-		phaseFeedback := buildPhaseFeedback(failVerdict, notes, []byte("[]"), "")
-		_, _ = db.UpdatePhase(context.Background(), r.pool, phase.ID, db.UpdatePhaseParams{
-			Status:        &failStatus,
-			FinishedAt:    &now2,
-			ReviewVerdict: &failVerdict,
-			ReviewNotes:   &notes,
-			PhaseFeedback: phaseFeedback,
-		})
-		r.publishPhaseUpdate(wf.ID, phase.ID, "failed")
-		return ctx.Err()
-	}
-
-	awaitStatus := "awaiting_review"
-	_, _ = db.UpdatePhase(ctx, r.pool, phase.ID, db.UpdatePhaseParams{Status: &awaitStatus})
-	r.publishPhaseUpdate(wf.ID, phase.ID, "awaiting_review")
-
-	diff, err := r.cerb.Diff(ctx, sessionName)
-	if err != nil {
-		diff = ""
-	}
-
-	now3 := time.Now()
-	verdict := "pass"
-	notes := "cerberus produced changes"
-	if strings.TrimSpace(diff) == "" {
-		verdict = "fail"
-		notes = "cerberus exited 0 but produced no diff"
-	}
-
-	reviewOut, _ := r.cerb.Review(ctx, sessionName)
-	filesJSON := extractFilesJSON(reviewOut)
-
-	// get full commit hash from the cerberus branch directly
-	commitHash := ""
-	if hashOut, err := exec.CommandContext(ctx, "git", "-C", proj.RepoPath, "rev-parse", "cerberus/"+sessionName).Output(); err == nil {
-		commitHash = strings.TrimSpace(string(hashOut))
-	}
-
-	phaseFeedback := buildPhaseFeedback(verdict, notes, filesJSON, commitHash)
-	_, _ = db.UpdatePhase(ctx, r.pool, phase.ID, db.UpdatePhaseParams{
-		ReviewVerdict:  &verdict,
-		ReviewNotes:    &notes,
-		FilesTouched:   filesJSON,
-		PhaseFeedback:  phaseFeedback,
-		CerberusCommit: &commitHash,
-		FinishedAt:     &now3,
-	})
-
-	if verdict == "pass" {
-		if commitHash == "" {
-			verdict = "fail"
-			notes = "cerberus produced diff but no commit hash found"
-			phaseFeedback = buildPhaseFeedback(verdict, notes, filesJSON, commitHash)
-			_, _ = db.UpdatePhase(ctx, r.pool, phase.ID, db.UpdatePhaseParams{
-				ReviewVerdict: &verdict,
-				ReviewNotes:   &notes,
-				PhaseFeedback: phaseFeedback,
-			})
-		} else {
-			cmd := exec.CommandContext(ctx, "git", "-C", proj.RepoPath, "cherry-pick", commitHash)
-			if out, err := cmd.CombinedOutput(); err != nil {
-				// abort any partial cherry-pick so repo stays clean
-				_ = exec.CommandContext(ctx, "git", "-C", proj.RepoPath, "cherry-pick", "--abort").Run()
-				failStatus := "failed"
-				failVerdict := "fail"
-				cherryErr := fmt.Sprintf("cherry-pick %s failed: %v — %s", commitHash, err, strings.TrimSpace(string(out)))
-				phaseFeedback = buildPhaseFeedback(failVerdict, cherryErr, filesJSON, commitHash)
-				_, _ = db.UpdatePhase(ctx, r.pool, phase.ID, db.UpdatePhaseParams{
-					Status:        &failStatus,
-					ReviewVerdict: &failVerdict,
-					ReviewNotes:   &cherryErr,
-					PhaseFeedback: phaseFeedback,
-				})
-				r.publishPhaseUpdate(wf.ID, phase.ID, "failed")
-				return fmt.Errorf("phase %d cherry-pick: %w", phase.ID, err)
-			}
-			doneStatus := "done"
-			_, _ = db.UpdatePhase(ctx, r.pool, phase.ID, db.UpdatePhaseParams{Status: &doneStatus})
-			r.publishPhaseUpdate(wf.ID, phase.ID, "done")
-			return nil
-		}
-	}
-
-	if isRetry || phase.RetryCount >= 1 {
-		failStatus := "failed"
-		_, _ = db.UpdatePhase(ctx, r.pool, phase.ID, db.UpdatePhaseParams{Status: &failStatus})
-		r.publishPhaseUpdate(wf.ID, phase.ID, "failed")
-		return fmt.Errorf("phase %d failed after retry", phase.ID)
-	}
-
-	adjusted := prompt + "\n\n[Previous attempt produced no changes. Try again.]"
-	newRetry := phase.RetryCount + 1
-	_, _ = db.UpdatePhase(ctx, r.pool, phase.ID, db.UpdatePhaseParams{
-		AdjustedPrompt: &adjusted,
-		RetryCount:     &newRetry,
-		Status:         strPtr("pending"),
-	})
-
-	phase2, err := db.GetPhase(ctx, r.pool, phase.ID)
-	if err != nil {
-		return fmt.Errorf("reload phase for retry: %w", err)
-	}
-	return r.execPhase(ctx, wf, proj, phase2, adjusted, true)
-}
-
-func (r *Runner) collectLogs(ctx context.Context, workflowID, phaseID int64, session string, lastLine *string) {
-	logs, err := r.cerb.Logs(ctx, session)
-	if err != nil {
-		return
-	}
-	lines := strings.Split(logs, "\n")
-	writing := *lastLine == ""
-	for _, line := range lines {
-		if !writing {
-			if line == *lastLine {
-				writing = true
-			}
-			continue
-		}
-		if line == "" {
-			continue
-		}
-		_ = db.InsertPhaseLog(ctx, r.pool, phaseID, line)
-		*lastLine = line
-		r.publishLog(workflowID, phaseID, line)
-	}
+	wg.Wait()
+	return firstErr
 }
 
 func (r *Runner) workflowStatusFromPhases(ctx context.Context, workflowID int64) (string, error) {
@@ -433,8 +237,6 @@ func (r *Runner) workflowStatusFromPhases(ctx context.Context, workflowID int64)
 			return "failed", nil
 		}
 	}
-	// Prefer running over review waits: a workflow may have an active phase
-	// while earlier phases are still awaiting review.
 	for _, ph := range phases {
 		if ph.Status == "running" {
 			return "running", nil
@@ -451,201 +253,4 @@ func (r *Runner) workflowStatusFromPhases(ctx context.Context, workflowID int64)
 func (r *Runner) finishWorkflow(workflowID int64, status string) {
 	_ = db.UpdateWorkflowStatus(context.Background(), r.pool, workflowID, status)
 	r.publishWorkflowUpdate(workflowID, status)
-}
-
-func (r *Runner) publishLog(workflowID, phaseID int64, line string) {
-	if r.hub == nil {
-		return
-	}
-	data, _ := json.Marshal(map[string]any{
-		"event":    "log",
-		"phase_id": phaseID,
-		"line":     line,
-		"ts":       time.Now().Format(time.RFC3339),
-	})
-	r.hub.Publish(fmt.Sprintf("wf:%d", workflowID), data)
-}
-
-func (r *Runner) publishPhaseUpdate(workflowID, phaseID int64, status string) {
-	if r.hub == nil {
-		return
-	}
-	data, _ := json.Marshal(map[string]any{
-		"event":       "phase_update",
-		"workflow_id": workflowID,
-		"phase_id":    phaseID,
-		"status":      status,
-		"ts":          time.Now().Format(time.RFC3339),
-	})
-	r.hub.Publish(fmt.Sprintf("wf:%d", workflowID), data)
-}
-
-func (r *Runner) publishWorkflowUpdate(workflowID int64, status string) {
-	if r.hub == nil {
-		return
-	}
-	data, _ := json.Marshal(map[string]any{
-		"event":       "workflow_update",
-		"workflow_id": workflowID,
-		"status":      status,
-		"ts":          time.Now().Format(time.RFC3339),
-	})
-	r.hub.Publish(fmt.Sprintf("wf:%d", workflowID), data)
-}
-
-func strPtr(s string) *string { return &s }
-
-func extractTags(goal string) []string {
-	goal = strings.ToLower(goal)
-	goal = strings.NewReplacer(
-		",", " ",
-		".", " ",
-		";", " ",
-		":", " ",
-		"(", " ",
-		")", " ",
-		"!", " ",
-	).Replace(goal)
-
-	seen := make(map[string]bool)
-	var tags []string
-	for _, word := range strings.Fields(goal) {
-		if seen[word] {
-			continue
-		}
-		seen[word] = true
-		tags = append(tags, word)
-	}
-	return tags
-}
-
-const repoRootPromptHeader = `## Target Repository Root
-
-You are running in the configured target repository root: %s
-Treat the current working directory as the workspace root. All file paths in the spec are relative to this root. If the spec mentions the repository directory name, do not create a nested copy of that directory; modify files in this root.
-
----
-
-`
-
-func prependRepoRootContext(repoPath, prompt string) string {
-	if strings.HasPrefix(prompt, "## Target Repository Root\n") {
-		return prompt
-	}
-	return fmt.Sprintf(repoRootPromptHeader, repoPath) + prompt
-}
-
-func tickerC(t *time.Ticker) <-chan time.Time {
-	if t == nil {
-		return nil
-	}
-	return t.C
-}
-
-func profileFilePath(session string) string {
-	return "/tmp/foundry-profile-" + session + ".json"
-}
-
-func removeProfileFile(session string) {
-	os.Remove(profileFilePath(session))
-}
-
-func (r *Runner) writeProfileFile(ctx context.Context, profileName, session string) (string, error) {
-	if profileName == "" {
-		return "", nil
-	}
-	p, err := db.GetProfileByName(ctx, r.pool, profileName)
-	if err == db.ErrNotFound {
-		return "", nil
-	}
-	if err != nil {
-		return "", fmt.Errorf("lookup profile %q: %w", profileName, err)
-	}
-	payload := map[string]any{}
-	if p.DefaultModel != "" {
-		payload["default_model"] = p.DefaultModel
-	}
-	if p.DefaultImage != "" {
-		payload["default_image"] = p.DefaultImage
-	}
-	if p.AWSProfile != "" {
-		payload["aws_profile"] = p.AWSProfile
-	}
-	if p.AWSRegion != "" {
-		payload["aws_region"] = p.AWSRegion
-	}
-	if len(p.ExtraEnv) > 0 {
-		payload["extra_env"] = p.ExtraEnv
-	}
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return "", fmt.Errorf("marshal profile: %w", err)
-	}
-	path := profileFilePath(session)
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return "", fmt.Errorf("write profile file: %w", err)
-	}
-	return path, nil
-}
-
-type phaseFeedbackPayload struct {
-	Result          string   `json:"result"`
-	UsefulContext   []string `json:"useful_context"`
-	Problems        []string `json:"problems"`
-	SuggestedMemory string   `json:"suggested_memory"`
-	Confidence      float64  `json:"confidence"`
-}
-
-func buildPhaseFeedback(verdict, notes string, filesJSON []byte, commitHash string) []byte {
-	feedback := phaseFeedbackPayload{Result: strings.TrimSpace(verdict), Confidence: 0.6}
-	if feedback.Result == "pass" {
-		feedback.Confidence = 0.85
-	} else if feedback.Result == "fail" {
-		feedback.Confidence = 0.4
-	}
-	var files []string
-	if len(filesJSON) > 0 {
-		_ = json.Unmarshal(filesJSON, &files)
-	}
-	for _, f := range files {
-		if f = strings.TrimSpace(f); f != "" {
-			feedback.UsefulContext = append(feedback.UsefulContext, "touched "+f)
-		}
-	}
-	if commitHash = strings.TrimSpace(commitHash); commitHash != "" {
-		feedback.UsefulContext = append(feedback.UsefulContext, "commit "+commitHash)
-	}
-	if notes = strings.TrimSpace(notes); notes != "" {
-		if feedback.Result == "fail" {
-			feedback.Problems = append(feedback.Problems, notes)
-		} else {
-			feedback.UsefulContext = append(feedback.UsefulContext, notes)
-		}
-	}
-	if len(feedback.UsefulContext) > 0 {
-		feedback.SuggestedMemory = strings.Join(feedback.UsefulContext, "; ")
-	}
-	b, err := json.Marshal(feedback)
-	if err != nil {
-		return []byte(`{"result":"` + verdict + `","useful_context":[],"problems":["phase feedback marshal failed"],"suggested_memory":"","confidence":0}`)
-	}
-	return b
-}
-
-func extractFilesJSON(reviewOut string) []byte {
-	var files []string
-	for _, line := range strings.Split(reviewOut, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "commit") || strings.HasPrefix(line, "status") {
-			continue
-		}
-		files = append(files, line)
-	}
-	if len(files) == 0 {
-		return []byte("[]")
-	}
-	b := []byte(`["`)
-	b = append(b, []byte(strings.Join(files, `","`))...)
-	b = append(b, []byte(`"]`)...)
-	return b
 }

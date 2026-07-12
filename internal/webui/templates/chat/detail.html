@@ -1,0 +1,97 @@
+{{define "chat.detail"}}
+<div class="chat-page" data-page="chat" data-chat-stream="/api/chat/sessions/{{.Session.ID}}/stream" data-chat-id="{{.Session.ID}}">
+
+  <dialog id="chat-settings-dialog" class="chat-settings-dialog">
+    <div class="chat-settings-header">
+      <span class="chat-settings-title">Session settings</span>
+      <button type="button" class="chat-settings-close" id="chat-settings-close" aria-label="Close">×</button>
+    </div>
+    <div class="chat-settings-body">
+
+      <section class="chat-settings-section">
+        <h3>Profile</h3>
+        <select id="chat-profile-select" class="chat-settings-select" data-session-id="{{.Session.ID}}">
+          <option value="" {{if eq .Session.ProfileName ""}}selected{{end}}>Runtime{{if .RuntimeProfile}}: {{.RuntimeProfile}}{{else}} / no profile{{end}}</option>
+          {{range .Profiles}}<option value="{{.Name}}" {{if eq .Name $.Session.ProfileName}}selected{{end}}>{{.Name}}</option>{{end}}
+        </select>
+      </section>
+
+      <section class="chat-settings-section">
+        <h3>Projects</h3>
+        <div class="chat-settings-projects">
+          {{range .AttachedProjects}}
+          <div class="chat-settings-project-row">
+            <span class="chat-settings-project-name">{{.Name}}</span>
+            <span class="chat-settings-project-path">{{.RepoPath}}</span>
+            <button type="button" class="btn btn-danger chat-settings-project-remove" data-detach-project data-session-id="{{$.Session.ID}}" data-project-id="{{.ID}}">Remove</button>
+          </div>
+          {{end}}
+          {{if not .AttachedProjects}}<p class="chat-settings-empty">No projects attached.</p>{{end}}
+          {{if .AvailableProjects}}
+          <div class="chat-settings-add-project">
+            <select id="chat-add-project-select" class="chat-settings-select">
+              <option value="">Add a project…</option>
+              {{range .AvailableProjects}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
+            </select>
+            <button type="button" class="btn" id="chat-add-project-btn" data-session-id="{{.Session.ID}}">Add</button>
+          </div>
+          {{end}}
+        </div>
+      </section>
+
+      <section class="chat-settings-section">
+        <h3>Session</h3>
+        <div class="chat-settings-actions">
+          <button type="button" class="btn" data-json-post="/api/chat/sessions/{{.Session.ID}}/suspend" data-refresh="/chat/{{.Session.ID}}/fragment" data-target="#app" {{if eq .Session.Status "streaming"}}disabled title="active turn is running"{{end}}>Suspend</button>
+          <button type="button" class="btn btn-danger" data-json-delete="/api/chat/sessions/{{.Session.ID}}" data-redirect="/chat" data-confirm="Delete this session?">Delete</button>
+        </div>
+        <p class="chat-settings-meta">Status: <strong>{{.Session.Status}}</strong> · Updated: {{datetime .Session.UpdatedAt}}</p>
+      </section>
+
+    </div>
+  </dialog>
+
+  <div class="page-header spec-hero chat-hero">
+    <div>
+      <p class="eyebrow">Chat #{{.Session.ID}}</p>
+      <h2>{{if .Session.Title}}{{.Session.Title}}{{else}}New conversation{{end}}</h2>
+      <div class="card-meta">{{.Session.Status}} · {{if .ActiveProfileName}}{{.ActiveProfileName}}{{else}}no profile{{end}}{{if .AttachedProjects}} · {{len .AttachedProjects}} project(s){{end}}</div>
+    </div>
+    <div class="card-actions">
+      <button type="button" class="btn" id="chat-settings-btn" aria-haspopup="dialog">Settings</button>
+    </div>
+  </div>
+
+  <div class="chat-shell">
+    <section class="chat-panel">
+      <div class="chat-statusbar" aria-live="polite">
+        <span class="chip chip-{{.Session.Status}}" data-chat-status>{{.Session.Status}}</span>
+        <strong data-chat-connection>Ready</strong>
+        <span class="chat-debug-meta">events <strong data-chat-event-count>0</strong></span>
+        <span class="chat-debug-meta">last <strong data-chat-last-event>none</strong></span>
+      </div>
+      <div id="chat-messages" class="chat-messages">
+        {{if not .Messages}}
+          <div class="chat-empty">
+            <strong>Start with intent.</strong>
+            <span>Context-free Cerberus chat. Ask for exploration, debugging, critique, or implementation advice.</span>
+          </div>
+        {{end}}
+        {{range .Messages}}
+          <div class="chat-msg chat-msg-{{.Role}}">
+            <div class="chat-msg-label">{{.Role}}</div>
+            <div class="chat-msg-body">{{if eq .Role "assistant"}}{{markdown .Content}}{{else}}{{.Content}}{{end}}</div>
+          </div>
+        {{end}}
+      </div>
+      <form data-json data-chat-message method="post" action="/api/chat/sessions/{{.Session.ID}}/message">
+        <div class="chat-input-row">
+          <textarea class="chat-textarea" name="content" required data-chat-input placeholder="Type a message…"></textarea>
+          <button class="btn btn-primary">Send</button>
+        </div>
+        <div class="chat-debug-line" data-chat-debug-line>Enter sends. Shift+Enter adds newline.</div>
+      </form>
+    </section>
+  </div>
+</div>
+{{end}}
