@@ -85,8 +85,10 @@ func main() {
 	// Serve JSON API, server-rendered UI, and static assets.
 	mux := http.NewServeMux()
 	mux.Handle("/api/", srv)
-	mux.Handle("/style.css", noCacheMiddleware(http.FileServer(http.Dir("web"))))
-	mux.Handle("/app.js", noCacheMiddleware(http.FileServer(http.Dir("web"))))
+	static := noCacheMiddleware(http.FileServer(http.Dir("web")))
+	mux.Handle("/style.css", static)
+	mux.Handle("/js/", static)
+	mux.Handle("/vendor/", static)
 	mux.Handle("/", srv)
 
 	addr := fmt.Sprintf(":%d", cfg.ServerPort)
