@@ -23,8 +23,8 @@
     <nav class="nav-slabs" aria-label="Primary navigation">
       <a href="/plans" data-nav="plans" hx-get="/plans/fragment" hx-target="#app" hx-push-url="/plans"{{if eq .Page "plans"}} class="active"{{end}}>Plans</a>
       <a href="/projects" data-nav="projects" hx-get="/projects/fragment" hx-target="#app" hx-push-url="/projects"{{if eq .Page "projects"}} class="active"{{end}}>Projects</a>
-      <a href="/spec-builder" data-nav="builder" hx-get="/spec-builder/fragment" hx-target="#app" hx-push-url="/spec-builder"{{if eq .Page "builder"}} class="active"{{end}}>Draft Studio</a>
       <a href="/chat" data-nav="chat" hx-get="/chat/fragment" hx-target="#app" hx-push-url="/chat"{{if eq .Page "chat"}} class="active"{{end}}>Chat</a>
+      <a href="/feedback" data-nav="feedback" hx-get="/feedback/fragment" hx-target="#app" hx-push-url="/feedback"{{if eq .Page "feedback"}} class="active"{{end}}>Feedback</a>
       <a href="/settings" data-nav="settings" hx-get="/settings/fragment" hx-target="#app" hx-push-url="/settings"{{if eq .Page "settings"}} class="active"{{end}}>Settings</a>
     </nav>
   </header>

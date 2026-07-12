@@ -47,6 +47,8 @@ func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/projects/", h.handleUIProject)
 	mux.HandleFunc("/settings", h.handleUISettingsPage)
 	mux.HandleFunc("/settings/fragment", h.handleUISettingsFragment)
+	mux.HandleFunc("/feedback", h.handleUIFeedbackPage)
+	mux.HandleFunc("/feedback/fragment", h.handleUIFeedbackFragment)
 	mux.HandleFunc("/specs/", h.redirectToPlans)
 	mux.HandleFunc("/workflows/", h.handleUIWorkflow)
 	mux.HandleFunc("/phases/", h.handleUIPhase)

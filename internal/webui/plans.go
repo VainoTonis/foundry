@@ -27,15 +27,9 @@ func (s *Handler) handleUIPlansFragment(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	projects, err := db.ListProjects(r.Context(), s.pool)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
 	data := struct {
-		Plans    []db.Plan
-		Projects []db.Project
-	}{plans, projects}
+		Plans []db.Plan
+	}{plans}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := templates.ExecuteTemplate(w, "plans.list", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
