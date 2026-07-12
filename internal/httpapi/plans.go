@@ -14,15 +14,24 @@ func (h *Handler) HandlePlans(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
 		var body struct {
-			RepoName string `json:"repo_name"`
-			Title    string `json:"title"`
-			Summary  string `json:"summary"`
+			ProjectID int64  `json:"project_id"`
+			Title     string `json:"title"`
+			Summary   string `json:"summary"`
+			Content   string `json:"content"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			jsonErr(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		p, err := db.CreatePlan(r.Context(), h.pool, body.RepoName, body.Title, body.Summary)
+		if body.ProjectID == 0 {
+			jsonErr(w, "project_id is required", http.StatusBadRequest)
+			return
+		}
+		p, err := db.CreatePlan(r.Context(), h.pool, body.ProjectID, body.Title, body.Summary, body.Content)
+		if errors.Is(err, db.ErrNotFound) {
+			jsonErr(w, "project not found", http.StatusNotFound)
+			return
+		}
 		if err != nil {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -38,6 +47,72 @@ func (h *Handler) HandlePlans(w http.ResponseWriter, r *http.Request) {
 	default:
 		jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func (h *Handler) runPlan(w http.ResponseWriter, r *http.Request, id int64) {
+	var body struct {
+		MaxCostUSD *float64 `json:"max_cost_usd"`
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			jsonErr(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	plan, err := db.GetPlan(r.Context(), h.pool, id)
+	if errors.Is(err, db.ErrNotFound) {
+		jsonErr(w, "plan not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		jsonErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if plan.ProjectID == nil {
+		jsonErr(w, "plan has no project; update project_id before running", http.StatusConflict)
+		return
+	}
+	content := strings.TrimSpace(plan.Content)
+	if content == "" {
+		content = "# " + plan.Title
+		if plan.Summary != "" {
+			content += "\n\n" + plan.Summary
+		}
+		steps, listErr := db.ListPlanSteps(r.Context(), h.pool, id)
+		if listErr != nil {
+			jsonErr(w, listErr.Error(), http.StatusInternalServerError)
+			return
+		}
+		for i, step := range steps {
+			content += "\n\n## Phase " + strconv.Itoa(i+1) + ": Step " + strconv.Itoa(i+1) + "\n\n" + step.Text
+		}
+	}
+	sp, err := db.CreateSpec(r.Context(), h.pool, *plan.ProjectID, plan.Title, content, []byte("[]"))
+	if err != nil {
+		jsonErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	maxCost := body.MaxCostUSD
+	if maxCost == nil {
+		v := h.defaultBudget
+		maxCost = &v
+	}
+	wf, err := db.CreateWorkflow(r.Context(), h.pool, sp.ID, sp.Track, maxCost)
+	if err != nil {
+		jsonErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := db.LinkPlanWorkflow(r.Context(), h.pool, id, wf.ID); err != nil {
+		jsonErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	running := "running"
+	_, _ = db.UpdatePlan(r.Context(), h.pool, id, db.UpdatePlanParams{Status: &running})
+	_, _ = db.UpdateSpec(r.Context(), h.pool, sp.ID, db.UpdateSpecParams{Status: &running})
+	if h.workflowRunner != nil {
+		h.workflowRunner.Start(wf.ID)
+	}
+	jsonOK(w, wf, http.StatusCreated)
 }
 
 func (h *Handler) HandlePlan(w http.ResponseWriter, r *http.Request) {
@@ -67,15 +142,17 @@ func (h *Handler) HandlePlan(w http.ResponseWriter, r *http.Request) {
 		jsonOK(w, p, http.StatusOK)
 	case suffix == "" && r.Method == http.MethodPatch:
 		var body struct {
-			Status  *string `json:"status"`
-			Title   *string `json:"title"`
-			Summary *string `json:"summary"`
+			Status    *string `json:"status"`
+			ProjectID *int64  `json:"project_id"`
+			Title     *string `json:"title"`
+			Summary   *string `json:"summary"`
+			Content   *string `json:"content"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			jsonErr(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		p, err := db.UpdatePlan(r.Context(), h.pool, id, db.UpdatePlanParams{Status: body.Status, Title: body.Title, Summary: body.Summary})
+		p, err := db.UpdatePlan(r.Context(), h.pool, id, db.UpdatePlanParams{Status: body.Status, ProjectID: body.ProjectID, Title: body.Title, Summary: body.Summary, Content: body.Content})
 		if errors.Is(err, db.ErrNotFound) {
 			jsonErr(w, "not found", http.StatusNotFound)
 			return
@@ -85,6 +162,8 @@ func (h *Handler) HandlePlan(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		jsonOK(w, p, http.StatusOK)
+	case suffix == "run" && r.Method == http.MethodPost:
+		h.runPlan(w, r, id)
 	case suffix == "steps" && r.Method == http.MethodGet:
 		steps, err := db.ListPlanSteps(r.Context(), h.pool, id)
 		if err != nil {
@@ -94,9 +173,9 @@ func (h *Handler) HandlePlan(w http.ResponseWriter, r *http.Request) {
 		jsonOK(w, steps, http.StatusOK)
 	case suffix == "steps" && r.Method == http.MethodPost:
 		var body struct {
-			Position       int   `json:"position"`
-			Text           string `json:"text"`
-			ParallelGroup  *int  `json:"parallel_group"`
+			Position      int    `json:"position"`
+			Text          string `json:"text"`
+			ParallelGroup *int   `json:"parallel_group"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			jsonErr(w, err.Error(), http.StatusBadRequest)

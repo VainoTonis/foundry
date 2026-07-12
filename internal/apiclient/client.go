@@ -34,9 +34,11 @@ type Project struct {
 // Plan represents a foundry plan.
 type Plan struct {
 	ID        int64     `json:"id"`
+	ProjectID *int64    `json:"project_id,omitempty"`
 	RepoName  string    `json:"repo_name"`
 	Title     string    `json:"title"`
 	Summary   string    `json:"summary"`
+	Content   string    `json:"content"`
 	Status    string    `json:"status"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`

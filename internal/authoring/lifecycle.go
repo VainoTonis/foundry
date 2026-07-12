@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/tonis2/foundry/internal/db"
+	planspec "github.com/tonis2/foundry/internal/spec"
 )
 
 // CreateDraftAndStartChat creates a spec draft and begins a chat session with cerberus.
@@ -118,7 +119,7 @@ func (svc *Service) sendMessage(ctx context.Context, draftID int64, session, con
 	}
 }
 
-// SaveDraft extracts the final spec from a draft's messages and persists it.
+// SaveDraft extracts the final specification from a draft and persists it as a canonical plan.
 func (svc *Service) SaveDraft(ctx context.Context, params SaveDraftParams) (int64, error) {
 	draft, err := db.GetSpecDraft(ctx, svc.pool, params.DraftID)
 	if err != nil {
@@ -161,9 +162,19 @@ func (svc *Service) SaveDraft(ctx context.Context, params SaveDraftParams) (int6
 		title = draft.Title
 	}
 
-	sp, err := db.CreateSpec(ctx, svc.pool, projID, title, specContent, []byte("[]"))
+	parsed := planspec.Parse(specContent)
+	plan, err := db.CreatePlan(ctx, svc.pool, projID, title, parsed.GlobalContext, specContent)
 	if err != nil {
-		return 0, fmt.Errorf("create spec: %w", err)
+		return 0, fmt.Errorf("create plan: %w", err)
+	}
+	for _, phase := range parsed.Phases {
+		text := phase.Goal
+		if phase.Name != "" {
+			text = phase.Name + "\n\n" + text
+		}
+		if _, err := db.CreatePlanStep(ctx, svc.pool, plan.ID, phase.Position, text, nil); err != nil {
+			return 0, fmt.Errorf("create plan step: %w", err)
+		}
 	}
 
 	frozen := db.SpecDraftStatusFrozen
@@ -171,7 +182,7 @@ func (svc *Service) SaveDraft(ctx context.Context, params SaveDraftParams) (int6
 		return 0, fmt.Errorf("mark draft frozen: %w", err)
 	}
 
-	return sp.ID, nil
+	return plan.ID, nil
 }
 
 // GetDraft retrieves a single draft by ID.

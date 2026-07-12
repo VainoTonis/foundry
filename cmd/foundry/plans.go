@@ -19,7 +19,7 @@ var plansCmd = &cobra.Command{
 var createCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a new plan with steps",
-	Long:  "Create a new plan. Reads JSON from stdin with repo_name, title, summary, and optional steps array.",
+	Long:  "Create a new plan. Reads JSON from stdin with project_id, title, summary, content, and optional steps array.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client := apiclient.NewClient(apiURL)
 
@@ -31,10 +31,11 @@ var createCmd = &cobra.Command{
 
 		// Parse the input JSON - steps can be strings or objects
 		var input struct {
-			RepoName string        `json:"repo_name"`
-			Title    string        `json:"title"`
-			Summary  string        `json:"summary"`
-			Steps    []interface{} `json:"steps"`
+			ProjectID int64         `json:"project_id"`
+			Title     string        `json:"title"`
+			Summary   string        `json:"summary"`
+			Content   string        `json:"content"`
+			Steps     []interface{} `json:"steps"`
 		}
 
 		if err := json.Unmarshal(data, &input); err != nil {
@@ -43,13 +44,15 @@ var createCmd = &cobra.Command{
 
 		// Create the plan first
 		planReq := struct {
-			RepoName string `json:"repo_name"`
-			Title    string `json:"title"`
-			Summary  string `json:"summary"`
+			ProjectID int64  `json:"project_id"`
+			Title     string `json:"title"`
+			Summary   string `json:"summary"`
+			Content   string `json:"content"`
 		}{
-			RepoName: input.RepoName,
-			Title:    input.Title,
-			Summary:  input.Summary,
+			ProjectID: input.ProjectID,
+			Title:     input.Title,
+			Summary:   input.Summary,
+			Content:   input.Content,
 		}
 
 		var plan apiclient.Plan
@@ -189,7 +192,7 @@ var listCmd = &cobra.Command{
 var updateCmd = &cobra.Command{
 	Use:   "update <id>",
 	Short: "Update a plan",
-	Long:  "Update a plan. Reads JSON from stdin with fields to update (status, title, summary).",
+	Long:  "Update a plan. Reads JSON from stdin with fields to update (status, project_id, title, summary, content).",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client := apiclient.NewClient(apiURL)
@@ -208,14 +211,20 @@ var updateCmd = &cobra.Command{
 
 		// Build update request with optional fields
 		updateReq := struct {
-			Status  *string `json:"status,omitempty"`
-			Title   *string `json:"title,omitempty"`
-			Summary *string `json:"summary,omitempty"`
+			Status    *string `json:"status,omitempty"`
+			ProjectID *int64  `json:"project_id,omitempty"`
+			Title     *string `json:"title,omitempty"`
+			Summary   *string `json:"summary,omitempty"`
+			Content   *string `json:"content,omitempty"`
 		}{}
 
 		if status, ok := updateData["status"]; ok && status != nil {
 			s := fmt.Sprintf("%v", status)
 			updateReq.Status = &s
+		}
+		if projectID, ok := updateData["project_id"].(float64); ok {
+			id := int64(projectID)
+			updateReq.ProjectID = &id
 		}
 		if title, ok := updateData["title"]; ok && title != nil {
 			t := fmt.Sprintf("%v", title)
@@ -224,6 +233,10 @@ var updateCmd = &cobra.Command{
 		if summary, ok := updateData["summary"]; ok && summary != nil {
 			s := fmt.Sprintf("%v", summary)
 			updateReq.Summary = &s
+		}
+		if content, ok := updateData["content"]; ok && content != nil {
+			c := fmt.Sprintf("%v", content)
+			updateReq.Content = &c
 		}
 
 		var plan apiclient.Plan
@@ -337,8 +350,25 @@ var updateStepCmd = &cobra.Command{
 	},
 }
 
+var runCmd = &cobra.Command{
+	Use:   "run <id>",
+	Short: "Run a plan as a Foundry workflow",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		client := apiclient.NewClient(apiURL)
+		var workflow map[string]interface{}
+		if err := client.Post(fmt.Sprintf("/api/plans/%s/run", args[0]), struct{}{}, &workflow); err != nil {
+			return fmt.Errorf("failed to run plan: %w", err)
+		}
+		result, _ := json.MarshalIndent(workflow, "", "  ")
+		fmt.Println(string(result))
+		return nil
+	},
+}
+
 func init() {
 	plansCmd.AddCommand(createCmd)
+	plansCmd.AddCommand(runCmd)
 	plansCmd.AddCommand(getCmd)
 	plansCmd.AddCommand(listCmd)
 	plansCmd.AddCommand(updateCmd)

@@ -8,9 +8,11 @@ import (
 )
 
 type UpdatePlanParams struct {
-	Status  *string
-	Title   *string
-	Summary *string
+	Status    *string
+	ProjectID *int64
+	Title     *string
+	Summary   *string
+	Content   *string
 }
 
 type UpdatePlanStepParams struct {
@@ -19,20 +21,25 @@ type UpdatePlanStepParams struct {
 	ParallelGroup *int
 }
 
-func CreatePlan(ctx context.Context, pool *pgxpool.Pool, repoName, title, summary string) (Plan, error) {
+func CreatePlan(ctx context.Context, pool *pgxpool.Pool, projectID int64, title, summary, content string) (Plan, error) {
 	var p Plan
 	err := pool.QueryRow(ctx,
-		`INSERT INTO plans (repo_name, title, summary, status) VALUES ($1, $2, $3, 'pending') RETURNING id, repo_name, title, summary, status, created_at, updated_at`,
-		repoName, title, summary,
-	).Scan(&p.ID, &p.RepoName, &p.Title, &p.Summary, &p.Status, &p.CreatedAt, &p.UpdatedAt)
+		`INSERT INTO plans (project_id, repo_name, title, summary, content, status)
+		 SELECT id, name, $2, $3, $4, 'pending' FROM projects WHERE id = $1
+		 RETURNING id, project_id, repo_name, title, summary, content, status, created_at, updated_at`,
+		projectID, title, summary, content,
+	).Scan(&p.ID, &p.ProjectID, &p.RepoName, &p.Title, &p.Summary, &p.Content, &p.Status, &p.CreatedAt, &p.UpdatedAt)
+	if err == pgx.ErrNoRows {
+		return p, ErrNotFound
+	}
 	return p, err
 }
 
 func GetPlan(ctx context.Context, pool *pgxpool.Pool, id int64) (Plan, error) {
 	var p Plan
 	err := pool.QueryRow(ctx,
-		`SELECT id, repo_name, title, summary, status, created_at, updated_at FROM plans WHERE id = $1`, id,
-	).Scan(&p.ID, &p.RepoName, &p.Title, &p.Summary, &p.Status, &p.CreatedAt, &p.UpdatedAt)
+		`SELECT id, project_id, repo_name, title, summary, content, status, created_at, updated_at FROM plans WHERE id = $1`, id,
+	).Scan(&p.ID, &p.ProjectID, &p.RepoName, &p.Title, &p.Summary, &p.Content, &p.Status, &p.CreatedAt, &p.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		return p, ErrNotFound
 	}
@@ -40,7 +47,7 @@ func GetPlan(ctx context.Context, pool *pgxpool.Pool, id int64) (Plan, error) {
 }
 
 func ListPlans(ctx context.Context, pool *pgxpool.Pool) ([]Plan, error) {
-	rows, err := pool.Query(ctx, `SELECT id, repo_name, title, summary, status, created_at, updated_at FROM plans ORDER BY id DESC`)
+	rows, err := pool.Query(ctx, `SELECT id, project_id, repo_name, title, summary, content, status, created_at, updated_at FROM plans ORDER BY id DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -48,7 +55,7 @@ func ListPlans(ctx context.Context, pool *pgxpool.Pool) ([]Plan, error) {
 	var out []Plan
 	for rows.Next() {
 		var p Plan
-		if err := rows.Scan(&p.ID, &p.RepoName, &p.Title, &p.Summary, &p.Status, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.ProjectID, &p.RepoName, &p.Title, &p.Summary, &p.Content, &p.Status, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -65,6 +72,11 @@ func UpdatePlan(ctx context.Context, pool *pgxpool.Pool, id int64, p UpdatePlanP
 		args = append(args, *p.Status)
 		n++
 	}
+	if p.ProjectID != nil {
+		set = append(set, "project_id = $"+itoa(n))
+		args = append(args, *p.ProjectID)
+		n++
+	}
 	if p.Title != nil {
 		set = append(set, "title = $"+itoa(n))
 		args = append(args, *p.Title)
@@ -75,19 +87,29 @@ func UpdatePlan(ctx context.Context, pool *pgxpool.Pool, id int64, p UpdatePlanP
 		args = append(args, *p.Summary)
 		n++
 	}
+	if p.Content != nil {
+		set = append(set, "content = $"+itoa(n))
+		args = append(args, *p.Content)
+		n++
+	}
 	if len(set) == 0 {
 		return GetPlan(ctx, pool, id)
 	}
 	set = append(set, "updated_at = NOW()")
 	args = append(args, id)
 	q := `UPDATE plans SET ` + joinComma(set) + ` WHERE id = $` + itoa(n) +
-		` RETURNING id, repo_name, title, summary, status, created_at, updated_at`
+		` RETURNING id, project_id, repo_name, title, summary, content, status, created_at, updated_at`
 	var out Plan
-	err := pool.QueryRow(ctx, q, args...).Scan(&out.ID, &out.RepoName, &out.Title, &out.Summary, &out.Status, &out.CreatedAt, &out.UpdatedAt)
+	err := pool.QueryRow(ctx, q, args...).Scan(&out.ID, &out.ProjectID, &out.RepoName, &out.Title, &out.Summary, &out.Content, &out.Status, &out.CreatedAt, &out.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		return out, ErrNotFound
 	}
 	return out, err
+}
+
+func LinkPlanWorkflow(ctx context.Context, pool *pgxpool.Pool, planID, workflowID int64) error {
+	_, err := pool.Exec(ctx, `INSERT INTO plan_workflows (plan_id, workflow_id) VALUES ($1, $2)`, planID, workflowID)
+	return err
 }
 
 // ---- plan_steps ----

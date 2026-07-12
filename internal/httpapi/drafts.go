@@ -134,7 +134,7 @@ func (h *Handler) HandleSpecDraft(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		specID, err := svc.SaveDraft(r.Context(), authoring.SaveDraftParams{
+		planID, err := svc.SaveDraft(r.Context(), authoring.SaveDraftParams{
 			DraftID: id,
 			Title:   saveBody.Title,
 		})
@@ -150,7 +150,7 @@ func (h *Handler) HandleSpecDraft(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		jsonOK(w, map[string]int64{"spec_id": specID}, http.StatusCreated)
+		jsonOK(w, map[string]int64{"plan_id": planID}, http.StatusCreated)
 
 	case suffix == "" && r.Method == http.MethodDelete:
 		if err := svc.DeleteDraft(r.Context(), id); err != nil {
