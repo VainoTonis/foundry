@@ -1,6 +1,7 @@
 # build output
 /server
 /foundry
+/foundry-server
 
 # Go
 *.test
