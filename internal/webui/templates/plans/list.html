@@ -1,6 +1,30 @@
 {{define "plans.list"}}
 <div data-page="plans">
-  <div class="page-header command-header"><div><p class="eyebrow">Foundry / plans</p><h2>Plans</h2><p class="hint">Read-only view of system plans and their steps.</p></div></div>
-  {{if .Plans}}<div class="plan-grid">{{range .Plans}}<article class="plan-slab"><div class="plan-head"><a class="plan-title" href="/plans/{{.ID}}" hx-get="/plans/{{.ID}}/fragment" hx-target="#app" hx-push-url="/plans/{{.ID}}">{{.Title}}</a><span class="chip chip-{{.Status}}">{{.Status}}</span></div><div class="plan-summary">{{.Summary}}</div><dl class="fact-list"><div><dt>Repo</dt><dd>{{.RepoName}}</dd></div><div><dt>Created</dt><dd>{{.CreatedAt.Format "2006-01-02 15:04"}}</dd></div></dl><div class="card-actions"><a class="btn btn-primary" href="/plans/{{.ID}}" hx-get="/plans/{{.ID}}/fragment" hx-target="#app" hx-push-url="/plans/{{.ID}}">View plan</a></div></article>{{end}}</div>{{else}}<div class="empty empty-action">No plans yet.</div>{{end}}
+  <div class="page-header command-header">
+    <div><p class="eyebrow">Foundry / plans</p><h2>Plans</h2><p class="hint">One plan can be authored in Draft Studio or through the CLI, then executed by Foundry.</p></div>
+    {{if .Projects}}<button class="btn btn-primary" popovertarget="new-plan">+ Plan</button>{{end}}
+  </div>
+  <div id="new-plan" popover class="dialog-card">
+    <button class="dialog-close" popovertarget="new-plan" popovertargetaction="hide" aria-label="Close">×</button>
+    <h3>New Plan</h3>
+    <p class="hint">Use <code>## Phase N:</code> sections in the specification for Foundry execution.</p>
+    <form data-json method="post" action="/api/plans" data-redirect-template="/plans/{id}">
+      <div class="field"><label>Project</label><select name="project_id" required>{{range .Projects}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select></div>
+      <div class="field"><label>Title</label><input name="title" required></div>
+      <div class="field"><label>Summary</label><textarea name="summary" rows="3"></textarea></div>
+      <div class="field"><label>Specification</label><textarea name="content" rows="14" placeholder="# Goal&#10;&#10;## Phase 1: Implement&#10;&#10;Describe the work." required></textarea></div>
+      <button class="btn btn-primary">Create plan</button>
+    </form>
+  </div>
+  {{if .Plans}}
+  <div class="plan-grid">{{range .Plans}}
+    <article class="plan-slab">
+      <div class="plan-head"><a class="plan-title" href="/plans/{{.ID}}" hx-get="/plans/{{.ID}}/fragment" hx-target="#app" hx-push-url="/plans/{{.ID}}">{{.Title}}</a><span class="chip chip-{{.Status}}">{{.Status}}</span></div>
+      <div class="plan-summary">{{.Summary}}</div>
+      <dl class="fact-list"><div><dt>Project</dt><dd>{{.RepoName}}</dd></div><div><dt>Created</dt><dd>{{.CreatedAt.Format "2006-01-02 15:04"}}</dd></div></dl>
+      <div class="card-actions"><a class="btn btn-primary" href="/plans/{{.ID}}" hx-get="/plans/{{.ID}}/fragment" hx-target="#app" hx-push-url="/plans/{{.ID}}">View plan</a></div>
+    </article>{{end}}
+  </div>
+  {{else}}<div class="empty empty-action">No plans yet. Create one here, in Draft Studio, or with the Foundry CLI.</div>{{end}}
 </div>
 {{end}}

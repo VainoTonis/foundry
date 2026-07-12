@@ -1,6 +1,6 @@
 {{define "workflows.detail"}}
-<div class="workflow-diffdesk" data-page="backlog" data-workflow-id="{{.Workflow.ID}}" data-workflow-stream="/api/workflows/{{.Workflow.ID}}/stream" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-selected-phase="{{.InitialPhase.ID}}" data-selected-tab="diff">
-  <nav class="workflow-local-nav" aria-label="Workflow context"><a href="/backlog" hx-get="/backlog/fragment" hx-target="#app" hx-push-url="/backlog">Foundry</a><a href="/projects/{{.Project.ID}}" hx-get="/projects/{{.Project.ID}}/fragment" hx-target="#app" hx-push-url="/projects/{{.Project.ID}}">{{.Project.Name}}</a></nav>
+<div class="workflow-diffdesk" data-page="plans" data-workflow-id="{{.Workflow.ID}}" data-workflow-stream="/api/workflows/{{.Workflow.ID}}/stream" data-refresh="/workflows/{{.Workflow.ID}}/fragment" data-selected-phase="{{.InitialPhase.ID}}" data-selected-tab="diff">
+  <nav class="workflow-local-nav" aria-label="Workflow context"><a href="/plans" hx-get="/plans/fragment" hx-target="#app" hx-push-url="/plans">Plans</a>{{if .Plan.ID}}<a href="/plans/{{.Plan.ID}}" hx-get="/plans/{{.Plan.ID}}/fragment" hx-target="#app" hx-push-url="/plans/{{.Plan.ID}}">{{.Plan.Title}}</a>{{end}}<a href="/projects/{{.Project.ID}}" hx-get="/projects/{{.Project.ID}}/fragment" hx-target="#app" hx-push-url="/projects/{{.Project.ID}}">{{.Project.Name}}</a></nav>
   <header class="workflow-hero">
     <div><p class="eyebrow">Workflow #{{.Workflow.ID}} / {{.CurrentPhaseName}}</p><h1>{{.Spec.Title}}</h1><div class="workflow-meta">Workflow #{{.Workflow.ID}} / {{.CurrentPhaseName}}</div></div>
     <span class="chip chip-{{.Workflow.Status}}" data-workflow-status data-status="{{.Workflow.Status}}">{{phaseStatusLabel .Workflow.Status}}</span>

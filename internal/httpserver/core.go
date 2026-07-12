@@ -160,10 +160,6 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/api/plans/", s.jsonAPI.HandlePlan)
 	s.mux.HandleFunc("/api/feedback", s.jsonAPI.HandleFeedbacks)
 
-	s.mux.HandleFunc("/api/specs", s.jsonAPI.HandleSpecs)
-	s.mux.HandleFunc("/api/specs/", s.jsonAPI.HandleSpec)
-
-	s.mux.HandleFunc("/api/workflows", s.jsonAPI.HandleWorkflows)
 	s.mux.HandleFunc("/api/workflows/", s.handleWorkflow)
 	s.mux.HandleFunc("/api/phases/", s.handlePhase)
 	s.mux.HandleFunc("/api/settings", s.jsonAPI.HandleSettings)

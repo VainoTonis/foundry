@@ -38,7 +38,9 @@ func CreatePlan(ctx context.Context, pool *pgxpool.Pool, projectID int64, title,
 func GetPlan(ctx context.Context, pool *pgxpool.Pool, id int64) (Plan, error) {
 	var p Plan
 	err := pool.QueryRow(ctx,
-		`SELECT id, project_id, repo_name, title, summary, content, status, created_at, updated_at FROM plans WHERE id = $1`, id,
+		`SELECT p.id, p.project_id, p.repo_name, p.title, p.summary, p.content,
+		 COALESCE((SELECT w.status FROM plan_workflows pw JOIN workflows w ON w.id = pw.workflow_id WHERE pw.plan_id = p.id ORDER BY w.id DESC LIMIT 1), p.status),
+		 p.created_at, p.updated_at FROM plans p WHERE p.id = $1`, id,
 	).Scan(&p.ID, &p.ProjectID, &p.RepoName, &p.Title, &p.Summary, &p.Content, &p.Status, &p.CreatedAt, &p.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		return p, ErrNotFound
@@ -47,7 +49,9 @@ func GetPlan(ctx context.Context, pool *pgxpool.Pool, id int64) (Plan, error) {
 }
 
 func ListPlans(ctx context.Context, pool *pgxpool.Pool) ([]Plan, error) {
-	rows, err := pool.Query(ctx, `SELECT id, project_id, repo_name, title, summary, content, status, created_at, updated_at FROM plans ORDER BY id DESC`)
+	rows, err := pool.Query(ctx, `SELECT p.id, p.project_id, p.repo_name, p.title, p.summary, p.content,
+		COALESCE((SELECT w.status FROM plan_workflows pw JOIN workflows w ON w.id = pw.workflow_id WHERE pw.plan_id = p.id ORDER BY w.id DESC LIMIT 1), p.status),
+		p.created_at, p.updated_at FROM plans p ORDER BY p.id DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -105,6 +109,18 @@ func UpdatePlan(ctx context.Context, pool *pgxpool.Pool, id int64, p UpdatePlanP
 		return out, ErrNotFound
 	}
 	return out, err
+}
+
+func GetPlanByWorkflow(ctx context.Context, pool *pgxpool.Pool, workflowID int64) (Plan, error) {
+	var p Plan
+	err := pool.QueryRow(ctx, `SELECT p.id, p.project_id, p.repo_name, p.title, p.summary, p.content, w.status, p.created_at, p.updated_at
+		FROM plan_workflows pw JOIN plans p ON p.id = pw.plan_id JOIN workflows w ON w.id = pw.workflow_id
+		WHERE pw.workflow_id = $1`, workflowID).
+		Scan(&p.ID, &p.ProjectID, &p.RepoName, &p.Title, &p.Summary, &p.Content, &p.Status, &p.CreatedAt, &p.UpdatedAt)
+	if err == pgx.ErrNoRows {
+		return p, ErrNotFound
+	}
+	return p, err
 }
 
 func LinkPlanWorkflow(ctx context.Context, pool *pgxpool.Pool, planID, workflowID int64) error {

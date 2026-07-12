@@ -18,7 +18,7 @@ func (s *Handler) handleUIWorkflow(w http.ResponseWriter, r *http.Request) {
 		s.handleUIWorkflowFragment(w, r, id)
 		return
 	}
-	s.renderShell(w, "backlog", fmt.Sprintf("/workflows/%d/fragment", id))
+	s.renderShell(w, "plans", fmt.Sprintf("/workflows/%d/fragment", id))
 }
 
 func (s *Handler) handleUIWorkflowFragment(w http.ResponseWriter, r *http.Request, id int64) {
@@ -32,6 +32,7 @@ func (s *Handler) handleUIWorkflowFragment(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	sp, _ := db.GetSpec(r.Context(), s.pool, wf.SpecID)
+	plan, _ := db.GetPlanByWorkflow(r.Context(), s.pool, wf.ID)
 	proj, _ := db.GetProject(r.Context(), s.pool, sp.ProjectID)
 	phases, err := db.ListPhasesByWorkflow(r.Context(), s.pool, id)
 	if err != nil {
@@ -46,13 +47,14 @@ func (s *Handler) handleUIWorkflowFragment(w http.ResponseWriter, r *http.Reques
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := templates.ExecuteTemplate(w, "workflows.detail", struct {
 		Workflow         db.Workflow
-		Spec             db.Spec
+		Spec             db.Spec // immutable execution snapshot
+		Plan             db.Plan
 		Project          db.Project
 		Phases           []db.Phase
 		InitialPhase     db.Phase
 		HasInitialPhase  bool
 		CurrentPhaseName string
-	}{wf, sp, proj, phases, initialPhase, hasInitialPhase, currentPhaseName}); err != nil {
+	}{wf, sp, plan, proj, phases, initialPhase, hasInitialPhase, currentPhaseName}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }

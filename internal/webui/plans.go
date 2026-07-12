@@ -8,6 +8,11 @@ import (
 	"github.com/tonis2/foundry/internal/db"
 )
 
+func (s *Handler) redirectToPlans(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("HX-Redirect", "/plans")
+	http.Redirect(w, r, "/plans", http.StatusSeeOther)
+}
+
 func (s *Handler) handleUIPlansPage(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/plans" {
 		http.NotFound(w, r)
@@ -22,9 +27,15 @@ func (s *Handler) handleUIPlansFragment(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	projects, err := db.ListProjects(r.Context(), s.pool)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	data := struct {
-		Plans []db.Plan
-	}{plans}
+		Plans    []db.Plan
+		Projects []db.Project
+	}{plans, projects}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := templates.ExecuteTemplate(w, "plans.list", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
