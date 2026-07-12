@@ -291,12 +291,25 @@ var updateStepCmd = &cobra.Command{
 		if hasStepID {
 			stepID = fmt.Sprintf("%v", stepIDVal)
 		} else {
-			// Parse position as an integer for step lookup
-			positionStr := fmt.Sprintf("%v", positionVal)
-			if _, err := strconv.Atoi(positionStr); err != nil {
-				return fmt.Errorf("invalid position value: %v (must be an integer)", positionVal)
+			position, err := numericInt(positionVal)
+			if err != nil {
+				return fmt.Errorf("invalid position value: %v (must be a zero-based integer)", positionVal)
 			}
-			stepID = positionStr
+			var steps []apiclient.PlanStep
+			if err := client.Get(fmt.Sprintf("/api/plans/%s/steps", planID), &steps); err != nil {
+				return fmt.Errorf("list plan steps: %w", err)
+			}
+			found := false
+			for _, step := range steps {
+				if step.Position == position {
+					stepID = strconv.FormatInt(step.ID, 10)
+					found = true
+					break
+				}
+			}
+			if !found {
+				return fmt.Errorf("no step at zero-based position %d", position)
+			}
 		}
 
 		// Build update request with generic field forwarding
@@ -348,6 +361,20 @@ var updateStepCmd = &cobra.Command{
 		fmt.Println(string(outputJSON))
 		return nil
 	},
+}
+
+func numericInt(value interface{}) (int, error) {
+	switch v := value.(type) {
+	case float64:
+		if v != float64(int(v)) {
+			return 0, fmt.Errorf("not an integer")
+		}
+		return int(v), nil
+	case int:
+		return v, nil
+	default:
+		return strconv.Atoi(fmt.Sprintf("%v", value))
+	}
 }
 
 var runCmd = &cobra.Command{

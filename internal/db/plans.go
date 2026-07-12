@@ -184,6 +184,17 @@ func GetPlanStep(ctx context.Context, pool *pgxpool.Pool, id int64) (PlanStep, e
 	return s, err
 }
 
+func GetPlanStepByPosition(ctx context.Context, pool *pgxpool.Pool, planID int64, position int) (PlanStep, error) {
+	var s PlanStep
+	err := pool.QueryRow(ctx,
+		`SELECT id, plan_id, position, text, status, created_at, updated_at, parallel_group FROM plan_steps WHERE plan_id = $1 AND position = $2`, planID, position,
+	).Scan(&s.ID, &s.PlanID, &s.Position, &s.Text, &s.Status, &s.CreatedAt, &s.UpdatedAt, &s.ParallelGroup)
+	if err == pgx.ErrNoRows {
+		return s, ErrNotFound
+	}
+	return s, err
+}
+
 func GetPlanStepByID(ctx context.Context, pool *pgxpool.Pool, planID, stepID int64) (PlanStep, error) {
 	var s PlanStep
 	err := pool.QueryRow(ctx,
