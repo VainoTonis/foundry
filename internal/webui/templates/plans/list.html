@@ -1,18 +1,10 @@
 {{define "plans.list"}}
-<div data-page="plans">
-  <div class="page-header command-header">
-    <div><p class="eyebrow">Foundry / plans</p><h2>Plans</h2><p class="hint">Author plans in Planning Studio or through the CLI, then execute them with Foundry.</p></div>
-    <a class="btn btn-primary" href="/spec-builder" hx-get="/spec-builder/fragment" hx-target="#app" hx-push-url="/spec-builder">+ Plan</a>
-  </div>
-  {{if .Plans}}
-  <div class="plan-grid">{{range .Plans}}
-    <article class="plan-slab">
-      <div class="plan-head"><a class="plan-title" href="/plans/{{.ID}}" hx-get="/plans/{{.ID}}/fragment" hx-target="#app" hx-push-url="/plans/{{.ID}}">{{.Title}}</a><span class="chip chip-{{.Status}}">{{.Status}}</span></div>
-      <div class="plan-summary">{{.Summary}}</div>
-      <dl class="fact-list"><div><dt>Project</dt><dd>{{.RepoName}}</dd></div><div><dt>Created</dt><dd>{{.CreatedAt.Format "2006-01-02 15:04"}}</dd></div></dl>
-      <div class="card-actions"><a class="btn btn-primary" href="/plans/{{.ID}}" hx-get="/plans/{{.ID}}/fragment" hx-target="#app" hx-push-url="/plans/{{.ID}}">View plan</a></div>
-    </article>{{end}}
-  </div>
-  {{else}}<div class="empty empty-action">No plans yet. Start one in Planning Studio or create one with the Foundry CLI.</div>{{end}}
+<div class="console-page" data-page="plans">
+  <header class="console-page-header"><div><p class="console-label">Execution catalog</p><h1>Plans</h1><p>Canonical project-aware work</p></div><a class="btn btn-primary" href="/spec-builder" hx-get="/spec-builder/fragment" hx-target="#app" hx-push-url="/spec-builder">[+] New plan</a></header>
+  <section class="console-workspace">
+    <div class="console-toolbar"><input class="console-search" type="search" placeholder="Search plans…" data-list-search="plan-records"><span class="console-count">{{len .Plans}} records</span></div>
+    <div class="console-table-head"><span>Plan</span><span>Project</span><span>Status</span><span>Created</span></div>
+    <div id="plan-records">{{range .Plans}}<a class="console-record" href="/plans/{{.ID}}" hx-get="/plans/{{.ID}}/fragment" hx-target="#app" hx-push-url="/plans/{{.ID}}"><div><strong>{{.Title}}</strong><small>{{if .Summary}}{{.Summary}}{{else}}No summary{{end}}</small></div><span class="console-accent">{{.RepoName}}</span><span class="console-status status-{{.Status}}">{{.Status}}</span><span class="console-meta">{{.CreatedAt.Format "2006-01-02 15:04"}}</span></a>{{else}}<div class="console-empty">No plans yet. Start one in Planning Studio or create one with the Foundry CLI.</div>{{end}}</div>
+  </section>
 </div>
 {{end}}

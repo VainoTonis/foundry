@@ -1,17 +1,13 @@
 {{define "projects.main"}}
-<div data-page="projects">
-  <div class="page-header command-header"><div><p class="eyebrow">Foundry / projects</p><h2>Project registry</h2><p class="hint">Each project binds Foundry to one target repo.</p></div><div class="card-actions"><button class="btn" popovertarget="new-project-page">+ Project</button><button class="btn btn-primary" hx-get="/projects/fragment?discover=1" hx-target="#app" hx-push-url="/projects">Discover repos</button></div></div>
-  <div id="new-project-page" class="popover-card" popover>
-    <h3>New Project</h3>
-    <p class="hint">Use repo paths relative to the machine running Foundry.</p>
-    <form method="post" action="/projects" hx-post="/projects" hx-target="#app" hx-swap="innerHTML">
-      <div class="field"><label>Name</label><input name="name" required></div>
-      <div class="field"><label>Target repo path</label><input name="repo_path" required></div>
-      <button class="btn btn-primary">Create project</button>
-    </form>
-  </div>
-  {{if .Projects}}<div class="group-label">Registered projects</div><div class="project-grid">{{range .Projects}}<article class="project-slab"><div class="project-head"><a class="project-title" href="/projects/{{.ID}}" hx-get="/projects/{{.ID}}/fragment" hx-target="#app" hx-push-url="/projects/{{.ID}}">{{.Name}}</a><span class="chip chip-done">repo</span></div><dl class="fact-list"><div><dt>Target repo</dt><dd>{{.RepoPath}}</dd></div></dl><div class="card-actions"><a class="btn btn-primary" href="/projects/{{.ID}}" hx-get="/projects/{{.ID}}/fragment" hx-target="#app" hx-push-url="/projects/{{.ID}}">View / edit</a></div></article>{{end}}</div>{{else}}<div class="empty empty-action">No projects yet. Create one manually or discover repositories from the configured git root.</div>{{end}}
+<div class="console-page" data-page="projects">
+  <header class="console-page-header"><div><p class="console-label">Repository registry</p><h1>Projects</h1><p>Local workspaces available to agents</p></div><div class="console-actions"><button class="btn" popovertarget="new-project-page">[+] Register</button><button class="btn btn-primary" hx-get="/projects/fragment?discover=1" hx-target="#app" hx-push-url="/projects">Discover repos</button></div></header>
+  <div id="new-project-page" class="popover-card" popover><h3>Register project</h3><form method="post" action="/projects" hx-post="/projects" hx-target="#app"><div class="field"><label>Name</label><input name="name" required></div><div class="field"><label>Target repo path</label><input name="repo_path" required></div><button class="btn btn-primary">Create project</button></form></div>
+  <section class="console-workspace">
+    <div class="console-toolbar"><input class="console-search" type="search" placeholder="Search projects…" data-list-search="project-records"><span class="console-count">{{len .Projects}} records</span></div>
+    <div class="console-table-head"><span>Repository</span><span>Path</span><span>Status</span><span>Created</span></div>
+    <div id="project-records">{{range .Projects}}<a class="console-record" href="/projects/{{.ID}}" hx-get="/projects/{{.ID}}/fragment" hx-target="#app" hx-push-url="/projects/{{.ID}}"><div><strong>{{.Name}}</strong><small>Registered project #{{.ID}}</small></div><span class="console-accent">{{.RepoPath}}</span><span class="console-status status-done">ready</span><span class="console-meta">{{date .CreatedAt}}</span></a>{{else}}<div class="console-empty">No projects registered.</div>{{end}}</div>
+  </section>
   {{if .DiscoverErr}}<div class="empty empty-error">Discovery failed: {{.DiscoverErr}}</div>{{end}}
-  {{if .Repos}}<div class="group-label">Discovered repos</div>{{range .Repos}}<article class="work-row"><div class="work-main"><span class="work-title">{{.Name}}</span><div class="work-meta">target: {{.Path}}</div></div><div class="work-signals">{{if .Imported}}<span class="chip chip-done">imported</span>{{else}}<span class="chip chip-pending">new</span>{{end}}</div>{{if not .Imported}}<div class="work-next"><form method="post" action="/projects?discover=1" hx-post="/projects?discover=1" hx-target="#app" hx-swap="innerHTML"><input type="hidden" name="name" value="{{.Name}}"><input type="hidden" name="repo_path" value="{{.Path}}"><button class="btn btn-primary">Import project</button></form></div>{{end}}</article>{{end}}{{end}}
+  {{if .Repos}}<section class="console-workspace console-secondary"><div class="console-toolbar"><strong>Discovered repositories</strong></div>{{range .Repos}}<div class="console-record console-record-action"><div><strong>{{.Name}}</strong><small>{{.Path}}</small></div><span></span>{{if .Imported}}<span class="console-status status-done">imported</span>{{else}}<span class="console-status status-pending">new</span>{{end}}{{if not .Imported}}<form method="post" action="/projects?discover=1" hx-post="/projects?discover=1" hx-target="#app"><input type="hidden" name="name" value="{{.Name}}"><input type="hidden" name="repo_path" value="{{.Path}}"><button class="btn btn-primary">Import</button></form>{{end}}</div>{{end}}</section>{{end}}
 </div>
 {{end}}

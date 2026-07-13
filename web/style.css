@@ -645,3 +645,148 @@ button:disabled, .btn:disabled, [aria-busy="true"] { opacity: .62; cursor: not-a
     max-height: 56vh;
   }
 }
+
+/* === Unified operator console ===
+   Every screen uses the same shell, page header, workspace, toolbar, record,
+   status and form primitives. Page-specific CSS only controls layout. */
+:root {
+  --bg: #10120f; --paper: #191b17; --paper-2: #20231d; --chat-surface: #191b17;
+  --ink: #e8e2d2; --text: #e8e2d2; --muted: #999b8f; --border: #484b40;
+  --surface: #191b17; --evidence: #10120f; --evidence-text: #e8e2d2;
+  --accent: #b8e06d; --green: #b8e06d; --red: #ef756d; --yellow: #e7b85c;
+  --blue: #71c8c0; --tan: #aaa58e; --shadow: none;
+}
+html, body { min-height: 100%; background-color: var(--bg); }
+body { background-image: linear-gradient(rgba(255,255,255,.016) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.016) 1px,transparent 1px); background-size:24px 24px; color:var(--ink); }
+.app-shell { min-height:100vh; display:grid; grid-template-columns:188px minmax(0,1fr); }
+.console-sidebar { position:sticky; top:0; height:100vh; display:flex; flex-direction:column; padding:20px 13px; background:#121410; border-right:1px solid var(--border); z-index:20; }
+.console-brand { color:var(--ink); text-decoration:none; font:900 1.3rem var(--mono); letter-spacing:.08em; margin:2px 8px 28px; }
+.console-brand span,.console-health span { color:var(--green); }
+.console-nav { display:flex; flex-direction:column; }
+.console-nav a { padding:11px 12px; border-left:3px solid transparent; color:var(--muted); text-decoration:none; text-transform:uppercase; font:700 .76rem var(--mono); }
+.console-nav a span { display:inline-block; width:2rem; color:#65685d; }
+.console-nav a:hover,.console-nav a.active { color:var(--ink); border-left-color:var(--green); background:var(--paper-2); }
+.console-health { margin-top:auto; border-top:1px solid var(--border); padding:14px 8px 0; color:var(--muted); font: .65rem var(--mono); }
+.console-content { min-width:0; }
+#app,#app:has(.chat-page) { width:100%; max-width:none; margin:0; padding:0; height:auto; }
+.error-region { border-width:1px; box-shadow:none; background:#321b19; color:var(--ink); margin:1rem 2rem 0; max-width:none; }
+button,.btn { min-height:2.35rem; border:1px solid #686b5d; background:var(--paper-2); color:var(--ink); padding:.45rem .7rem; box-shadow:none; font:700 .7rem var(--mono); }
+button:hover,.btn:hover { transform:none; box-shadow:none; border-color:var(--green); color:var(--green); }
+.btn-primary { background:var(--paper-2); border-color:var(--green); color:var(--green); }
+.btn-danger { background:transparent; border-color:var(--red); color:var(--red); box-shadow:none; }
+input,select,textarea { background:var(--bg); color:var(--ink); border:1px solid var(--border); border-radius:0; }
+.popover-card,.dialog-card { background:var(--paper); color:var(--ink); border:1px solid var(--green); box-shadow:0 18px 60px #000a; }
+.console-page { min-height:100vh; padding:0 0 40px; }
+.console-page-header { min-height:116px; display:flex; align-items:flex-end; justify-content:space-between; gap:1rem; margin:0; padding:28px 32px 22px; border-bottom:1px solid var(--border); background:#151713; }
+.console-page-header h1 { margin:.3rem 0; font:800 2rem/1 var(--mono); text-transform:uppercase; }
+.console-page-header p:last-child { color:var(--muted); }
+.console-label { color:var(--green)!important; font:700 .65rem var(--mono); letter-spacing:.14em; text-transform:uppercase; }
+.console-actions,.console-row-actions { display:flex; gap:.5rem; align-items:center; justify-content:flex-end; }
+.console-workspace { border:0; border-bottom:1px solid var(--border); background:rgba(25,27,23,.97); }
+.console-secondary { margin-top:1.5rem; }
+.console-toolbar { min-height:55px; display:flex; align-items:center; gap:.6rem; padding:9px 13px; border-bottom:1px solid var(--border); background:#151713; }
+.console-search { width:min(300px,45vw); padding:.55rem .7rem; }
+.console-count { margin-left:auto; color:var(--muted); font:.7rem var(--mono); }
+.console-table-head,.console-record { display:grid; grid-template-columns:minmax(250px,1.4fr) minmax(170px,.75fr) 120px 160px; gap:18px; align-items:center; padding:10px 16px; }
+.console-table-head { color:var(--muted); font:.65rem var(--mono); text-transform:uppercase; border-bottom:1px solid var(--border); }
+.console-record { min-height:70px; border-bottom:1px solid #34372f; color:var(--ink); text-decoration:none; cursor:pointer; }
+.console-record:hover,.console-record:focus-visible { background:var(--paper-2); outline:none; }
+.console-record strong,.console-record small { display:block; }
+.console-record small,.console-meta { color:var(--muted); font:.7rem var(--mono); overflow-wrap:anywhere; }
+.console-record-action { cursor:default; }
+.console-accent { color:var(--blue); font:.76rem var(--mono); overflow-wrap:anywhere; }
+.console-status { color:var(--muted); font:.65rem var(--mono); text-transform:uppercase; }
+.console-status::before { content:'●'; margin-right:.45rem; }
+.status-done,.status-pass,.status-ready,.status-active { color:var(--green); }
+.status-running,.status-streaming { color:var(--blue); }
+.status-pending,.status-draft,.status-paused,.status-suspended { color:var(--yellow); }
+.status-failed,.status-error { color:var(--red); }
+.console-empty { padding:2rem; color:var(--muted); font-family:var(--mono); }
+.console-feedback { display:grid; grid-template-columns:76px minmax(300px,1fr) 210px 165px; gap:20px; padding:20px 16px; border-bottom:1px solid #34372f; }
+.console-feedback-body { color:var(--ink); white-space:pre-wrap; }
+.console-feedback small { display:block; color:var(--muted); font:.62rem var(--mono); margin-top:.25rem; }
+.console-new-chat { display:flex; gap:.5rem; }
+
+/* Common treatment for legacy detail and authoring screens. */
+#app > [data-page]:not(.console-page):not(.console-chat) { padding:28px 32px 40px; min-height:100vh; }
+.page-header,.command-header,.spec-hero { border:0; border-bottom:1px solid var(--border); background:transparent; box-shadow:none; padding:0 0 1rem; }
+.page-header h2 { color:var(--ink); font-family:var(--mono); }
+.eyebrow { color:var(--green); }
+.card,.panel-form,.context-panel,.project-slab,.plan-slab,.plan-step-item,.plan-summary-section,.context-slab,.work-row { background:var(--paper); border:1px solid var(--border); box-shadow:none; }
+.card-meta,.work-meta,.plan-meta,.plan-summary,.hint { color:var(--muted); }
+.fact-list dd,.phase-goal { color:var(--ink); }
+.chip { background:transparent; border-width:1px; }
+.context-nav .btn { border:0; padding-left:0; color:var(--muted); }
+
+/* Settings keeps the structured menu-and-values layout from mock A. */
+.settings-grid { display:grid; grid-template-columns:215px minmax(0,1fr); gap:0; border:1px solid var(--border); background:var(--paper); }
+.settings-menu { padding:17px; border-right:1px solid var(--border); background:#151713; }
+.settings-menu a { display:block; padding:10px 11px; color:var(--muted); text-decoration:none; font:700 .72rem var(--mono); text-transform:uppercase; }
+.settings-menu a:hover,.settings-menu a.active { background:var(--green); color:var(--bg); }
+.settings-config { border:0; padding:24px 28px; }
+.settings-help { display:none; }
+.settings-section { border:1px solid var(--border); background:var(--paper); padding:1.2rem; }
+.profile-list { gap:1px; }
+
+/* Chat uses the same console primitives, with only its spatial layout specialized. */
+.console-chat { height:100vh; overflow:hidden; display:grid; grid-template-rows:58px minmax(0,1fr); background:var(--paper); }
+.console-chat-header { display:flex; align-items:center; gap:.7rem; padding:9px 14px; border-bottom:1px solid var(--border); background:#151713; }
+.console-chat-header strong,.console-chat-header small { display:block; }
+.console-chat-header strong { font:700 .82rem var(--mono); }
+.console-chat-header small { color:var(--muted); font:.66rem var(--mono); }
+.console-chat-spacer { flex:1; }
+.console-chat-main { min-height:0; display:grid; grid-template-columns:260px minmax(0,1fr); }
+.console-chat.history-collapsed .console-chat-main { grid-template-columns:minmax(0,1fr); }
+.console-chat.history-collapsed .console-chat-history { display:none; }
+.console-chat-history { min-width:0; overflow:hidden; border-right:1px solid var(--border); background:#141612; }
+.console-history-search { display:flex; gap:.4rem; padding:10px; border-bottom:1px solid var(--border); }
+.console-history-search input { min-width:0; width:100%; padding:.5rem; }
+.console-history-new { padding:9px 10px; }
+.console-history-new .btn { width:100%; }
+.console-thread { display:block; padding:12px; border-bottom:1px solid #34372f; color:var(--ink); text-decoration:none; }
+.console-thread strong,.console-thread small { display:block; }
+.console-thread small { color:var(--muted); font:.66rem var(--mono); }
+.console-thread:hover,.console-thread.active { background:var(--paper-2); }
+.console-thread.active { border-left:3px solid var(--green); }
+.console-conversation { min-width:0; min-height:0; display:grid; grid-template-rows:auto minmax(0,1fr) auto; }
+.console-chat-connection { display:flex; justify-content:space-between; padding:.35rem 1rem; border-bottom:1px solid #34372f; color:var(--muted); font:.62rem var(--mono); }
+.console-chat-connection [data-chat-connection] { color:var(--green); }
+.console-chat .chat-messages { min-height:0; max-height:none; overflow:auto; display:flex; flex-direction:column; gap:1.35rem; padding:28px clamp(20px,5vw,72px); background:var(--paper); }
+.console-chat .chat-msg { width:min(78%,850px); padding:0; border:0; background:transparent; box-shadow:none; }
+.console-chat .chat-msg-assistant { align-self:flex-start; }
+.console-chat .chat-msg-user { align-self:flex-end; }
+.console-chat .chat-msg-label { color:var(--green); font:700 .65rem var(--mono); text-transform:uppercase; margin-bottom:.35rem; }
+.console-chat .chat-msg-user .chat-msg-label { color:var(--blue); text-align:right; }
+.console-chat .chat-msg-body { border:1px solid var(--border); border-left:3px solid var(--green); background:var(--paper-2); color:var(--ink); padding:1rem 1.1rem; box-shadow:none; }
+.console-chat .chat-msg-user .chat-msg-body { border:1px solid #686b5d; background:#26281f; }
+.console-composer { padding:10px clamp(20px,5vw,72px) 12px; border-top:1px solid var(--border); background:#151713; }
+.console-context-line { color:var(--muted); font:.62rem var(--mono); margin-bottom:.35rem; }
+.console-composer .chat-input-row { border:1px solid #686b5d; background:var(--bg); gap:0; }
+.console-composer .chat-textarea { border:0; min-height:65px; }
+.console-drawer { position:fixed; inset:0 0 0 auto; margin:0; width:min(430px,92vw); max-width:92vw; max-height:none; height:100vh; overflow-x:hidden; border:0; border-left:1px solid var(--green); background:#181a16; color:var(--ink); box-shadow:-18px 0 40px #0008; transform:translateX(100%); opacity:0; transition:transform .18s ease,opacity .18s ease,overlay .18s allow-discrete,display .18s allow-discrete; }
+.console-drawer[open] { transform:translateX(0); opacity:1; }
+@starting-style { .console-drawer[open] { transform:translateX(100%); opacity:0; } }
+.console-drawer::backdrop { background:#0000; transition:background-color .18s ease,overlay .18s allow-discrete,display .18s allow-discrete; }
+.console-drawer[open]::backdrop { background:#0007; }
+@starting-style { .console-drawer[open]::backdrop { background:#0000; } }
+.chat-settings-project-row { grid-template-columns:minmax(0,1fr) auto; background:var(--paper-2); border:1px solid var(--border); }
+.chat-settings-project-row > div { min-width:0; }
+.chat-settings-project-name,.chat-settings-project-path { display:block; max-width:100%; }
+.chat-settings-project-row .btn { flex:none; }
+
+@media (max-width: 800px) {
+  .app-shell { grid-template-columns:1fr; }
+  .console-sidebar { position:static; height:auto; flex-direction:row; overflow:auto; padding:8px; }
+  .console-brand,.console-health { display:none; }
+  .console-nav { flex-direction:row; }
+  .console-nav a { white-space:nowrap; }
+  .console-page,#app > [data-page]:not(.console-page):not(.console-chat) { padding:18px 10px; }
+  .console-table-head { display:none; }
+  .console-record,.console-feedback { grid-template-columns:1fr; gap:.5rem; }
+  .settings-grid { grid-template-columns:1fr; }
+  .settings-menu { display:none; }
+  .console-chat { height:calc(100vh - 50px); }
+  .console-chat-main { grid-template-columns:1fr; }
+  .console-chat-history { display:none; }
+  .console-chat .chat-msg { width:92%; }
+}

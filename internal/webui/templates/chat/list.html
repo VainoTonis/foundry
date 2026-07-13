@@ -1,35 +1,10 @@
 {{define "chat.list"}}
-<div data-page="chat">
-  <div class="page-header command-header">
-    <div>
-      <p class="eyebrow">Chat</p>
-      <h2>Cerberus conversations</h2>
-      <p class="hint">Context-free chat sessions with the cerberus agent.</p>
-    </div>
-    <form class="card-actions" data-json data-include-empty method="post" action="/api/chat/sessions" data-redirect-template="/chat/{id}">
-      <select name="profile_name" aria-label="Cerberus profile"><option value="">Runtime{{if .RuntimeProfile}}: {{.RuntimeProfile}}{{else}} / no profile{{end}}</option>{{range .Profiles}}<option value="{{.Name}}" {{if eq .Name $.RuntimeProfile}}selected{{end}}>{{.Name}}</option>{{end}}</select>
-      <button class="btn btn-primary">New chat</button>
-    </form>
-  </div>
-  {{if .Sessions}}
-    <div class="worklist" aria-label="Chat sessions">
-      {{range .Sessions}}
-        <article class="work-row">
-          <div class="work-main">
-            <a class="work-title" href="/chat/{{.ID}}" hx-get="/chat/{{.ID}}/fragment" hx-target="#app" hx-push-url="/chat/{{.ID}}">{{if .Title}}{{.Title}}{{else}}Chat #{{.ID}}{{end}}</a>
-            <div class="work-meta">updated {{datetime .UpdatedAt}} · profile {{if .ActiveProfileName}}{{.ActiveProfileName}}{{if .UsesRuntimeProfile}} (runtime){{end}}{{else}}none{{end}}</div>
-          </div>
-          <div class="work-signals"><span class="chip chip-{{.Status}}">{{.Status}}</span></div>
-          <div class="work-next">
-            <a class="btn" href="/chat/{{.ID}}" hx-get="/chat/{{.ID}}/fragment" hx-target="#app" hx-push-url="/chat/{{.ID}}">Open</a>
-            <button class="btn" data-json-post="/api/chat/sessions/{{.ID}}/suspend" data-refresh="/chat/fragment" {{if eq .Status "streaming"}}disabled title="active turn is running"{{end}}>Suspend</button>
-            <button class="btn btn-danger" data-json-delete="/api/chat/sessions/{{.ID}}" data-refresh="/chat/fragment">Delete</button>
-          </div>
-        </article>
-      {{end}}
-    </div>
-  {{else}}
-    <div class="empty empty-action">No chat sessions yet. Start one to talk with cerberus.</div>
-  {{end}}
+<div class="console-page" data-page="chat">
+  <header class="console-page-header"><div><p class="console-label">Project dialogue</p><h1>Chat</h1><p>Persistent conversations with repository context</p></div></header>
+  <section class="console-workspace">
+    <div class="console-toolbar"><input class="console-search" type="search" placeholder="Search chat history…" data-list-search="chat-records"><form class="console-new-chat" data-json data-include-empty method="post" action="/api/chat/sessions" data-redirect-template="/chat/{id}"><select name="profile_name" aria-label="Cerberus profile"><option value="">Runtime{{if .RuntimeProfile}}: {{.RuntimeProfile}}{{end}}</option>{{range .Profiles}}<option value="{{.Name}}">{{.Name}}</option>{{end}}</select><button class="btn btn-primary">[+] New chat</button></form><span class="console-count">{{len .Sessions}} records</span></div>
+    <div class="console-table-head"><span>Conversation</span><span>Profile</span><span>Status</span><span>Actions</span></div>
+    <div id="chat-records">{{range .Sessions}}<article class="console-record console-record-clickable" data-row-href="/chat/{{.ID}}" data-row-fragment="/chat/{{.ID}}/fragment" tabindex="0"><div><strong>{{if .Title}}{{.Title}}{{else}}Chat #{{.ID}}{{end}}</strong><small>updated {{datetime .UpdatedAt}}</small></div><span class="console-accent">{{if .ActiveProfileName}}{{.ActiveProfileName}}{{else}}runtime default{{end}}</span><span class="console-status status-{{.Status}}">{{.Status}}</span><div class="console-row-actions"><button class="btn" data-json-post="/api/chat/sessions/{{.ID}}/suspend" data-refresh="/chat/fragment" {{if eq .Status "streaming"}}disabled{{end}}>Suspend</button><button class="btn btn-danger" data-json-delete="/api/chat/sessions/{{.ID}}" data-refresh="/chat/fragment">Delete</button></div></article>{{else}}<div class="console-empty">No conversations yet.</div>{{end}}</div>
+  </section>
 </div>
 {{end}}

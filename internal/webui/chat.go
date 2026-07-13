@@ -75,6 +75,7 @@ func (h *Handler) handleUIChatDetailFragment(w http.ResponseWriter, r *http.Requ
 		msgs = []db.ChatMessage{}
 	}
 	profiles, _ := db.ListProfiles(r.Context(), h.pool)
+	sessions, _ := db.ListChatSessions(r.Context(), h.pool)
 	attachedProjects, _ := db.ListSessionProjects(r.Context(), h.pool, id)
 	allProjects, _ := db.ListProjects(r.Context(), h.pool)
 	if attachedProjects == nil {
@@ -98,14 +99,15 @@ func (h *Handler) handleUIChatDetailFragment(w http.ResponseWriter, r *http.Requ
 	_, runtimeProfile := h.runtimeProfiles()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := templates.ExecuteTemplate(w, "chat.detail", struct {
-		Session            db.ChatSession
-		Messages           []db.ChatMessage
-		Profiles           []db.Profile
-		ActiveProfileName  string
-		RuntimeProfile     string
-		AttachedProjects   []db.Project
-		AvailableProjects  []db.Project
-	}{sess, msgs, profiles, activeProfileName(sess.ProfileName, runtimeProfile), runtimeProfile, attachedProjects, availableProjects}); err != nil {
+		Session           db.ChatSession
+		Messages          []db.ChatMessage
+		Profiles          []db.Profile
+		Sessions          []db.ChatSession
+		ActiveProfileName string
+		RuntimeProfile    string
+		AttachedProjects  []db.Project
+		AvailableProjects []db.Project
+	}{sess, msgs, profiles, sessions, activeProfileName(sess.ProfileName, runtimeProfile), runtimeProfile, attachedProjects, availableProjects}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }

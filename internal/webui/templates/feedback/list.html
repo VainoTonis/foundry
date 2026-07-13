@@ -1,16 +1,9 @@
 {{define "feedback.list"}}
-<div data-page="feedback">
-  <div class="page-header command-header">
-    <div><p class="eyebrow">Foundry / feedback</p><h2>Feedback</h2><p class="hint">Read-only session feedback submitted through the Foundry API.</p></div>
-  </div>
-  {{if .Feedback}}
-  <div class="worklist">{{range .Feedback}}
-    <article class="panel-form">
-      <div class="section-title-row"><h3>Feedback #{{.ID}}</h3><span class="chip {{if .Processed}}chip-done{{else}}chip-pending{{end}}">{{if .Processed}}processed{{else}}unprocessed{{end}}</span></div>
-      <div class="phase-goal">{{.Body}}</div>
-      <dl class="fact-list"><div><dt>Model</dt><dd>{{if .Model}}{{.Model}}{{else}}—{{end}}</dd></div><div><dt>Session</dt><dd>{{if .SessionID}}{{.SessionID}}{{else}}—{{end}}</dd></div><div><dt>Received</dt><dd>{{datetime .CreatedAt}}</dd></div></dl>
-    </article>{{end}}
-  </div>
-  {{else}}<div class="empty empty-action">No feedback has been submitted yet.</div>{{end}}
+<div class="console-page" data-page="feedback">
+  <header class="console-page-header"><div><p class="console-label">Session telemetry</p><h1>Feedback</h1><p>Read-only reports submitted through the Foundry API</p></div></header>
+  <section class="console-workspace">
+    <div class="console-toolbar"><input class="console-search" type="search" placeholder="Search feedback…" data-list-search="feedback-records"><span class="console-count">{{len .Feedback}} records</span></div>
+    <div id="feedback-records">{{range .Feedback}}<article class="console-feedback"><span class="console-accent">FB-{{.ID}}</span><div class="console-feedback-body">{{.Body}}</div><div><small>MODEL</small><div class="console-meta">{{if .Model}}{{.Model}}{{else}}—{{end}}</div><small>SESSION</small><div class="console-meta">{{if .SessionID}}{{.SessionID}}{{else}}—{{end}}</div></div><div><span class="console-status {{if .Processed}}status-done{{else}}status-pending{{end}}">{{if .Processed}}processed{{else}}unprocessed{{end}}</span><div class="console-meta">{{datetime .CreatedAt}}</div></div></article>{{else}}<div class="console-empty">No feedback has been submitted yet.</div>{{end}}</div>
+  </section>
 </div>
 {{end}}

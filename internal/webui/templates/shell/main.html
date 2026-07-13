@@ -15,21 +15,23 @@
 </head>
 <body data-page="{{.Page}}">
   <a class="skip-link" href="#app">Skip to content</a>
-  <header class="top-frame">
-    <div class="brand-slab">
-      <a href="/" hx-get="/chat/fragment" hx-target="#app" hx-push-url="/" class="brand">Foundry</a>
-      <span class="brand-subtitle">intent / evidence / decisions</span>
+  <div class="app-shell">
+    <aside class="console-sidebar">
+      <a href="/" hx-get="/chat/fragment" hx-target="#app" hx-push-url="/" class="console-brand"><span>■</span> FOUNDRY</a>
+      <nav class="console-nav" aria-label="Primary navigation">
+        <a href="/plans" data-nav="plans" hx-get="/plans/fragment" hx-target="#app" hx-push-url="/plans"{{if eq .Page "plans"}} class="active"{{end}}><span>01</span> Plans</a>
+        <a href="/projects" data-nav="projects" hx-get="/projects/fragment" hx-target="#app" hx-push-url="/projects"{{if eq .Page "projects"}} class="active"{{end}}><span>02</span> Projects</a>
+        <a href="/chat" data-nav="chat" hx-get="/chat/fragment" hx-target="#app" hx-push-url="/chat"{{if eq .Page "chat"}} class="active"{{end}}><span>03</span> Chat</a>
+        <a href="/feedback" data-nav="feedback" hx-get="/feedback/fragment" hx-target="#app" hx-push-url="/feedback"{{if eq .Page "feedback"}} class="active"{{end}}><span>04</span> Feedback</a>
+        <a href="/settings" data-nav="settings" hx-get="/settings/fragment" hx-target="#app" hx-push-url="/settings"{{if eq .Page "settings"}} class="active"{{end}}><span>05</span> Settings</a>
+      </nav>
+      <div class="console-health"><span>●</span> LOCAL / PORT 8080</div>
+    </aside>
+    <div class="console-content">
+      <div id="action-errors" class="error-region" role="alert" aria-live="assertive" hidden></div>
+      <main id="app" tabindex="-1" hx-get="{{.Fragment}}" hx-trigger="load" hx-swap="innerHTML"></main>
     </div>
-    <nav class="nav-slabs" aria-label="Primary navigation">
-      <a href="/plans" data-nav="plans" hx-get="/plans/fragment" hx-target="#app" hx-push-url="/plans"{{if eq .Page "plans"}} class="active"{{end}}>Plans</a>
-      <a href="/projects" data-nav="projects" hx-get="/projects/fragment" hx-target="#app" hx-push-url="/projects"{{if eq .Page "projects"}} class="active"{{end}}>Projects</a>
-      <a href="/chat" data-nav="chat" hx-get="/chat/fragment" hx-target="#app" hx-push-url="/chat"{{if eq .Page "chat"}} class="active"{{end}}>Chat</a>
-      <a href="/feedback" data-nav="feedback" hx-get="/feedback/fragment" hx-target="#app" hx-push-url="/feedback"{{if eq .Page "feedback"}} class="active"{{end}}>Feedback</a>
-      <a href="/settings" data-nav="settings" hx-get="/settings/fragment" hx-target="#app" hx-push-url="/settings"{{if eq .Page "settings"}} class="active"{{end}}>Settings</a>
-    </nav>
-  </header>
-  <div id="action-errors" class="error-region" role="alert" aria-live="assertive" hidden></div>
-  <main id="app" tabindex="-1" hx-get="{{.Fragment}}" hx-trigger="load" hx-swap="innerHTML"></main>
+  </div>
 </body>
 </html>
 {{end}}

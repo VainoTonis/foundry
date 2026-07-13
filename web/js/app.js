@@ -139,6 +139,41 @@ document.body.addEventListener('htmx:historyRestore', () => {
 
 document.addEventListener('DOMContentLoaded', () => initStreams(document));
 
+// Shared console interactions keep list pages and chat history behavior identical.
+document.addEventListener('input', (event) => {
+  const input = event.target.closest('[data-list-search]');
+  if (!input) return;
+  const list = document.getElementById(input.dataset.listSearch);
+  if (!list) return;
+  const query = input.value.trim().toLowerCase();
+  Array.from(list.children).forEach((row) => {
+    row.hidden = query !== '' && !row.textContent.toLowerCase().includes(query);
+  });
+});
+
+document.addEventListener('click', (event) => {
+  const toggle = event.target.closest('[data-chat-history-toggle]');
+  if (toggle) {
+    event.preventDefault();
+    document.querySelector('.console-chat')?.classList.toggle('history-collapsed');
+    return;
+  }
+
+  const row = event.target.closest('[data-row-href]');
+  if (!row || event.target.closest('button, a, form, input, select, textarea')) return;
+  htmx.ajax('GET', row.dataset.rowFragment, {target: '#app', swap: 'innerHTML'});
+  history.pushState({}, '', row.dataset.rowHref);
+});
+
+document.addEventListener('keydown', (event) => {
+  const row = event.target.closest('[data-row-href]');
+  if (row && (event.key === 'Enter' || event.key === ' ')) {
+    event.preventDefault();
+    htmx.ajax('GET', row.dataset.rowFragment, {target: '#app', swap: 'innerHTML'});
+    history.pushState({}, '', row.dataset.rowHref);
+  }
+});
+
 // --- chat settings dialog ---
 
 function openChatSettings() {
