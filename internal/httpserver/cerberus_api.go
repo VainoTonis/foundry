@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/tonis2/foundry/internal/db"
+	"github.com/tonis2/foundry/internal/stream"
 )
 
 type cerberusSessionView struct {
@@ -72,7 +75,79 @@ func (s *Server) handleCerberusSession(w http.ResponseWriter, r *http.Request) {
 		s.cleanKnownCerberusSession(w, r, session, force)
 		return
 	}
+	if strings.HasSuffix(path, "/stream") && r.Method == http.MethodGet {
+		session := strings.TrimSuffix(path, "/stream")
+		s.streamCerberusSessionEvents(w, r, session)
+		return
+	}
 	jsonErr(w, "not found", http.StatusNotFound)
+}
+
+func (s *Server) streamCerberusSessionEvents(w http.ResponseWriter, r *http.Request, session string) {
+	known, err := db.ListKnownCerberusSessions(r.Context(), s.pool)
+	if err != nil {
+		jsonErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	found := false
+	for i := range known {
+		if known[i].Session == session {
+			found = true
+			break
+		}
+	}
+	if !found {
+		jsonErr(w, "unknown Foundry session", http.StatusNotFound)
+		return
+	}
+
+	flusher, ok := stream.StartSSE(w)
+	if !ok {
+		jsonErr(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	lastIDStr := r.URL.Query().Get("after")
+	if lastIDStr == "" {
+		lastIDStr = r.Header.Get("Last-Event-ID")
+	}
+	var lastID int64
+	if lastIDStr != "" {
+		lastID, _ = strconv.ParseInt(lastIDStr, 10, 64)
+	}
+
+	catchUp, _ := db.ListCerberusEvents(r.Context(), s.pool, session, lastID)
+	for _, e := range catchUp {
+		writeSSEvent(w, e)
+	}
+	flusher.Flush()
+
+	ch := s.eventHub.Subscribe(session)
+	defer s.eventHub.Unsubscribe(session, ch)
+
+	heartbeat := time.NewTicker(15 * time.Second)
+	defer heartbeat.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-heartbeat.C:
+			stream.WriteHeartbeat(w)
+			flusher.Flush()
+		case data, ok := <-ch:
+			if !ok {
+				return
+			}
+			var e db.CerberusEvent
+			if err := json.Unmarshal(data, &e); err == nil {
+				writeSSEvent(w, e)
+			} else {
+				stream.WriteEvent(w, "message", data)
+			}
+			flusher.Flush()
+		}
+	}
 }
 
 func (s *Server) cleanKnownCerberusSession(w http.ResponseWriter, r *http.Request, session string, force bool) {
