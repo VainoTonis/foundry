@@ -64,6 +64,17 @@ func GetSpecDraft(ctx context.Context, pool *pgxpool.Pool, id int64) (SpecDraft,
 	return d, err
 }
 
+func GetSpecDraftByCerberusSession(ctx context.Context, pool *pgxpool.Pool, cerberusSession string) (SpecDraft, error) {
+	var d SpecDraft
+	err := pool.QueryRow(ctx,
+		`SELECT id, project_id, title, cerberus_session, messages, status, original_intent, current_decision_needed, created_at, updated_at FROM spec_drafts WHERE cerberus_session = $1`, cerberusSession,
+	).Scan(&d.ID, &d.ProjectID, &d.Title, &d.CerberusSession, &d.Messages, &d.Status, &d.OriginalIntent, &d.CurrentDecisionNeeded, &d.CreatedAt, &d.UpdatedAt)
+	if err == pgx.ErrNoRows {
+		return d, ErrNotFound
+	}
+	return d, err
+}
+
 func ListSpecDrafts(ctx context.Context, pool *pgxpool.Pool) ([]SpecDraft, error) {
 	rows, err := pool.Query(ctx,
 		`SELECT id, project_id, title, cerberus_session, messages, status, original_intent, current_decision_needed, created_at, updated_at FROM spec_drafts ORDER BY id DESC`,

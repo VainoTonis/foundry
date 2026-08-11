@@ -65,5 +65,31 @@ func ListKnownCerberusSessions(ctx context.Context, pool *pgxpool.Pool) ([]Known
 		}
 		out = append(out, k)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	rows, err = pool.Query(ctx, `
+		SELECT session, 'external', status, last_seen_at
+		FROM external_cerberus_sessions
+		ORDER BY last_seen_at DESC, id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var k KnownCerberusSession
+		var typ string
+		if err := rows.Scan(&k.Session, &typ, &k.FoundryStatus, &k.LastUpdatedAt); err != nil {
+			return nil, err
+		}
+		k.Type = typ
+		if k.FoundryStatus == "done" {
+			k.SafeToClean = true
+		} else {
+			k.UnsafeReason = "external session is not done"
+		}
+		out = append(out, k)
+	}
 	return out, rows.Err()
 }

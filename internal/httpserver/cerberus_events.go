@@ -146,7 +146,36 @@ func (s *Server) storeAndPublishPhaseLog(ctx context.Context, workflowID, phaseI
 	return nil
 }
 
+// registerExternalCerberusSessionIfUnknown records session as an external
+// (non-foundry-managed) Cerberus session when it does not correspond to any
+// known workflow phase, spec draft, or chat session. It never returns an
+// error to the caller: registration failures must not affect event ingest.
+func (s *Server) registerExternalCerberusSessionIfUnknown(ctx context.Context, session, status string) {
+	if _, err := db.GetPhaseByCerberusSession(ctx, s.pool, session); err == nil {
+		return
+	} else if !errors.Is(err, db.ErrNotFound) {
+		return
+	}
+	if _, err := db.GetSpecDraftByCerberusSession(ctx, s.pool, session); err == nil {
+		return
+	} else if !errors.Is(err, db.ErrNotFound) {
+		return
+	}
+	if _, err := db.GetChatSessionByCerberusSession(ctx, s.pool, session); err == nil {
+		return
+	} else if !errors.Is(err, db.ErrNotFound) {
+		return
+	}
+	_, _ = db.UpsertExternalCerberusSession(ctx, s.pool, session, "", status)
+}
+
 func (s *Server) storeAndPublishCerberusEvent(ctx context.Context, session, eventType string, payload json.RawMessage) error {
+	externalStatus := "active"
+	if eventType == "turn_complete" {
+		externalStatus = "done"
+	}
+	s.registerExternalCerberusSessionIfUnknown(ctx, session, externalStatus)
+
 	dbEvt, err := db.InsertCerberusEvent(ctx, s.pool, session, eventType, payload)
 	if err != nil {
 		return err
