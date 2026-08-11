@@ -1,8 +1,8 @@
 {{define "settings.main"}}
 <div class="console-page" data-page="settings">
-  <header class="console-page-header"><div><p class="console-label">System control</p><h1>Settings</h1><p>Runtime configuration and maintenance</p></div></header>
+  <header class="console-page-header"><div><p class="console-label">System control</p><h1>Settings</h1><p>Runtime configuration and maintenance. Cerberus sessions live on the <a href="/sessions" hx-get="/sessions/fragment" hx-target="#app" hx-push-url="/sessions">Sessions</a> page.</p></div></header>
   <section class="settings-grid" aria-label="Settings workbench">
-    <aside class="settings-menu" aria-label="Settings sections"><a href="#runtime-settings" class="active">Runtime</a><a href="#managed-sessions">Sessions</a><a href="#execution-profiles">Profiles</a></aside>
+    <aside class="settings-menu" aria-label="Settings sections"><a href="#runtime-settings" class="active">Runtime</a><a href="#execution-profiles">Profiles</a></aside>
     <form id="runtime-settings" class="panel-form settings-config" data-settings action="/api/settings" data-refresh="/settings/fragment" data-target="#app">
       <div class="section-title-row"><h3>Settings</h3><span class="chip chip-warning">non-runtime changes may require restart</span></div>
       {{range .Settings}}{{if and (not .IsVerbosity) (not .IsCerberusProfile)}}<div class="field"><label>{{.Key}}</label><input name="{{.Key}}" value="{{.Value}}"><p class="hint">{{if .IsRuntime}}DB runtime setting{{else}}config.yaml key{{end}}: {{.Key}}</p></div>{{end}}{{end}}
@@ -13,8 +13,6 @@
     </form>
     <aside class="context-panel settings-help"><h3>Safe operation</h3><dl class="fact-list"><div><dt>Primary action</dt><dd>Save runtime DB settings, non-runtime config, or one profile at a time.</dd></div><div><dt>Danger action</dt><dd>Deleting profiles is explicit and red. Protected sessions cannot be cleaned.</dd></div><div><dt>Failure handling</dt><dd>Request failures stay visible in the alert region and also appear as a toast.</dd></div></dl></aside>
   </section>
-  <section id="managed-sessions" class="settings-section"><div class="section-title-row"><h3>Cerberus sessions</h3><span class="chip chip-pending">cleanup audit</span></div>{{if .SessionError}}<div class="empty empty-error">{{.SessionError}}</div>{{end}}
-  {{if .Sessions}}<div class="worklist">{{range .Sessions}}<article class="work-row"><div class="work-main"><span class="work-title">{{.Session}}</span><div class="work-meta">{{.Type}}{{if .ProjectName}} · {{.ProjectName}}{{end}}{{if .SpecTitle}} · spec: {{.SpecTitle}}{{end}}{{if .PhaseName}} · phase: {{.PhaseName}}{{end}}{{if .DraftTitle}} · draft: {{.DraftTitle}}{{end}} · updated {{datetime .LastUpdatedAt}}</div><div class="work-meta">Cerberus: {{if .CerberusStatus}}{{.CerberusStatus}}{{else}}unknown{{end}}{{if .CerberusError}} · {{.CerberusError}}{{end}}{{if .UnsafeReason}} · {{.UnsafeReason}}{{end}}</div></div><div class="work-signals"><span class="chip chip-{{.FoundryStatus}}">{{.FoundryStatus}}</span>{{if .SafeToClean}}<span class="chip chip-done">safe cleanup</span>{{else}}<span class="chip chip-running">active / protected</span>{{end}}</div><div class="work-next"><button class="btn" data-json-post="{{cleanSessionURL .Session}}" data-refresh="/settings/fragment" data-target="#app" {{if not .SafeToClean}}disabled title="{{.UnsafeReason}}"{{end}}>Clean session</button></div></article>{{end}}</div>{{else}}<div class="empty empty-action">No Foundry-known Cerberus sessions. Active work will appear here when workflows or drafts use Cerberus.</div>{{end}}</section>
   <section id="execution-profiles" class="settings-section"><div class="section-title-row"><h3>Profiles</h3><span class="chip chip-pending">execution defaults</span></div>
   <form class="panel-form profile-create" data-json method="post" action="/api/profiles" data-refresh="/settings/fragment" data-target="#app">
     <h3>Create profile</h3>

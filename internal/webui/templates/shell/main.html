@@ -11,6 +11,7 @@
   <script defer src="/js/workflow.js"></script>
   <script defer src="/js/builder.js"></script>
   <script defer src="/js/chat.js"></script>
+  <script defer src="/js/sessions.js"></script>
   <script defer src="/js/app.js"></script>
 </head>
 <body data-page="{{.Page}}">
@@ -23,7 +24,8 @@
         <a href="/projects" data-nav="projects" hx-get="/projects/fragment" hx-target="#app" hx-push-url="/projects"{{if eq .Page "projects"}} class="active"{{end}}><span>02</span> Projects</a>
         <a href="/chat" data-nav="chat" hx-get="/chat/fragment" hx-target="#app" hx-push-url="/chat"{{if eq .Page "chat"}} class="active"{{end}}><span>03</span> Chat</a>
         <a href="/feedback" data-nav="feedback" hx-get="/feedback/fragment" hx-target="#app" hx-push-url="/feedback"{{if eq .Page "feedback"}} class="active"{{end}}><span>04</span> Feedback</a>
-        <a href="/settings" data-nav="settings" hx-get="/settings/fragment" hx-target="#app" hx-push-url="/settings"{{if eq .Page "settings"}} class="active"{{end}}><span>05</span> Settings</a>
+        <a href="/sessions" data-nav="sessions" hx-get="/sessions/fragment" hx-target="#app" hx-push-url="/sessions"{{if eq .Page "sessions"}} class="active"{{end}}><span>05</span> Sessions</a>
+        <a href="/settings" data-nav="settings" hx-get="/settings/fragment" hx-target="#app" hx-push-url="/settings"{{if eq .Page "settings"}} class="active"{{end}}><span>06</span> Settings</a>
       </nav>
       <div class="console-health"><span>●</span> LOCAL / PORT 8080</div>
     </aside>

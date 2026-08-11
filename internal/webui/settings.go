@@ -1,19 +1,12 @@
 package webui
 
 import (
-	"context"
 	"net/http"
 	"os"
 	"strings"
 
 	"github.com/tonis2/foundry/internal/db"
 )
-
-type cerberusSessionView struct {
-	db.KnownCerberusSession
-	CerberusStatus string `json:"cerberus_status"`
-	CerberusError  string `json:"cerberus_error,omitempty"`
-}
 
 func (s *Handler) handleUISettingsPage(w http.ResponseWriter, r *http.Request) {
 	s.renderShell(w, "settings", "/settings/fragment")
@@ -33,11 +26,6 @@ func (s *Handler) handleUISettingsFragment(w http.ResponseWriter, r *http.Reques
 	cerberusProfile := runtimeValues["cerberus_profile"]
 	mergedConfig := mergeYAMLRuntimeSettings(string(data), runtimeValues)
 	profiles, _ := db.ListProfiles(r.Context(), s.pool)
-	sessions, sessionErr := s.knownCerberusSessionViews(r.Context(), true)
-	sessionErrMsg := ""
-	if sessionErr != nil {
-		sessionErrMsg = sessionErr.Error()
-	}
 	type setting struct {
 		Key, Value        string
 		IsVerbosity       bool
@@ -78,42 +66,12 @@ func (s *Handler) handleUISettingsFragment(w http.ResponseWriter, r *http.Reques
 	if err := templates.ExecuteTemplate(w, "settings.main", struct {
 		Settings              []setting
 		Profiles              []db.Profile
-		Sessions              []cerberusSessionView
-		SessionError          string
 		HasVerbosity          bool
 		VerbosityKey          string
 		VerbosityValue        string
 		CerberusProfile       string
 		CerberusProfileExists bool
-	}{settings, profiles, sessions, sessionErrMsg, verbosityKey != "", verbosityKey, verbosityValue, cerberusProfile, cerberusProfileExists}); err != nil {
+	}{settings, profiles, verbosityKey != "", verbosityKey, verbosityValue, cerberusProfile, cerberusProfileExists}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
-}
-
-func (s *Handler) knownCerberusSessionViews(ctx context.Context, withStatus bool) ([]cerberusSessionView, error) {
-	known, err := db.ListKnownCerberusSessions(ctx, s.pool)
-	if err != nil {
-		return nil, err
-	}
-	views := make([]cerberusSessionView, 0, len(known))
-	for _, k := range known {
-		v := cerberusSessionView{KnownCerberusSession: k}
-		if withStatus && s.cerb != nil {
-			var status string
-			var err error
-			repoPath := strings.TrimSpace(k.ProjectRepo)
-			if repoPath != "" {
-				status, err = s.cerb.WithRepo(repoPath).Status(ctx, k.Session)
-			} else {
-				status, err = s.cerb.Status(ctx, k.Session)
-			}
-			if err != nil {
-				v.CerberusError = err.Error()
-			} else {
-				v.CerberusStatus = status
-			}
-		}
-		views = append(views, v)
-	}
-	return views, nil
 }

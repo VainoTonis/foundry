@@ -98,6 +98,7 @@ function initStreams(root) {
   initDraftStream(root);
   initLogStream(root);
   initChatStream(root);
+  initSessionStream(root);
 }
 
 document.body.addEventListener('htmx:beforeRequest', (event) => {
@@ -124,6 +125,7 @@ document.body.addEventListener('htmx:afterSwap', (event) => {
     if (!event.detail.target.querySelector('[data-workflow-stream]') && workflowSource) { workflowSource.close(); workflowSource = null; }
     if (!event.detail.target.querySelector('[data-draft-stream]') && draftSource) { draftSource.close(); draftSource = null; }
     if (!event.detail.target.querySelector('[data-chat-stream]') && chatSource) { chatSource.close(); chatSource = null; }
+    if (!event.detail.target.querySelector('[data-session-stream]') && sessionSource) { sessionSource.close(); sessionSource = null; }
     if (logSource) { logSource.close(); logSource = null; }
   }
   initStreams(event.detail.target);

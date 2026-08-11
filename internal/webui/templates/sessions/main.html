@@ -1,0 +1,38 @@
+{{define "sessions.list"}}
+<div class="console-page" data-page="sessions">
+  <header class="console-page-header"><div><p class="console-label">Agent activity</p><h1>Sessions</h1><p>All Foundry-known Cerberus sessions: workflow phases, drafts, chats, and external runs. Open one to tail its live activity.</p></div></header>
+  <section class="settings-section"><div class="section-title-row"><h3>Sessions</h3><span class="chip chip-pending">cleanup audit</span></div>{{if .SessionError}}<div class="empty empty-error">{{.SessionError}}</div>{{end}}
+  {{if .Sessions}}<div class="worklist">{{range .Sessions}}<article class="work-row"><div class="work-main"><a class="work-title" href="/sessions/{{.Session}}" hx-get="/sessions/{{.Session}}/fragment" hx-target="#app" hx-push-url="/sessions/{{.Session}}">{{.Session}}</a><div class="work-meta">{{.Type}}{{if .ProjectName}} · {{.ProjectName}}{{end}}{{if .SpecTitle}} · spec: {{.SpecTitle}}{{end}}{{if .PhaseName}} · phase: {{.PhaseName}}{{end}}{{if .DraftTitle}} · draft: {{.DraftTitle}}{{end}} · updated {{datetime .LastUpdatedAt}}</div><div class="work-meta">Cerberus: {{if .CerberusStatus}}{{.CerberusStatus}}{{else}}unknown{{end}}{{if .CerberusError}} · {{.CerberusError}}{{end}}{{if .UnsafeReason}} · {{.UnsafeReason}}{{end}}</div></div><div class="work-signals"><span class="chip chip-{{.FoundryStatus}}">{{.FoundryStatus}}</span>{{if .SafeToClean}}<span class="chip chip-done">safe cleanup</span>{{else}}<span class="chip chip-running">active / protected</span>{{end}}</div><div class="work-next"><button class="btn" data-json-post="{{cleanSessionURL .Session}}" data-refresh="/sessions/fragment" data-target="#app" {{if not .SafeToClean}}disabled title="{{.UnsafeReason}}"{{end}}>Clean session</button></div></article>{{end}}</div>{{else}}<div class="empty empty-action">No Foundry-known Cerberus sessions. Active work will appear here when workflows, drafts, or chats use Cerberus.</div>{{end}}</section>
+</div>
+{{end}}
+
+{{define "sessions.detail"}}
+<div class="console-page chat-page" data-page="sessions" data-session-stream="/api/cerberus/sessions/{{.Session.Session}}/stream" data-session-name="{{.Session.Session}}">
+  <div class="context-nav"><a class="btn" href="/sessions" hx-get="/sessions/fragment" hx-target="#app" hx-push-url="/sessions">← Sessions</a></div>
+  <header class="console-page-header">
+    <div>
+      <p class="console-label">Session</p>
+      <h1>{{.Session.Session}}</h1>
+      <div class="card-meta">{{.Session.Type}}{{if .Session.ProjectName}} · {{.Session.ProjectName}}{{end}}{{if .Session.SpecTitle}} · spec: {{.Session.SpecTitle}}{{end}}{{if .Session.PhaseName}} · phase: {{.Session.PhaseName}}{{end}}{{if .Session.DraftTitle}} · draft: {{.Session.DraftTitle}}{{end}} · updated {{datetime .Session.LastUpdatedAt}}</div>
+    </div>
+    <div class="card-actions"><button class="btn btn-danger" data-json-post="{{cleanSessionURL .Session.Session}}" data-redirect="/sessions" {{if not .Session.SafeToClean}}disabled title="{{.Session.UnsafeReason}}"{{end}}>Clean session</button></div>
+  </header>
+  <section class="settings-section">
+    <dl class="fact-list">
+      <div><dt>Foundry status</dt><dd><span class="chip chip-{{.Session.FoundryStatus}}">{{.Session.FoundryStatus}}</span></dd></div>
+      <div><dt>Cerberus status</dt><dd>{{if .Session.CerberusStatus}}{{.Session.CerberusStatus}}{{else}}unknown{{end}}{{if .Session.CerberusError}} · {{.Session.CerberusError}}{{end}}</dd></div>
+      {{if .Session.ProjectRepo}}<div><dt>Repo</dt><dd>{{.Session.ProjectRepo}}</dd></div>{{end}}
+      {{if .Session.UnsafeReason}}<div><dt>Cleanup</dt><dd>{{.Session.UnsafeReason}}</dd></div>{{end}}
+    </dl>
+  </section>
+  <section class="evidence-panel">
+    <div class="evidence-head">
+      <div><h3>Live activity</h3><p class="hint">Tails <code>text</code> and <code>tool_use</code> events from the session stream as they arrive.</p></div>
+      <div class="card-meta">Stream: <strong data-session-connection>Connecting…</strong></div>
+    </div>
+    <div id="session-stream" class="chat-messages" data-session-log>
+      <div class="chat-empty"><strong>Waiting for activity.</strong><span>New text and tool_use events will appear here live.</span></div>
+    </div>
+  </section>
+</div>
+{{end}}
