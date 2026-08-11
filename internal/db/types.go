@@ -147,6 +147,15 @@ type CerberusEvent struct {
 	CreatedAt time.Time       `json:"created_at"`
 }
 
+type ExternalCerberusSession struct {
+	ID          int64     `json:"id"`
+	Session     string    `json:"session"`
+	Repo        string    `json:"repo"`
+	Status      string    `json:"status"`
+	FirstSeenAt time.Time `json:"first_seen_at"`
+	LastSeenAt  time.Time `json:"last_seen_at"`
+}
+
 type Profile struct {
 	ID           int64             `json:"id"`
 	Name         string            `json:"name"`
