@@ -49,6 +49,7 @@ func RuntimeSettingKeys() map[string]bool {
 		"default_workflow_budget_usd":   true,
 		"default_phase_timeout_seconds": true,
 		"git_root":                      true,
+		"knowledge_vault_path":          true,
 	}
 }
 
