@@ -199,3 +199,15 @@ type Feedback struct {
 	Processed bool      `json:"processed"`
 	CreatedAt time.Time `json:"created_at"`
 }
+
+type KnowledgeFeedback struct {
+	ID         int64     `json:"id"`
+	Kind       string    `json:"kind"`
+	NotePath   *string   `json:"note_path,omitempty"`
+	Topic      *string   `json:"topic,omitempty"`
+	Evidence   string    `json:"evidence"`
+	Suggestion *string   `json:"suggestion,omitempty"`
+	Origin     string    `json:"origin"`
+	Status     string    `json:"status"`
+	CreatedAt  time.Time `json:"created_at"`
+}
