@@ -192,12 +192,21 @@ type PlanStep struct {
 }
 
 type Feedback struct {
-	ID        int64     `json:"id"`
-	Body      string    `json:"body"`
-	Model     string    `json:"model"`
-	SessionID string    `json:"session_id"`
-	Processed bool      `json:"processed"`
-	CreatedAt time.Time `json:"created_at"`
+	ID                int64     `json:"id"`
+	Body              string    `json:"body,omitempty"`
+	Model             string    `json:"model,omitempty"`
+	SessionID         string    `json:"session_id,omitempty"`
+	Processed         bool      `json:"processed"`
+	Dimension         *string   `json:"dimension,omitempty"`
+	Target            *string   `json:"target,omitempty"`
+	Score             *int      `json:"score,omitempty"`
+	Tags              []string  `json:"tags,omitempty"`
+	Evidence          *string   `json:"evidence,omitempty"`
+	Impact            *string   `json:"impact,omitempty"`
+	RecommendedAction *string   `json:"recommended_action,omitempty"`
+	Owner             *string   `json:"owner,omitempty"`
+	Status            string    `json:"status"`
+	CreatedAt         time.Time `json:"created_at"`
 }
 
 type KnowledgeFeedback struct {
