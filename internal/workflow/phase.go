@@ -34,12 +34,9 @@ func (r *Runner) execPhase(
 ) error {
 	sessionName := phaseSessionName(wf.ID, phase.ID)
 
-	profilePath, vaultMounted, err := r.writeProfileFile(ctx, r.cerberusProfile(), sessionName)
+	profilePath, err := r.writeProfileFile(ctx, r.cerberusProfile(), sessionName)
 	if err != nil {
 		log.Printf("phase %d: write profile file: %v (proceeding without profile)", phase.ID, err)
-	}
-	if vaultMounted {
-		prompt = prompt + "\n\n" + vaultInstructions()
 	}
 	cerb := r.cerb.WithRepoProfile(proj.RepoPath, profilePath)
 
