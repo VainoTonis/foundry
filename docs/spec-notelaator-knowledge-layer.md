@@ -36,6 +36,18 @@ cerberus subagent
 5. **Evidence mandatory.** API rejects empty evidence, unknown kind, and missing note path except `gap`.
 6. **Manual drain in v1.** Owner runs janitor against open rows. Spec C later adds generic recurring jobs and curator.
 
+### Subagent context-feedback handoff
+
+When host supplies selected context, it wraps it in a complete non-empty prompt block:
+
+```text
+<orchestrator-context>
+selected excerpt(s)
+</orchestrator-context>
+```
+
+Cerberus base extension `context-feedback` then enables a final `report_context_feedback` tool. Subagent reports only `verdict` (`useful|insufficient|irrelevant|conflicting`), `reason`, and `confidence` (`low|medium|high`). It receives no vault path, note path, API URL, token, or network access. Without block, tool is inactive and no feedback is requested. Tool result terminates run and remains in Cerberus JSON/log output; host retains source mapping, validates report, and decides whether to file `knowledge_feedback`. Missing report is no signal, not failure.
+
 ## Slice 1 — host read layer + feedback
 
 ### 1. Scanner
