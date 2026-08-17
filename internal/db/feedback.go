@@ -40,6 +40,7 @@ func CreateFeedback(ctx context.Context, pool *pgxpool.Pool, body, model, sessio
 
 // StructuredFeedbackInput represents a per-dimension session feedback entry.
 type StructuredFeedbackInput struct {
+	Body              string
 	Model             string
 	SessionID         string
 	Dimension         string
@@ -60,10 +61,10 @@ func CreateStructuredFeedback(ctx context.Context, pool *pgxpool.Pool, in Struct
 		status = "open"
 	}
 	row := pool.QueryRow(ctx,
-		`INSERT INTO feedback (model, session_id, dimension, target, score, tags, evidence, impact, recommended_action, owner, status)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		`INSERT INTO feedback (body, model, session_id, dimension, target, score, tags, evidence, impact, recommended_action, owner, status)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		 RETURNING `+feedbackColumns,
-		nullableString(in.Model), nullableString(in.SessionID), nullableString(in.Dimension), nullableString(in.Target),
+		in.Body, nullableString(in.Model), nullableString(in.SessionID), nullableString(in.Dimension), nullableString(in.Target),
 		nullableInt(in.Score), in.Tags, nullableString(in.Evidence), nullableString(in.Impact),
 		nullableString(in.RecommendedAction), nullableString(in.Owner), status,
 	)

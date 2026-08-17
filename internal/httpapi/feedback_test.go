@@ -19,10 +19,23 @@ func TestHandleFeedbacksLegacyMissingBody(t *testing.T) {
 	}
 }
 
+func TestHandleFeedbacksStructuredMissingBody(t *testing.T) {
+	h := New(nil, Config{})
+	req := httptest.NewRequest(http.MethodPost, "/api/feedback",
+		bytes.NewBufferString(`{"dimension":"prompt_quality","target":"orchestrator_prompt","score":4,"evidence":"looks good"}`))
+	rec := httptest.NewRecorder()
+
+	h.HandleFeedbacks(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestHandleFeedbacksStructuredMissingDimension(t *testing.T) {
 	h := New(nil, Config{})
 	req := httptest.NewRequest(http.MethodPost, "/api/feedback",
-		bytes.NewBufferString(`{"target":"session-1","score":4,"evidence":"looks good"}`))
+		bytes.NewBufferString(`{"body":"b","target":"orchestrator_prompt","score":4,"evidence":"looks good"}`))
 	rec := httptest.NewRecorder()
 
 	h.HandleFeedbacks(rec, req)
@@ -35,7 +48,7 @@ func TestHandleFeedbacksStructuredMissingDimension(t *testing.T) {
 func TestHandleFeedbacksStructuredInvalidDimension(t *testing.T) {
 	h := New(nil, Config{})
 	req := httptest.NewRequest(http.MethodPost, "/api/feedback",
-		bytes.NewBufferString(`{"dimension":"bogus","target":"session-1","score":4,"evidence":"e"}`))
+		bytes.NewBufferString(`{"body":"b","dimension":"bogus","target":"orchestrator_prompt","score":4,"evidence":"e"}`))
 	rec := httptest.NewRecorder()
 
 	h.HandleFeedbacks(rec, req)
@@ -48,7 +61,20 @@ func TestHandleFeedbacksStructuredInvalidDimension(t *testing.T) {
 func TestHandleFeedbacksStructuredMissingTarget(t *testing.T) {
 	h := New(nil, Config{})
 	req := httptest.NewRequest(http.MethodPost, "/api/feedback",
-		bytes.NewBufferString(`{"dimension":"tests","score":4,"evidence":"e"}`))
+		bytes.NewBufferString(`{"body":"b","dimension":"tool_usage","score":4,"evidence":"e"}`))
+	rec := httptest.NewRecorder()
+
+	h.HandleFeedbacks(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleFeedbacksStructuredInvalidTarget(t *testing.T) {
+	h := New(nil, Config{})
+	req := httptest.NewRequest(http.MethodPost, "/api/feedback",
+		bytes.NewBufferString(`{"body":"b","dimension":"tool_usage","target":"bogus","score":4,"evidence":"e"}`))
 	rec := httptest.NewRecorder()
 
 	h.HandleFeedbacks(rec, req)
@@ -61,7 +87,7 @@ func TestHandleFeedbacksStructuredMissingTarget(t *testing.T) {
 func TestHandleFeedbacksStructuredScoreOutOfRange(t *testing.T) {
 	h := New(nil, Config{})
 	req := httptest.NewRequest(http.MethodPost, "/api/feedback",
-		bytes.NewBufferString(`{"dimension":"tests","target":"session-1","score":9,"evidence":"e"}`))
+		bytes.NewBufferString(`{"body":"b","dimension":"tool_usage","target":"tool_flow","score":9,"evidence":"e"}`))
 	rec := httptest.NewRecorder()
 
 	h.HandleFeedbacks(rec, req)
@@ -71,23 +97,13 @@ func TestHandleFeedbacksStructuredScoreOutOfRange(t *testing.T) {
 	}
 }
 
-func TestHandleFeedbacksStructuredMissingEvidence(t *testing.T) {
+func TestHandleFeedbacksStructuredFreeProseImpactWithInvalidDimensionStillFailsOnDimension(t *testing.T) {
 	h := New(nil, Config{})
+	// Impact is free prose now (no enum check). This request uses an
+	// arbitrary, non-enum impact string alongside an invalid dimension, and
+	// must still be rejected for the dimension, not the impact value.
 	req := httptest.NewRequest(http.MethodPost, "/api/feedback",
-		bytes.NewBufferString(`{"dimension":"tests","target":"session-1","score":4}`))
-	rec := httptest.NewRecorder()
-
-	h.HandleFeedbacks(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
-	}
-}
-
-func TestHandleFeedbacksStructuredInvalidImpact(t *testing.T) {
-	h := New(nil, Config{})
-	req := httptest.NewRequest(http.MethodPost, "/api/feedback",
-		bytes.NewBufferString(`{"dimension":"tests","target":"session-1","score":4,"evidence":"e","impact":"nope"}`))
+		bytes.NewBufferString(`{"body":"b","dimension":"bogus","target":"outcome","score":4,"impact":"caused a flaky retry loop in phase 3"}`))
 	rec := httptest.NewRecorder()
 
 	h.HandleFeedbacks(rec, req)
@@ -100,7 +116,7 @@ func TestHandleFeedbacksStructuredInvalidImpact(t *testing.T) {
 func TestHandleFeedbacksStructuredInvalidStatus(t *testing.T) {
 	h := New(nil, Config{})
 	req := httptest.NewRequest(http.MethodPost, "/api/feedback",
-		bytes.NewBufferString(`{"dimension":"tests","target":"session-1","score":4,"evidence":"e","status":"bogus"}`))
+		bytes.NewBufferString(`{"body":"b","dimension":"tool_usage","target":"tool_flow","score":4,"evidence":"e","status":"bogus"}`))
 	rec := httptest.NewRecorder()
 
 	h.HandleFeedbacks(rec, req)
@@ -112,7 +128,7 @@ func TestHandleFeedbacksStructuredInvalidStatus(t *testing.T) {
 
 func TestHandleFeedbackByIDInvalidID(t *testing.T) {
 	h := New(nil, Config{})
-	req := httptest.NewRequest(http.MethodPatch, "/api/feedback/not-a-number", bytes.NewBufferString(`{"status":"resolved"}`))
+	req := httptest.NewRequest(http.MethodPatch, "/api/feedback/not-a-number", bytes.NewBufferString(`{"status":"applied"}`))
 	rec := httptest.NewRecorder()
 
 	h.HandleFeedbackByID(rec, req)

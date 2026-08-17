@@ -10,29 +10,22 @@ import (
 )
 
 var validFeedbackDimensions = map[string]bool{
-	"code_quality": true,
-	"tests":        true,
-	"docs":         true,
-	"performance":  true,
-	"security":     true,
-	"architecture": true,
-	"process":      true,
-	"other":        true,
+	"prompt_quality": true,
+	"tool_usage":     true,
+	"outcome":        true,
 }
 
-var validFeedbackImpacts = map[string]bool{
-	"low":      true,
-	"medium":   true,
-	"high":     true,
-	"critical": true,
+var validFeedbackTargets = map[string]bool{
+	"orchestrator_prompt": true,
+	"subagent_prompt":     true,
+	"tool_flow":           true,
+	"outcome":             true,
 }
 
 var validFeedbackStatuses = map[string]bool{
-	"open":         true,
-	"acknowledged": true,
-	"in_progress":  true,
-	"resolved":     true,
-	"dismissed":    true,
+	"open":     true,
+	"applied":  true,
+	"rejected": true,
 }
 
 func (h *Handler) HandleFeedbacks(w http.ResponseWriter, r *http.Request) {
@@ -58,6 +51,13 @@ func (h *Handler) HandleFeedbacks(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// Body is always required, for legacy free-form rows and for
+		// structured, per-dimension session feedback rows alike.
+		if reqBody.Body == "" {
+			jsonErr(w, "body is required", http.StatusBadRequest)
+			return
+		}
+
 		// Structured, per-dimension feedback: any structured field present
 		// routes through structured validation and creation.
 		structured := reqBody.Dimension != "" || reqBody.Target != "" || reqBody.Evidence != "" ||
@@ -69,20 +69,12 @@ func (h *Handler) HandleFeedbacks(w http.ResponseWriter, r *http.Request) {
 				jsonErr(w, "invalid or missing dimension", http.StatusBadRequest)
 				return
 			}
-			if reqBody.Target == "" {
-				jsonErr(w, "target is required", http.StatusBadRequest)
+			if !validFeedbackTargets[reqBody.Target] {
+				jsonErr(w, "invalid or missing target", http.StatusBadRequest)
 				return
 			}
 			if reqBody.Score < 1 || reqBody.Score > 5 {
 				jsonErr(w, "score must be between 1 and 5", http.StatusBadRequest)
-				return
-			}
-			if reqBody.Evidence == "" {
-				jsonErr(w, "evidence is required", http.StatusBadRequest)
-				return
-			}
-			if reqBody.Impact != "" && !validFeedbackImpacts[reqBody.Impact] {
-				jsonErr(w, "invalid impact", http.StatusBadRequest)
 				return
 			}
 			if reqBody.Status != "" && !validFeedbackStatuses[reqBody.Status] {
@@ -91,6 +83,7 @@ func (h *Handler) HandleFeedbacks(w http.ResponseWriter, r *http.Request) {
 			}
 
 			result, err := db.CreateStructuredFeedback(r.Context(), h.pool, db.StructuredFeedbackInput{
+				Body:              reqBody.Body,
 				Model:             reqBody.Model,
 				SessionID:         reqBody.SessionID,
 				Dimension:         reqBody.Dimension,
@@ -112,10 +105,6 @@ func (h *Handler) HandleFeedbacks(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Legacy free-form feedback.
-		if reqBody.Body == "" {
-			jsonErr(w, "body is required", http.StatusBadRequest)
-			return
-		}
 		result, err := db.CreateFeedback(r.Context(), h.pool, reqBody.Body, reqBody.Model, reqBody.SessionID)
 		if err != nil {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
