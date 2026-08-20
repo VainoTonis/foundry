@@ -209,22 +209,32 @@ type PlanStep struct {
 	ParallelGroup *int      `json:"parallel_group,omitempty"`
 }
 
+// FeedbackRepository is one member of a Feedback's repository membership
+// (the feedback_repositories table). Unlike PlanRepository this is an
+// unordered set: feedback has no notion of a primary repository.
+type FeedbackRepository struct {
+	ProjectID  int64                 `json:"project_id"`
+	Repository repository.Repository `json:"repository"`
+}
+
 type Feedback struct {
-	ID                int64     `json:"id"`
-	Body              string    `json:"body,omitempty"`
-	Model             string    `json:"model,omitempty"`
-	SessionID         string    `json:"session_id,omitempty"`
-	Processed         bool      `json:"processed"`
-	Dimension         *string   `json:"dimension,omitempty"`
-	Target            *string   `json:"target,omitempty"`
-	Score             *int      `json:"score,omitempty"`
-	Tags              []string  `json:"tags,omitempty"`
-	Evidence          *string   `json:"evidence,omitempty"`
-	Impact            *string   `json:"impact,omitempty"`
-	RecommendedAction *string   `json:"recommended_action,omitempty"`
-	Owner             *string   `json:"owner,omitempty"`
-	Status            string    `json:"status"`
-	CreatedAt         time.Time `json:"created_at"`
+	ID                int64                `json:"id"`
+	Body              string               `json:"body,omitempty"`
+	Model             string               `json:"model,omitempty"`
+	SessionID         string               `json:"session_id,omitempty"`
+	Processed         bool                 `json:"processed"`
+	Dimension         *string              `json:"dimension,omitempty"`
+	Target            *string              `json:"target,omitempty"`
+	Score             *int                 `json:"score,omitempty"`
+	Tags              []string             `json:"tags,omitempty"`
+	Evidence          *string              `json:"evidence,omitempty"`
+	Impact            *string              `json:"impact,omitempty"`
+	RecommendedAction *string              `json:"recommended_action,omitempty"`
+	Owner             *string              `json:"owner,omitempty"`
+	Status            string               `json:"status"`
+	CreatedAt         time.Time            `json:"created_at"`
+	Repositories      []FeedbackRepository `json:"repositories,omitempty"`
+	ScopeStatus       string               `json:"scope_status"`
 }
 
 type KnowledgeFeedback struct {

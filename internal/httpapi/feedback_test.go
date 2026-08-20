@@ -19,6 +19,31 @@ func TestHandleFeedbacksLegacyMissingBody(t *testing.T) {
 	}
 }
 
+func TestHandleFeedbacksLegacyMissingRepositoryIDs(t *testing.T) {
+	h := New(nil, Config{})
+	req := httptest.NewRequest(http.MethodPost, "/api/feedback", bytes.NewBufferString(`{"body":"b","model":"m","session_id":"s"}`))
+	rec := httptest.NewRecorder()
+
+	h.HandleFeedbacks(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleFeedbacksStructuredMissingRepositoryIDs(t *testing.T) {
+	h := New(nil, Config{})
+	req := httptest.NewRequest(http.MethodPost, "/api/feedback",
+		bytes.NewBufferString(`{"body":"b","dimension":"prompt_quality","target":"orchestrator_prompt","score":4,"evidence":"looks good"}`))
+	rec := httptest.NewRecorder()
+
+	h.HandleFeedbacks(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestHandleFeedbacksStructuredMissingBody(t *testing.T) {
 	h := New(nil, Config{})
 	req := httptest.NewRequest(http.MethodPost, "/api/feedback",

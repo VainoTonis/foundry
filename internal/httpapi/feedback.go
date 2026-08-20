@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tonis2/foundry/internal/db"
@@ -45,6 +46,7 @@ func (h *Handler) HandleFeedbacks(w http.ResponseWriter, r *http.Request) {
 			RecommendedAction string   `json:"recommended_action"`
 			Owner             string   `json:"owner"`
 			Status            string   `json:"status"`
+			RepositoryIDs     []int64  `json:"repository_ids"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
 			jsonErr(w, err.Error(), http.StatusBadRequest)
@@ -55,6 +57,10 @@ func (h *Handler) HandleFeedbacks(w http.ResponseWriter, r *http.Request) {
 		// structured, per-dimension session feedback rows alike.
 		if reqBody.Body == "" {
 			jsonErr(w, "body is required", http.StatusBadRequest)
+			return
+		}
+		if len(reqBody.RepositoryIDs) == 0 {
+			jsonErr(w, "repository_ids is required and must contain at least one repository id", http.StatusBadRequest)
 			return
 		}
 
@@ -95,9 +101,13 @@ func (h *Handler) HandleFeedbacks(w http.ResponseWriter, r *http.Request) {
 				RecommendedAction: reqBody.RecommendedAction,
 				Owner:             reqBody.Owner,
 				Status:            reqBody.Status,
-			})
+			}, reqBody.RepositoryIDs)
+			if errors.Is(err, db.ErrNotFound) {
+				jsonErr(w, "project not found", http.StatusNotFound)
+				return
+			}
 			if err != nil {
-				jsonErr(w, err.Error(), http.StatusInternalServerError)
+				jsonErr(w, err.Error(), http.StatusBadRequest)
 				return
 			}
 			jsonOK(w, result, http.StatusCreated)
@@ -105,9 +115,13 @@ func (h *Handler) HandleFeedbacks(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Legacy free-form feedback.
-		result, err := db.CreateFeedback(r.Context(), h.pool, reqBody.Body, reqBody.Model, reqBody.SessionID)
+		result, err := db.CreateFeedback(r.Context(), h.pool, reqBody.Body, reqBody.Model, reqBody.SessionID, reqBody.RepositoryIDs)
+		if errors.Is(err, db.ErrNotFound) {
+			jsonErr(w, "project not found", http.StatusNotFound)
+			return
+		}
 		if err != nil {
-			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			jsonErr(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		jsonOK(w, result, http.StatusCreated)
@@ -115,8 +129,17 @@ func (h *Handler) HandleFeedbacks(w http.ResponseWriter, r *http.Request) {
 		dimension := r.URL.Query().Get("dimension")
 		sessionID := r.URL.Query().Get("session_id")
 		status := r.URL.Query().Get("status")
-		if dimension != "" || sessionID != "" || status != "" {
-			list, err := db.ListFeedbackFiltered(r.Context(), h.pool, dimension, sessionID, status)
+		var repositoryID int64
+		if v := r.URL.Query().Get("repository_id"); v != "" {
+			id, err := strconv.ParseInt(v, 10, 64)
+			if err != nil {
+				jsonErr(w, "invalid repository_id", http.StatusBadRequest)
+				return
+			}
+			repositoryID = id
+		}
+		if dimension != "" || sessionID != "" || status != "" || repositoryID != 0 {
+			list, err := db.ListFeedbackFiltered(r.Context(), h.pool, dimension, sessionID, status, repositoryID)
 			if err != nil {
 				jsonErr(w, err.Error(), http.StatusInternalServerError)
 				return
