@@ -21,7 +21,7 @@
       <a href="/" hx-get="/chat/fragment" hx-target="#app" hx-push-url="/" class="console-brand"><span>■</span> FOUNDRY</a>
       <nav class="console-nav" aria-label="Primary navigation">
         <a href="/plans" data-nav="plans" hx-get="/plans/fragment" hx-target="#app" hx-push-url="/plans"{{if eq .Page "plans"}} class="active"{{end}}><span>01</span> Plans</a>
-        <a href="/projects" data-nav="projects" hx-get="/projects/fragment" hx-target="#app" hx-push-url="/projects"{{if eq .Page "projects"}} class="active"{{end}}><span>02</span> Projects</a>
+        <a href="/repositories" data-nav="repositories" hx-get="/repositories/fragment" hx-target="#app" hx-push-url="/repositories"{{if eq .Page "repositories"}} class="active"{{end}}><span>02</span> Repositories</a>
         <a href="/chat" data-nav="chat" hx-get="/chat/fragment" hx-target="#app" hx-push-url="/chat"{{if eq .Page "chat"}} class="active"{{end}}><span>03</span> Chat</a>
         <a href="/feedback" data-nav="feedback" hx-get="/feedback/fragment" hx-target="#app" hx-push-url="/feedback"{{if eq .Page "feedback"}} class="active"{{end}}><span>04</span> Feedback</a>
         <a href="/sessions" data-nav="sessions" hx-get="/sessions/fragment" hx-target="#app" hx-push-url="/sessions"{{if eq .Page "sessions"}} class="active"{{end}}><span>05</span> Sessions</a>

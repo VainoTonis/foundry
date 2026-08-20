@@ -1,0 +1,16 @@
+{{define "repositories.detail"}}
+<div data-page="repositories">
+  <div class="context-nav"><a class="btn" href="/repositories" hx-get="/repositories/fragment" hx-target="#app" hx-push-url="/repositories">← Repositories</a></div>
+  <div class="page-header"><div><p class="eyebrow">Repository #{{.Repository.ID}}</p><h2>{{.Repository.Name}}</h2><div class="card-meta">created {{date .Repository.CreatedAt}}</div></div><button class="btn btn-danger" hx-delete="/repositories/{{.Repository.ID}}" hx-confirm="Delete this repository?">Delete repository</button></div>
+  <div class="repository-layout">
+    <form class="panel-form" method="post" action="/repositories/{{.Repository.ID}}" hx-patch="/repositories/{{.Repository.ID}}" hx-target="#app" hx-swap="innerHTML">
+      <h3>Edit repository</h3>
+      <div class="field"><label>Name</label><input name="name" value="{{.Repository.Name}}" required></div>
+      <div class="field"><label>Local path</label><input name="local_path" value="{{strptr .Repository.LocalPath}}"></div>
+      <div class="field"><label>Remote URL</label><input name="remote_url" value="{{strptr .Repository.RemoteURL}}"></div>
+      <button class="btn btn-primary">Save changes</button>
+    </form>
+    <aside class="context-panel"><h3>Repository context</h3><dl class="fact-list"><div><dt>Local path</dt><dd>{{$lp := strptr .Repository.LocalPath}}{{if $lp}}{{$lp}}{{else}}—{{end}}</dd></div><div><dt>Remote URL</dt><dd>{{$ru := strptr .Repository.RemoteURL}}{{if $ru}}{{$ru}}{{else}}—{{end}}</dd></div></dl></aside>
+  </div>
+</div>
+{{end}}

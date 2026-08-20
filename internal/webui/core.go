@@ -42,9 +42,9 @@ func (h *Handler) Routes(mux *http.ServeMux) {
 	// Legacy spec/backlog URLs now converge on the canonical plans UI.
 	mux.HandleFunc("/backlog", h.redirectToPlans)
 	mux.HandleFunc("/backlog/", h.redirectToPlans)
-	mux.HandleFunc("/projects", h.handleUIProjectsPage)
-	mux.HandleFunc("/projects/fragment", h.handleUIProjectsFragment)
-	mux.HandleFunc("/projects/", h.handleUIProject)
+	mux.HandleFunc("/repositories", h.handleUIRepositoriesPage)
+	mux.HandleFunc("/repositories/fragment", h.handleUIRepositoriesFragment)
+	mux.HandleFunc("/repositories/", h.handleUIRepository)
 	mux.HandleFunc("/settings", h.handleUISettingsPage)
 	mux.HandleFunc("/settings/fragment", h.handleUISettingsFragment)
 	mux.HandleFunc("/feedback", h.handleUIFeedbackPage)
