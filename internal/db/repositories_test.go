@@ -225,11 +225,11 @@ func TestApplyRepositoryUpdate(t *testing.T) {
 		}
 	})
 
-	t.Run("setting a locator to a fresh value canonicalizes it", func(t *testing.T) {
+	t.Run("setting a locator to an already-canonical value merges it as-is", func(t *testing.T) {
 		current := repository.Repository{ID: 1, Name: "bar", LocalPath: &local}
 
 		updated, err := applyRepositoryUpdate(current, UpdateRepositoryParams{
-			RemoteURL: SetLocator(strPtr("HTTPS://GitHub.com/foo/bar.git/")),
+			RemoteURL: SetLocator(strPtr("https://github.com/foo/bar.git")),
 		})
 		if err != nil {
 			t.Fatalf("applyRepositoryUpdate() error = %v", err)
@@ -239,20 +239,76 @@ func TestApplyRepositoryUpdate(t *testing.T) {
 			t.Fatalf("RemoteURL = %v, want %q", updated.RemoteURL, want)
 		}
 	})
+}
 
-	t.Run("uncanonicalizable local path update is rejected and returns zero value", func(t *testing.T) {
+// TestCanonicalizeUpdateParams covers the canonicalization/normalization
+// applyRepositoryUpdate no longer performs itself: UpdateRepository calls
+// canonicalizeUpdateParams before ever fetching the current row, so a
+// malformed/unsupported locator is rejected without any database access.
+func TestCanonicalizeUpdateParams(t *testing.T) {
+	t.Run("omitted fields pass through unchanged", func(t *testing.T) {
+		p, err := canonicalizeUpdateParams(UpdateRepositoryParams{})
+		if err != nil {
+			t.Fatalf("canonicalizeUpdateParams() error = %v", err)
+		}
+		if p.LocalPath.IsSet() || p.RemoteURL.IsSet() {
+			t.Fatalf("canonicalizeUpdateParams() = %+v, want both fields unset", p)
+		}
+	})
+
+	t.Run("explicit null passes through as an explicit null", func(t *testing.T) {
+		p, err := canonicalizeUpdateParams(UpdateRepositoryParams{LocalPath: SetLocator(nil)})
+		if err != nil {
+			t.Fatalf("canonicalizeUpdateParams() error = %v", err)
+		}
+		if !p.LocalPath.IsSet() || p.LocalPath.Value() != nil {
+			t.Fatalf("canonicalizeUpdateParams() LocalPath = %+v, want explicit nil", p.LocalPath)
+		}
+	})
+
+	t.Run("setting a remote url to a fresh value canonicalizes it", func(t *testing.T) {
+		p, err := canonicalizeUpdateParams(UpdateRepositoryParams{
+			RemoteURL: SetLocator(strPtr("HTTPS://GitHub.com/foo/bar.git/")),
+		})
+		if err != nil {
+			t.Fatalf("canonicalizeUpdateParams() error = %v", err)
+		}
+		want := "https://github.com/foo/bar.git"
+		if p.RemoteURL.Value() == nil || *p.RemoteURL.Value() != want {
+			t.Fatalf("RemoteURL = %v, want %q", p.RemoteURL.Value(), want)
+		}
+	})
+
+	t.Run("malformed remote url is rejected and returns zero value", func(t *testing.T) {
+		p, err := canonicalizeUpdateParams(UpdateRepositoryParams{
+			RemoteURL: SetLocator(strPtr("ftp://example.com/foo/bar.git")),
+		})
+		if err == nil {
+			t.Fatal("canonicalizeUpdateParams() error = nil, want error for unsupported scheme")
+		}
+		if !errors.Is(err, repository.ErrInvalidLocator) {
+			t.Fatalf("canonicalizeUpdateParams() error = %v, want wrapped ErrInvalidLocator", err)
+		}
+		if (p != UpdateRepositoryParams{}) {
+			t.Fatalf("canonicalizeUpdateParams() = %+v, want zero value on error", p)
+		}
+	})
+
+	t.Run("uncanonicalizable local path is rejected and returns zero value", func(t *testing.T) {
 		requireGit(t)
 		notARepo := t.TempDir()
-		current := repository.Repository{ID: 1, Name: "bar", RemoteURL: &remote}
 
-		updated, err := applyRepositoryUpdate(current, UpdateRepositoryParams{
+		p, err := canonicalizeUpdateParams(UpdateRepositoryParams{
 			LocalPath: SetLocator(&notARepo),
 		})
 		if err == nil {
-			t.Fatal("applyRepositoryUpdate() error = nil, want error for non-git directory")
+			t.Fatal("canonicalizeUpdateParams() error = nil, want error for non-git directory")
 		}
-		if (updated != repository.Repository{}) {
-			t.Fatalf("applyRepositoryUpdate() = %+v, want zero value on error", updated)
+		if !errors.Is(err, repository.ErrInvalidLocator) {
+			t.Fatalf("canonicalizeUpdateParams() error = %v, want wrapped ErrInvalidLocator", err)
+		}
+		if (p != UpdateRepositoryParams{}) {
+			t.Fatalf("canonicalizeUpdateParams() = %+v, want zero value on error", p)
 		}
 	})
 
@@ -260,19 +316,19 @@ func TestApplyRepositoryUpdate(t *testing.T) {
 		requireGit(t)
 		root := t.TempDir()
 		initRepo(t, root)
-		current := repository.Repository{ID: 1, Name: "bar"}
+		remote := "https://github.com/foo/bar.git"
 
-		updated, err := applyRepositoryUpdate(current, UpdateRepositoryParams{
+		p, err := canonicalizeUpdateParams(UpdateRepositoryParams{
 			LocalPath: SetLocator(&root),
 			RemoteURL: SetLocator(&remote),
 		})
 		if err != nil {
-			t.Fatalf("applyRepositoryUpdate() error = %v", err)
+			t.Fatalf("canonicalizeUpdateParams() error = %v", err)
 		}
-		if updated.LocalPath == nil {
+		if p.LocalPath.Value() == nil {
 			t.Fatal("LocalPath = nil, want canonicalized path")
 		}
-		got, err := filepath.EvalSymlinks(*updated.LocalPath)
+		got, err := filepath.EvalSymlinks(*p.LocalPath.Value())
 		if err != nil {
 			t.Fatalf("EvalSymlinks: %v", err)
 		}
@@ -283,8 +339,8 @@ func TestApplyRepositoryUpdate(t *testing.T) {
 		if got != want {
 			t.Fatalf("LocalPath = %q, want %q", got, want)
 		}
-		if updated.RemoteURL == nil || *updated.RemoteURL != remote {
-			t.Fatalf("RemoteURL = %v, want %q", updated.RemoteURL, remote)
+		if p.RemoteURL.Value() == nil || *p.RemoteURL.Value() != remote {
+			t.Fatalf("RemoteURL = %v, want %q", p.RemoteURL.Value(), remote)
 		}
 	})
 }

@@ -12,24 +12,24 @@ import (
 // the local git binary and performs no network access.
 func CanonicalLocalPath(path string) (string, error) {
 	if path == "" {
-		return "", fmt.Errorf("repository: local path is empty")
+		return "", fmt.Errorf("%w: local path is empty", ErrInvalidLocator)
 	}
 	if !filepath.IsAbs(path) {
-		return "", fmt.Errorf("repository: local path %q must be absolute", path)
+		return "", fmt.Errorf("%w: local path %q must be absolute", ErrInvalidLocator, path)
 	}
 
 	top, err := runGit(path, "rev-parse", "--show-toplevel")
 	if err != nil {
-		return "", fmt.Errorf("repository: resolve git top-level for %q: %w", path, err)
+		return "", fmt.Errorf("%w: resolve git top-level for %q: %w", ErrInvalidLocator, path, err)
 	}
 	top = filepath.Clean(top)
 
 	isBare, err := runGit(top, "rev-parse", "--is-bare-repository")
 	if err != nil {
-		return "", fmt.Errorf("repository: check bare repository for %q: %w", top, err)
+		return "", fmt.Errorf("%w: check bare repository for %q: %w", ErrInvalidLocator, top, err)
 	}
 	if isBare == "true" {
-		return "", fmt.Errorf("repository: %q is a bare repository, non-bare worktree required", top)
+		return "", fmt.Errorf("%w: %q is a bare repository, non-bare worktree required", ErrInvalidLocator, top)
 	}
 
 	return top, nil

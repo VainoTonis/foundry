@@ -61,14 +61,22 @@ func writeFakeGit(t *testing.T, stderrMsg string) string {
 
 func TestCanonicalLocalPath(t *testing.T) {
 	t.Run("rejects relative path", func(t *testing.T) {
-		if _, err := CanonicalLocalPath("relative/path"); err == nil {
+		_, err := CanonicalLocalPath("relative/path")
+		if err == nil {
 			t.Fatal("expected error for relative path")
+		}
+		if !errors.Is(err, ErrInvalidLocator) {
+			t.Fatalf("CanonicalLocalPath() error = %v, want wrapped ErrInvalidLocator", err)
 		}
 	})
 
 	t.Run("rejects empty path", func(t *testing.T) {
-		if _, err := CanonicalLocalPath(""); err == nil {
+		_, err := CanonicalLocalPath("")
+		if err == nil {
 			t.Fatal("expected error for empty path")
+		}
+		if !errors.Is(err, ErrInvalidLocator) {
+			t.Fatalf("CanonicalLocalPath() error = %v, want wrapped ErrInvalidLocator", err)
 		}
 	})
 
@@ -149,16 +157,24 @@ func TestCanonicalLocalPath(t *testing.T) {
 			t.Fatalf("git init --bare failed: %v: %s", err, out)
 		}
 
-		if _, err := CanonicalLocalPath(root); err == nil {
+		_, err := CanonicalLocalPath(root)
+		if err == nil {
 			t.Fatal("expected error for bare repository")
+		}
+		if !errors.Is(err, ErrInvalidLocator) {
+			t.Fatalf("CanonicalLocalPath() error = %v, want wrapped ErrInvalidLocator", err)
 		}
 	})
 
 	t.Run("rejects non-git directory", func(t *testing.T) {
 		requireGit(t)
 		root := t.TempDir()
-		if _, err := CanonicalLocalPath(root); err == nil {
+		_, err := CanonicalLocalPath(root)
+		if err == nil {
 			t.Fatal("expected error for non-git directory")
+		}
+		if !errors.Is(err, ErrInvalidLocator) {
+			t.Fatalf("CanonicalLocalPath() error = %v, want wrapped ErrInvalidLocator", err)
 		}
 	})
 

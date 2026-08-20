@@ -23,11 +23,12 @@ type ErrorResponse struct {
 
 // ---- Shared Types ----
 
-// Project represents a foundry project.
-type Project struct {
+// Repository represents a foundry repository.
+type Repository struct {
 	ID        int64     `json:"id"`
 	Name      string    `json:"name"`
-	RepoPath  string    `json:"repo_path"`
+	LocalPath *string   `json:"local_path"`
+	RemoteURL *string   `json:"remote_url"`
 	CreatedAt time.Time `json:"created_at"`
 }
 

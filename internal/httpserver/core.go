@@ -152,9 +152,8 @@ func (s *Server) routes() {
 	s.webUI.Routes(s.mux)
 
 	s.mux.HandleFunc("/api/export", s.jsonAPI.HandleExport)
-	s.mux.HandleFunc("/api/projects", s.jsonAPI.HandleProjects)
-	s.mux.HandleFunc("/api/projects/discover", s.jsonAPI.HandleDiscover)
-	s.mux.HandleFunc("/api/projects/", s.jsonAPI.HandleProject)
+	s.mux.HandleFunc("/api/repositories", s.jsonAPI.HandleRepositories)
+	s.mux.HandleFunc("/api/repositories/", s.jsonAPI.HandleRepository)
 
 	s.mux.HandleFunc("/api/plans", s.jsonAPI.HandlePlans)
 	s.mux.HandleFunc("/api/plans/", s.jsonAPI.HandlePlan)

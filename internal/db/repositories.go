@@ -117,33 +117,50 @@ func canonicalizeLocators(r repository.Repository) (repository.Repository, error
 	return r, nil
 }
 
-// applyRepositoryUpdate merges p into current, canonicalizing/normalizing
-// only the locators the caller explicitly provided (leaving an omitted
-// locator's already-canonical stored value untouched), and validates the
-// at-least-one-locator invariant on the merged result, without performing
-// any I/O. It is the pure core of UpdateRepository: isolating it lets
-// update semantics (which fields change, how omitted/explicit-null values
-// behave, how new locators are canonicalized) be tested without a
-// database, and guarantees that an invalid or uncanonicalizable result
-// never reaches persistence — the caller's current row is left untouched
-// whenever this function returns an error.
+// canonicalizeUpdateParams canonicalizes/normalizes any locator fields the
+// caller explicitly provided in p, returning a copy of p with those
+// fields replaced by their canonical form. It performs no database
+// access, so UpdateRepository can call it before fetching the current
+// row: a malformed/unsupported locator is then rejected as a client
+// validation error without depending on whether a row for id exists, and
+// without ever touching the database. Fields left unset in p (an omitted
+// locator) pass through unchanged.
+func canonicalizeUpdateParams(p UpdateRepositoryParams) (UpdateRepositoryParams, error) {
+	if p.LocalPath.IsSet() {
+		localPath, err := canonicalizeLocalPath(p.LocalPath.Value())
+		if err != nil {
+			return UpdateRepositoryParams{}, err
+		}
+		p.LocalPath = SetLocator(localPath)
+	}
+	if p.RemoteURL.IsSet() {
+		remoteURL, err := canonicalizeRemoteURL(p.RemoteURL.Value())
+		if err != nil {
+			return UpdateRepositoryParams{}, err
+		}
+		p.RemoteURL = SetLocator(remoteURL)
+	}
+	return p, nil
+}
+
+// applyRepositoryUpdate merges p into current and validates the
+// at-least-one-locator invariant on the merged result, without
+// performing any I/O. It assumes any locators explicitly set in p have
+// already been canonicalized/normalized (via canonicalizeUpdateParams),
+// and only merges omitted-vs-explicit-null-vs-explicit-value semantics.
+// It is the pure core of UpdateRepository: isolating it lets update
+// semantics be tested without a database, and guarantees that an invalid
+// merged result never reaches persistence — the caller's current row is
+// left untouched whenever this function returns an error.
 func applyRepositoryUpdate(current repository.Repository, p UpdateRepositoryParams) (repository.Repository, error) {
 	if p.Name != nil {
 		current.Name = *p.Name
 	}
 	if p.LocalPath.IsSet() {
-		localPath, err := canonicalizeLocalPath(p.LocalPath.Value())
-		if err != nil {
-			return repository.Repository{}, err
-		}
-		current.LocalPath = localPath
+		current.LocalPath = p.LocalPath.Value()
 	}
 	if p.RemoteURL.IsSet() {
-		remoteURL, err := canonicalizeRemoteURL(p.RemoteURL.Value())
-		if err != nil {
-			return repository.Repository{}, err
-		}
-		current.RemoteURL = remoteURL
+		current.RemoteURL = p.RemoteURL.Value()
 	}
 
 	if err := current.Validate(); err != nil {
@@ -204,11 +221,19 @@ func GetRepository(ctx context.Context, pool *pgxpool.Pool, id int64) (repositor
 // Repository — canonicalizing/normalizing any new locators and
 // re-validating the at-least-one-locator invariant on the merged result —
 // before persisting it. It returns ErrNotFound if no row matches id. If
-// the merge, canonicalization, or validation fails, no write is performed
-// and the stored row is left unchanged.
+// the canonicalization, merge, or validation fails, no write is performed
+// and the stored row is left unchanged. New locators are
+// canonicalized/normalized before the current row is fetched, so a
+// malformed/unsupported locator is rejected as a client validation error
+// without any database access.
 func UpdateRepository(ctx context.Context, pool *pgxpool.Pool, id int64, p UpdateRepositoryParams) (repository.Repository, error) {
 	if p.Name == nil && !p.LocalPath.IsSet() && !p.RemoteURL.IsSet() {
 		return GetRepository(ctx, pool, id)
+	}
+
+	p, err := canonicalizeUpdateParams(p)
+	if err != nil {
+		return repository.Repository{}, err
 	}
 
 	current, err := GetRepository(ctx, pool, id)

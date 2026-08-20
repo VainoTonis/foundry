@@ -18,13 +18,13 @@ var scpLikeRegexp = regexp.MustCompile(`^(?:([^@/]+)@)?([^:/]+):(.*)$`)
 func NormalizeRemoteURL(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return "", fmt.Errorf("repository: remote url is empty")
+		return "", fmt.Errorf("%w: remote url is empty", ErrInvalidLocator)
 	}
 
 	if m := scpLikeRegexp.FindStringSubmatch(raw); m != nil && !strings.HasPrefix(m[3], "//") {
 		user, host, path := m[1], m[2], m[3]
 		if path == "" {
-			return "", fmt.Errorf("repository: remote url %q is missing a path", raw)
+			return "", fmt.Errorf("%w: remote url %q is missing a path", ErrInvalidLocator, raw)
 		}
 		u := &url.URL{
 			Scheme: "ssh",
@@ -39,21 +39,21 @@ func NormalizeRemoteURL(raw string) (string, error) {
 
 	u, err := url.Parse(raw)
 	if err != nil {
-		return "", fmt.Errorf("repository: parse remote url %q: %w", raw, err)
+		return "", fmt.Errorf("%w: parse remote url %q: %w", ErrInvalidLocator, raw, err)
 	}
 
 	scheme := strings.ToLower(u.Scheme)
 	switch scheme {
 	case "http", "https", "ssh", "git":
 	default:
-		return "", fmt.Errorf("repository: unsupported remote url scheme %q", u.Scheme)
+		return "", fmt.Errorf("%w: unsupported remote url scheme %q", ErrInvalidLocator, u.Scheme)
 	}
 	if u.Host == "" {
-		return "", fmt.Errorf("repository: remote url %q is missing a host", raw)
+		return "", fmt.Errorf("%w: remote url %q is missing a host", ErrInvalidLocator, raw)
 	}
 	path := strings.TrimSuffix(u.Path, "/")
 	if path == "" {
-		return "", fmt.Errorf("repository: remote url %q is missing a path", raw)
+		return "", fmt.Errorf("%w: remote url %q is missing a path", ErrInvalidLocator, raw)
 	}
 
 	u.Scheme = scheme

@@ -1,6 +1,9 @@
 package repository
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestNormalizeRemoteURL(t *testing.T) {
 	cases := []struct {
@@ -64,6 +67,11 @@ func TestNormalizeRemoteURL(t *testing.T) {
 			in:      "https:///foo/bar.git",
 			wantErr: true,
 		},
+		{
+			name:    "unparseable url",
+			in:      "https://user:pass word@example.com/foo/bar.git",
+			wantErr: true,
+		},
 	}
 
 	for _, tc := range cases {
@@ -72,6 +80,9 @@ func TestNormalizeRemoteURL(t *testing.T) {
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("NormalizeRemoteURL(%q) = %q, want error", tc.in, got)
+				}
+				if !errors.Is(err, ErrInvalidLocator) {
+					t.Fatalf("NormalizeRemoteURL(%q) error = %v, want wrapped ErrInvalidLocator", tc.in, err)
 				}
 				return
 			}
