@@ -259,6 +259,68 @@ func UpdateRepository(ctx context.Context, pool *pgxpool.Pool, id int64, p Updat
 	return r, err
 }
 
+// RefreshResult reports the outcome of attempting to refresh a single
+// repository's normalized origin remote URL, as returned by
+// RefreshRepositories.
+type RefreshResult struct {
+	ID      int64
+	Name    string
+	Updated bool
+	Err     error
+}
+
+// RefreshRepositories fills in the normalized "origin" remote URL for
+// every repository that has a LocalPath but no RemoteURL yet. This is
+// missing-only: a repository whose RemoteURL is already set -- whether
+// populated by a previous refresh or configured explicitly by a caller --
+// is left untouched, so a deliberately configured remote is never
+// overwritten by whatever "origin" happens to be configured locally.
+//
+// Each eligible repository is refreshed independently by reading its
+// local worktree's "origin" remote (repository.LocalOriginURL, no network
+// access) and normalizing it (repository.NormalizeRemoteURL). A failure
+// for one row -- no origin configured, a malformed/unsupported origin
+// URL, a missing/unreadable local path, or a database error updating that
+// row -- is recorded in its RefreshResult.Err rather than aborting the
+// remaining rows. RefreshRepositories itself only returns a non-nil error
+// for an infrastructure failure that prevents it from even listing
+// repositories.
+func RefreshRepositories(ctx context.Context, pool *pgxpool.Pool) ([]RefreshResult, error) {
+	repos, err := ListRepositories(ctx, pool)
+	if err != nil {
+		return nil, err
+	}
+
+	var results []RefreshResult
+	for _, r := range repos {
+		hasLocal := r.LocalPath != nil && strings.TrimSpace(*r.LocalPath) != ""
+		hasRemote := r.RemoteURL != nil && strings.TrimSpace(*r.RemoteURL) != ""
+		if !hasLocal || hasRemote {
+			continue
+		}
+
+		origin, err := repository.LocalOriginURL(*r.LocalPath)
+		if err != nil {
+			results = append(results, RefreshResult{ID: r.ID, Name: r.Name, Err: err})
+			continue
+		}
+
+		normalized, err := repository.NormalizeRemoteURL(origin)
+		if err != nil {
+			results = append(results, RefreshResult{ID: r.ID, Name: r.Name, Err: err})
+			continue
+		}
+
+		if _, err := UpdateRepository(ctx, pool, r.ID, UpdateRepositoryParams{RemoteURL: SetLocator(&normalized)}); err != nil {
+			results = append(results, RefreshResult{ID: r.ID, Name: r.Name, Err: err})
+			continue
+		}
+
+		results = append(results, RefreshResult{ID: r.ID, Name: r.Name, Updated: true})
+	}
+	return results, nil
+}
+
 // DeleteRepository deletes a canonical Repository by id, returning
 // ErrNotFound if no row matches.
 func DeleteRepository(ctx context.Context, pool *pgxpool.Pool, id int64) error {

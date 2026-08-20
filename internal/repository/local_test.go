@@ -209,3 +209,69 @@ func TestCanonicalLocalPath(t *testing.T) {
 		}
 	})
 }
+
+func TestLocalOriginURL(t *testing.T) {
+	t.Run("rejects empty path", func(t *testing.T) {
+		_, err := LocalOriginURL("")
+		if !errors.Is(err, ErrInvalidLocator) {
+			t.Fatalf("LocalOriginURL() error = %v, want wrapped ErrInvalidLocator", err)
+		}
+	})
+
+	t.Run("missing origin remote is reported as ErrNoOriginRemote", func(t *testing.T) {
+		requireGit(t)
+		root := t.TempDir()
+		initRepo(t, root)
+
+		_, err := LocalOriginURL(root)
+		if !errors.Is(err, ErrNoOriginRemote) {
+			t.Fatalf("LocalOriginURL() error = %v, want wrapped ErrNoOriginRemote", err)
+		}
+	})
+
+	t.Run("returns the raw configured origin url", func(t *testing.T) {
+		requireGit(t)
+		root := t.TempDir()
+		initRepo(t, root)
+		runGitCmd(t, root, "remote", "add", "origin", "https://example.com/foo/bar.git")
+
+		got, err := LocalOriginURL(root)
+		if err != nil {
+			t.Fatalf("LocalOriginURL() error = %v", err)
+		}
+		if got != "https://example.com/foo/bar.git" {
+			t.Fatalf("LocalOriginURL() = %q, want %q", got, "https://example.com/foo/bar.git")
+		}
+	})
+
+	t.Run("malformed origin url is returned raw, unnormalized", func(t *testing.T) {
+		requireGit(t)
+		root := t.TempDir()
+		initRepo(t, root)
+		// "not a url" is accepted by git as a local-path-style remote, so
+		// LocalOriginURL succeeds and returns it verbatim; whether it is a
+		// valid remote locator is NormalizeRemoteURL's job, not this
+		// function's.
+		runGitCmd(t, root, "remote", "add", "origin", "not a url")
+
+		got, err := LocalOriginURL(root)
+		if err != nil {
+			t.Fatalf("LocalOriginURL() error = %v", err)
+		}
+		if got != "not a url" {
+			t.Fatalf("LocalOriginURL() = %q, want %q", got, "not a url")
+		}
+		if _, err := NormalizeRemoteURL(got); err == nil {
+			t.Fatalf("NormalizeRemoteURL(%q) unexpectedly succeeded", got)
+		}
+	})
+
+	t.Run("errors deterministically when git binary is unavailable", func(t *testing.T) {
+		withPATH(t, t.TempDir())
+
+		_, err := LocalOriginURL(t.TempDir())
+		if !errors.Is(err, ErrNoOriginRemote) {
+			t.Fatalf("LocalOriginURL() error = %v, want wrapped ErrNoOriginRemote", err)
+		}
+	})
+}

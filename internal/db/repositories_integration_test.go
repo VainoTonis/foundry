@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +17,33 @@ import (
 
 	"github.com/tonis2/foundry/internal/repository"
 )
+
+// runGitCmd runs a git subcommand in dir, failing the test on error. It
+// builds refresh fixtures (an "origin" remote, or a deliberately
+// malformed one) that RefreshRepositories is then exercised against.
+func runGitCmd(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %s failed: %v: %s", strings.Join(args, " "), err, out)
+	}
+}
+
+// findRefreshResult returns the RefreshResult for id, failing the test if
+// RefreshRepositories did not report one -- every repository eligible for
+// refresh (has a LocalPath) must appear exactly once in the results,
+// whether it succeeded or failed.
+func findRefreshResult(t *testing.T, results []RefreshResult, id int64) RefreshResult {
+	t.Helper()
+	for _, r := range results {
+		if r.ID == id {
+			return r
+		}
+	}
+	t.Fatalf("RefreshRepositories() did not report a result for id %d", id)
+	return RefreshResult{}
+}
 
 // testDBURLEnv names the environment variable that opts this suite into
 // running against a real PostgreSQL instance. It is intentionally
@@ -378,6 +407,176 @@ func TestRepositoriesCRUD_Postgres(t *testing.T) {
 		}
 		if !found {
 			t.Fatalf("ListRepositories() did not include legacy row id %d", id)
+		}
+	})
+
+	t.Run("refresh fills in the missing origin remote from the local worktree", func(t *testing.T) {
+		requireGit(t)
+		local := newLocalGitRepo(t)
+		runGitCmd(t, local, "remote", "add", "origin", "https://example.com/foo/refresh-missing.git")
+
+		created := createTestRepository(t, pool, repository.Repository{
+			Name:      "refresh-missing-origin",
+			LocalPath: &local,
+		})
+		if created.RemoteURL != nil {
+			t.Fatalf("RemoteURL = %v, want nil before refresh", created.RemoteURL)
+		}
+
+		results, err := RefreshRepositories(ctx, pool)
+		if err != nil {
+			t.Fatalf("RefreshRepositories() error = %v", err)
+		}
+		result := findRefreshResult(t, results, created.ID)
+		if result.Err != nil {
+			t.Fatalf("RefreshResult.Err = %v, want nil", result.Err)
+		}
+		if !result.Updated {
+			t.Fatal("RefreshResult.Updated = false, want true")
+		}
+
+		got, err := GetRepository(ctx, pool, created.ID)
+		if err != nil {
+			t.Fatalf("GetRepository() error = %v", err)
+		}
+		want := "https://example.com/foo/refresh-missing.git"
+		if got.RemoteURL == nil || *got.RemoteURL != want {
+			t.Fatalf("RemoteURL = %v, want %q", got.RemoteURL, want)
+		}
+
+		// Refreshing again is idempotent: RemoteURL is now set, so the row
+		// is skipped entirely (not merely re-set to the same value), and a
+		// second refresh reports it as not updated.
+		results, err = RefreshRepositories(ctx, pool)
+		if err != nil {
+			t.Fatalf("RefreshRepositories() second call error = %v", err)
+		}
+		for _, r := range results {
+			if r.ID == created.ID {
+				t.Fatalf("RefreshRepositories() second call unexpectedly touched id %d: %+v", created.ID, r)
+			}
+		}
+
+		gotAgain, err := GetRepository(ctx, pool, created.ID)
+		if err != nil {
+			t.Fatalf("GetRepository() error = %v", err)
+		}
+		if gotAgain.RemoteURL == nil || *gotAgain.RemoteURL != want {
+			t.Fatalf("RemoteURL after second refresh = %v, want unchanged %q", gotAgain.RemoteURL, want)
+		}
+	})
+
+	t.Run("refresh never overwrites an already-configured remote", func(t *testing.T) {
+		requireGit(t)
+		local := newLocalGitRepo(t)
+		// The local worktree's origin deliberately differs from the
+		// configured remote, so a bug that refreshed unconditionally would
+		// be caught by the assertion below.
+		runGitCmd(t, local, "remote", "add", "origin", "https://example.com/foo/local-origin-should-be-ignored.git")
+
+		configured := "https://example.com/foo/configured-remote.git"
+		created := createTestRepository(t, pool, repository.Repository{
+			Name:      "refresh-no-overwrite",
+			LocalPath: &local,
+			RemoteURL: &configured,
+		})
+
+		results, err := RefreshRepositories(ctx, pool)
+		if err != nil {
+			t.Fatalf("RefreshRepositories() error = %v", err)
+		}
+		for _, r := range results {
+			if r.ID == created.ID {
+				t.Fatalf("RefreshRepositories() touched id %d which already had a configured remote: %+v", created.ID, r)
+			}
+		}
+
+		got, err := GetRepository(ctx, pool, created.ID)
+		if err != nil {
+			t.Fatalf("GetRepository() error = %v", err)
+		}
+		if got.RemoteURL == nil || *got.RemoteURL != configured {
+			t.Fatalf("RemoteURL = %v, want unchanged configured value %q", got.RemoteURL, configured)
+		}
+	})
+
+	t.Run("refresh reports missing and malformed origins as per-row failures without aborting other rows", func(t *testing.T) {
+		requireGit(t)
+
+		noOrigin := newLocalGitRepo(t) // no "origin" remote configured
+		noOriginRepo := createTestRepository(t, pool, repository.Repository{
+			Name:      "refresh-no-origin",
+			LocalPath: &noOrigin,
+		})
+
+		malformed := newLocalGitRepo(t)
+		runGitCmd(t, malformed, "remote", "add", "origin", "not a url")
+		malformedRepo := createTestRepository(t, pool, repository.Repository{
+			Name:      "refresh-malformed-origin",
+			LocalPath: &malformed,
+		})
+
+		healthy := newLocalGitRepo(t)
+		runGitCmd(t, healthy, "remote", "add", "origin", "https://example.com/foo/refresh-healthy.git")
+		healthyRepo := createTestRepository(t, pool, repository.Repository{
+			Name:      "refresh-healthy",
+			LocalPath: &healthy,
+		})
+
+		results, err := RefreshRepositories(ctx, pool)
+		if err != nil {
+			t.Fatalf("RefreshRepositories() error = %v", err)
+		}
+
+		noOriginResult := findRefreshResult(t, results, noOriginRepo.ID)
+		if noOriginResult.Err == nil {
+			t.Fatal("RefreshResult.Err = nil for a repository with no origin remote, want an error")
+		}
+		if noOriginResult.Updated {
+			t.Fatal("RefreshResult.Updated = true for a failed refresh, want false")
+		}
+
+		malformedResult := findRefreshResult(t, results, malformedRepo.ID)
+		if malformedResult.Err == nil {
+			t.Fatal("RefreshResult.Err = nil for a repository with a malformed origin url, want an error")
+		}
+		if malformedResult.Updated {
+			t.Fatal("RefreshResult.Updated = true for a failed refresh, want false")
+		}
+
+		healthyResult := findRefreshResult(t, results, healthyRepo.ID)
+		if healthyResult.Err != nil {
+			t.Fatalf("RefreshResult.Err = %v for a healthy repository, want nil", healthyResult.Err)
+		}
+		if !healthyResult.Updated {
+			t.Fatal("RefreshResult.Updated = false for a healthy repository, want true")
+		}
+
+		// The failed rows must be left untouched: neither cleared nor
+		// spuriously populated.
+		gotNoOrigin, err := GetRepository(ctx, pool, noOriginRepo.ID)
+		if err != nil {
+			t.Fatalf("GetRepository() error = %v", err)
+		}
+		if gotNoOrigin.RemoteURL != nil {
+			t.Fatalf("RemoteURL = %v, want unchanged nil after failed refresh", gotNoOrigin.RemoteURL)
+		}
+
+		gotMalformed, err := GetRepository(ctx, pool, malformedRepo.ID)
+		if err != nil {
+			t.Fatalf("GetRepository() error = %v", err)
+		}
+		if gotMalformed.RemoteURL != nil {
+			t.Fatalf("RemoteURL = %v, want unchanged nil after failed refresh", gotMalformed.RemoteURL)
+		}
+
+		gotHealthy, err := GetRepository(ctx, pool, healthyRepo.ID)
+		if err != nil {
+			t.Fatalf("GetRepository() error = %v", err)
+		}
+		want := "https://example.com/foo/refresh-healthy.git"
+		if gotHealthy.RemoteURL == nil || *gotHealthy.RemoteURL != want {
+			t.Fatalf("RemoteURL = %v, want %q", gotHealthy.RemoteURL, want)
 		}
 	})
 

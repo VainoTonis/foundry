@@ -58,6 +58,16 @@ func TestNormalizeRemoteURL(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "scp style uppercase host is lowercased",
+			in:   "GitHub.com:foo/bar.git",
+			want: "ssh://github.com/foo/bar.git",
+		},
+		{
+			name:    "scp style missing path",
+			in:      "github.com:",
+			wantErr: true,
+		},
+		{
 			name:    "unsupported scheme",
 			in:      "ftp://example.com/foo/bar.git",
 			wantErr: true,
