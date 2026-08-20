@@ -9,24 +9,29 @@ import (
 	"time"
 
 	"github.com/tonis2/foundry/internal/db"
+	"github.com/tonis2/foundry/internal/repository"
 )
 
 func (r *Runner) runPhase(
 	ctx context.Context,
 	wf db.Workflow,
-	proj db.Project,
+	repo repository.Repository,
 	phase db.Phase,
 	globalCtx, trackOverlay string,
 	beforeApply func() error,
 ) error {
-	prompt := buildPhasePrompt(proj.RepoPath, globalCtx, phase.Goal, trackOverlay, phase.AdjustedPrompt)
-	return r.execPhase(ctx, wf, proj, phase, prompt, false, beforeApply)
+	repoLocalPath, err := repo.RequireLocalPath()
+	if err != nil {
+		return err
+	}
+	prompt := buildPhasePrompt(repoLocalPath, globalCtx, phase.Goal, trackOverlay, phase.AdjustedPrompt)
+	return r.execPhase(ctx, wf, repo, phase, prompt, false, beforeApply)
 }
 
 func (r *Runner) execPhase(
 	ctx context.Context,
 	wf db.Workflow,
-	proj db.Project,
+	repo repository.Repository,
 	phase db.Phase,
 	prompt string,
 	isRetry bool,
@@ -34,15 +39,20 @@ func (r *Runner) execPhase(
 ) error {
 	sessionName := phaseSessionName(wf.ID, phase.ID)
 
+	repoLocalPath, err := repo.RequireLocalPath()
+	if err != nil {
+		return err
+	}
+
 	profilePath, err := r.writeProfileFile(ctx, r.cerberusProfile(), sessionName)
 	if err != nil {
 		log.Printf("phase %d: write profile file: %v (proceeding without profile)", phase.ID, err)
 	}
-	cerb := r.cerb.WithRepoProfile(proj.RepoPath, profilePath)
+	cerb := r.cerb.WithRepoProfile(repoLocalPath, profilePath)
 
 	if err := cerb.Clean(ctx, sessionName); err != nil {
 		log.Printf("pre-clean session %s: %v (ignored)", sessionName, err)
-		cleanupCerberusGitState(ctx, proj.RepoPath, sessionName)
+		cleanupCerberusGitState(ctx, repoLocalPath, sessionName)
 	}
 
 	now := time.Now()
@@ -139,7 +149,7 @@ loop:
 
 	reviewOut, _ := cerb.Review(ctx, sessionName)
 	filesJSON := extractFilesJSON(reviewOut)
-	commitHash := cerberusCommitHash(ctx, proj.RepoPath, sessionName)
+	commitHash := cerberusCommitHash(ctx, repoLocalPath, sessionName)
 
 	phaseFeedback := buildPhaseFeedback(verdict, notes, filesJSON, commitHash)
 	_, _ = db.UpdatePhase(ctx, r.pool, phase.ID, db.UpdatePhaseParams{
@@ -175,9 +185,9 @@ loop:
 					return err
 				}
 			}
-			cmd := exec.CommandContext(ctx, "git", "-C", proj.RepoPath, "cherry-pick", commitHash)
+			cmd := exec.CommandContext(ctx, "git", "-C", repoLocalPath, "cherry-pick", commitHash)
 			if out, err := cmd.CombinedOutput(); err != nil {
-				_ = exec.CommandContext(ctx, "git", "-C", proj.RepoPath, "cherry-pick", "--abort").Run()
+				_ = exec.CommandContext(ctx, "git", "-C", repoLocalPath, "cherry-pick", "--abort").Run()
 				failStatus := "failed"
 				failVerdict := "fail"
 				cherryErr := fmt.Sprintf("cherry-pick %s failed: %v - %s", commitHash, err, strings.TrimSpace(string(out)))
@@ -217,7 +227,7 @@ loop:
 	if err != nil {
 		return fmt.Errorf("reload phase for retry: %w", err)
 	}
-	return r.execPhase(ctx, wf, proj, phase2, adjusted, true, beforeApply)
+	return r.execPhase(ctx, wf, repo, phase2, adjusted, true, beforeApply)
 }
 
 func (r *Runner) collectLogs(ctx context.Context, cerb interface {

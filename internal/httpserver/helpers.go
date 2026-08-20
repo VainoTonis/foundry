@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/tonis2/foundry/internal/db"
+	"github.com/tonis2/foundry/internal/repository"
 )
 
 // JSON response helpers
@@ -32,15 +33,15 @@ func removeProfileFile(session string) {
 	os.Remove(profileFilePath(session))
 }
 
-func (s *Server) workflowProject(ctx context.Context, workflowID int64) (db.Workflow, db.Spec, db.Project, error) {
+func (s *Server) workflowRepository(ctx context.Context, workflowID int64) (db.Workflow, db.Spec, repository.Repository, error) {
 	wf, err := db.GetWorkflow(ctx, s.pool, workflowID)
 	if err != nil {
-		return wf, db.Spec{}, db.Project{}, err
+		return wf, db.Spec{}, repository.Repository{}, err
 	}
 	sp, err := db.GetSpec(ctx, s.pool, wf.SpecID)
 	if err != nil {
-		return wf, sp, db.Project{}, err
+		return wf, sp, repository.Repository{}, err
 	}
-	proj, err := db.GetProject(ctx, s.pool, sp.ProjectID)
-	return wf, sp, proj, err
+	repo, err := db.GetRepository(ctx, s.pool, sp.RepositoryID)
+	return wf, sp, repo, err
 }

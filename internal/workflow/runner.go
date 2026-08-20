@@ -11,6 +11,7 @@ import (
 	"github.com/tonis2/foundry/internal/cerberus"
 	"github.com/tonis2/foundry/internal/db"
 	"github.com/tonis2/foundry/internal/hub"
+	"github.com/tonis2/foundry/internal/repository"
 	"github.com/tonis2/foundry/internal/spec"
 )
 
@@ -73,9 +74,22 @@ func (r *Runner) run(ctx context.Context, workflowID int64) error {
 	if err != nil {
 		return fmt.Errorf("get spec: %w", err)
 	}
-	proj, err := db.GetProject(ctx, r.pool, sp.ProjectID)
+	repo, err := db.GetRepository(ctx, r.pool, sp.RepositoryID)
 	if err != nil {
-		return fmt.Errorf("get project: %w", err)
+		return fmt.Errorf("get repository: %w", err)
+	}
+	// Workflow execution runs Cerberus against a local worktree, so a
+	// repository with no local path (remote-only) cannot be executed here.
+	// This is reported by pausing the workflow rather than crashing partway
+	// through phase creation, mirroring how a plan with no executable steps
+	// is handled below.
+	if _, err := repo.RequireLocalPath(); err != nil {
+		log.Printf("workflow %d: %v", workflowID, err)
+		_ = db.UpdateWorkflowStatus(ctx, r.pool, workflowID, "paused")
+		r.publishWorkflowUpdate(workflowID, "paused")
+		failStatus := "paused"
+		_, _ = db.UpdateSpec(ctx, r.pool, sp.ID, db.UpdateSpecParams{Status: &failStatus})
+		return err
 	}
 
 	parsed := spec.Parse(sp.Content)
@@ -149,13 +163,13 @@ func (r *Runner) run(ctx context.Context, workflowID int64) error {
 
 		var runErr error
 		if phase.ParallelGroup == nil {
-			runErr = r.runPhase(ctx, wf, proj, phase, parsed.GlobalContext, trackOverlay, nil)
+			runErr = r.runPhase(ctx, wf, repo, phase, parsed.GlobalContext, trackOverlay, nil)
 		} else {
 			phases, listErr := db.ListPhasesByWorkflow(ctx, r.pool, workflowID)
 			if listErr != nil {
 				return fmt.Errorf("list parallel phases: %w", listErr)
 			}
-			runErr = r.runParallelGroup(ctx, wf, proj, pendingParallelBatch(phases, *phase.ParallelGroup), parsed.GlobalContext, trackOverlay)
+			runErr = r.runParallelGroup(ctx, wf, repo, pendingParallelBatch(phases, *phase.ParallelGroup), parsed.GlobalContext, trackOverlay)
 		}
 		if runErr != nil {
 			log.Printf("phase/group starting at %d failed: %v", phase.ID, runErr)
@@ -177,7 +191,7 @@ func pendingParallelBatch(phases []db.Phase, group int) []db.Phase {
 	return batch
 }
 
-func (r *Runner) runParallelGroup(ctx context.Context, wf db.Workflow, proj db.Project, phases []db.Phase, globalContext, trackOverlay string) error {
+func (r *Runner) runParallelGroup(ctx context.Context, wf db.Workflow, repo repository.Repository, phases []db.Phase, globalContext, trackOverlay string) error {
 	if len(phases) == 0 {
 		return nil
 	}
@@ -211,7 +225,7 @@ func (r *Runner) runParallelGroup(ctx context.Context, wf db.Workflow, proj db.P
 				}
 				return nil
 			}
-			err := r.runPhase(ctx, wf, proj, phase, globalContext, trackOverlay, beforeApply)
+			err := r.runPhase(ctx, wf, repo, phase, globalContext, trackOverlay, beforeApply)
 			// Even a phase that fails before integration must not release the next
 			// position until all earlier positions have finished.
 			<-gates[i]

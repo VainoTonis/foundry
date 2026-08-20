@@ -29,7 +29,7 @@ func NewService(pool *pgxpool.Pool, cerb *cerberus.Client, callbackURL string, w
 
 // CreateDraftAndStartChatParams holds parameters for CreateDraftAndStartChat.
 type CreateDraftAndStartChatParams struct {
-	ProjectID         *int64
+	RepositoryID      *int64
 	Description       string
 	SpecBuilderPrompt string
 }

@@ -4,30 +4,30 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"strings"
 	"time"
 
 	"github.com/tonis2/foundry/internal/db"
+	"github.com/tonis2/foundry/internal/repository"
 	planspec "github.com/tonis2/foundry/internal/spec"
 )
 
 // CreateDraftAndStartChat creates a spec draft and begins a chat session with cerberus.
 // It runs the chat asynchronously and returns the draft immediately.
 func (svc *Service) CreateDraftAndStartChat(ctx context.Context, params CreateDraftAndStartChatParams) (*db.SpecDraft, error) {
-	if params.ProjectID == nil {
-		return nil, fmt.Errorf("project_id is required")
+	if params.RepositoryID == nil {
+		return nil, fmt.Errorf("repository_id is required")
 	}
-	proj, err := db.GetProject(ctx, svc.pool, *params.ProjectID)
+	repo, err := db.GetRepository(ctx, svc.pool, *params.RepositoryID)
 	if err != nil {
-		return nil, fmt.Errorf("get project: %w", err)
+		return nil, fmt.Errorf("get repository: %w", err)
 	}
 
-	projectRepoPath := strings.TrimSpace(proj.RepoPath)
-	if projectRepoPath == "" {
-		return nil, fmt.Errorf("project repo path is not configured")
+	repoLocalPath, err := requireLocalPath(repo)
+	if err != nil {
+		return nil, err
 	}
 
-	draft, err := db.CreateSpecDraft(ctx, svc.pool, params.ProjectID, "(untitled)")
+	draft, err := db.CreateSpecDraft(ctx, svc.pool, params.RepositoryID, "(untitled)")
 	if err != nil {
 		return nil, fmt.Errorf("create draft: %w", err)
 	}
@@ -42,14 +42,26 @@ func (svc *Service) CreateDraftAndStartChat(ctx context.Context, params CreateDr
 	if params.Description != "" {
 		initialPrompt += "\n\nThe user's request:\n" + params.Description
 	}
-	initialPrompt += "\n\nProject name: " + proj.Name + "\nThe selected project's repository is mounted at /workspace inside your container."
+	initialPrompt += "\n\nRepository name: " + repo.Name + "\nThe selected repository is mounted at /workspace inside your container."
 
-	go svc.runChat(context.Background(), draft.ID, session, initialPrompt, projectRepoPath)
+	go svc.runChat(context.Background(), draft.ID, session, initialPrompt, repoLocalPath)
 
 	return &draft, nil
 }
 
-func (svc *Service) runChat(ctx context.Context, draftID int64, session, prompt, projectRepoPath string) {
+// requireLocalPath returns repo's local worktree path, or a wrapped
+// repository.ErrNoLocalPath if repo has no local path configured (for
+// example, a remote-only repository selected before it has been
+// cloned/mounted anywhere). Selecting a remote-only repository is a
+// valid, safe choice; it simply cannot be used for authoring flows that
+// require a local mount, so this is reported back to the caller (as a
+// wrapped, errors.Is-classifiable error) rather than causing a panic or
+// an unclear downstream failure.
+func requireLocalPath(repo repository.Repository) (string, error) {
+	return repo.RequireLocalPath()
+}
+
+func (svc *Service) runChat(ctx context.Context, draftID int64, session, prompt, repoLocalPath string) {
 	ctx, cancel := context.WithTimeout(ctx, 180*time.Second)
 	defer cancel()
 
@@ -63,7 +75,7 @@ func (svc *Service) runChat(ctx context.Context, draftID int64, session, prompt,
 		}
 	}
 
-	svc.cerb.SetRepoPath(projectRepoPath)
+	svc.cerb.SetRepoPath(repoLocalPath)
 	if err := svc.cerb.Chat(ctx, session, prompt, svc.callbackURL); err != nil {
 		log.Printf("spec-builder chat start error: %v", err)
 		errStatus := "error"
@@ -86,30 +98,30 @@ func (svc *Service) AppendUserMessage(ctx context.Context, params AppendUserMess
 		return nil, fmt.Errorf("update draft messages: %w", err)
 	}
 
-	if draft.ProjectID == nil {
-		return nil, fmt.Errorf("draft has no project")
+	if draft.RepositoryID == nil {
+		return nil, fmt.Errorf("draft has no repository")
 	}
 
-	proj, err := db.GetProject(ctx, svc.pool, *draft.ProjectID)
+	repo, err := db.GetRepository(ctx, svc.pool, *draft.RepositoryID)
 	if err != nil {
-		return nil, fmt.Errorf("get project: %w", err)
+		return nil, fmt.Errorf("get repository: %w", err)
 	}
 
-	projectRepoPath := strings.TrimSpace(proj.RepoPath)
-	if projectRepoPath == "" {
-		return nil, fmt.Errorf("project repo path is not configured")
+	repoLocalPath, err := requireLocalPath(repo)
+	if err != nil {
+		return nil, err
 	}
 
-	go svc.sendMessage(context.Background(), params.DraftID, draft.CerberusSession, params.Content, projectRepoPath)
+	go svc.sendMessage(context.Background(), params.DraftID, draft.CerberusSession, params.Content, repoLocalPath)
 
 	return &draft, nil
 }
 
-func (svc *Service) sendMessage(ctx context.Context, draftID int64, session, content, projectRepoPath string) {
+func (svc *Service) sendMessage(ctx context.Context, draftID int64, session, content, repoLocalPath string) {
 	ctx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
 
-	svc.cerb.SetRepoPath(projectRepoPath)
+	svc.cerb.SetRepoPath(repoLocalPath)
 	if err := svc.cerb.Message(ctx, session, content, svc.callbackURL); err != nil {
 		log.Printf("spec-builder message error: %v", err)
 		errStatus := "error"
@@ -131,14 +143,16 @@ func (svc *Service) SaveDraft(ctx context.Context, params SaveDraftParams) (int6
 		return 0, fmt.Errorf("could not extract spec from conversation — ask the agent to update the spec with full spec content")
 	}
 
-	var projID int64
-	if draft.ProjectID != nil {
-		projID = *draft.ProjectID
-		p, err := db.GetProject(ctx, svc.pool, projID)
+	var repoID int64
+	if draft.RepositoryID != nil {
+		repoID = *draft.RepositoryID
+		repo, err := db.GetRepository(ctx, svc.pool, repoID)
 		if err != nil {
-			return 0, fmt.Errorf("get project: %w", err)
+			return 0, fmt.Errorf("get repository: %w", err)
 		}
-		svc.cerb.SetRepoPath(p.RepoPath)
+		if repo.LocalPath != nil {
+			svc.cerb.SetRepoPath(*repo.LocalPath)
+		}
 	}
 
 	if err := svc.cerb.Close(ctx, draft.CerberusSession); err != nil {
@@ -163,7 +177,7 @@ func (svc *Service) SaveDraft(ctx context.Context, params SaveDraftParams) (int6
 	}
 
 	parsed := planspec.Parse(specContent)
-	plan, err := db.CreatePlan(ctx, svc.pool, projID, title, parsed.GlobalContext, specContent)
+	plan, err := db.CreatePlan(ctx, svc.pool, repoID, title, parsed.GlobalContext, specContent)
 	if err != nil {
 		return 0, fmt.Errorf("create plan: %w", err)
 	}
@@ -220,9 +234,9 @@ func (svc *Service) DeleteDraft(ctx context.Context, draftID int64) error {
 	}
 
 	if draft.CerberusSession != "" {
-		if draft.ProjectID != nil {
-			if proj, err := db.GetProject(ctx, svc.pool, *draft.ProjectID); err == nil {
-				svc.cerb.SetRepoPath(proj.RepoPath)
+		if draft.RepositoryID != nil {
+			if repo, err := db.GetRepository(ctx, svc.pool, *draft.RepositoryID); err == nil && repo.LocalPath != nil {
+				svc.cerb.SetRepoPath(*repo.LocalPath)
 			}
 		}
 		if err := svc.cerb.Close(ctx, draft.CerberusSession); err != nil {

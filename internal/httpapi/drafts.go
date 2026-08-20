@@ -9,7 +9,31 @@ import (
 
 	"github.com/tonis2/foundry/internal/authoring"
 	"github.com/tonis2/foundry/internal/db"
+	"github.com/tonis2/foundry/internal/repository"
 )
+
+// draftErrorStatus classifies an error returned by the spec-draft
+// authoring service into an HTTP status code. A repository.ErrNoLocalPath
+// (a remote-only repository with no local worktree mounted) is a
+// conflict: the request is well-formed and the repository exists, but
+// the current state of that repository cannot satisfy it, distinct from
+// a validation error (400/422) or a missing resource (404).
+func draftErrorStatus(err error) int {
+	if errors.Is(err, repository.ErrNoLocalPath) {
+		return http.StatusConflict
+	}
+	errMsg := err.Error()
+	switch {
+	case strings.Contains(errMsg, "required"):
+		return http.StatusUnprocessableEntity
+	case strings.Contains(errMsg, "not found"):
+		return http.StatusNotFound
+	case strings.Contains(errMsg, "not configured"):
+		return http.StatusUnprocessableEntity
+	default:
+		return http.StatusInternalServerError
+	}
+}
 
 func (h *Handler) HandleSpecDrafts(w http.ResponseWriter, r *http.Request) {
 	svc := h.specDraftsService()
@@ -24,8 +48,8 @@ func (h *Handler) HandleSpecDrafts(w http.ResponseWriter, r *http.Request) {
 
 	case http.MethodPost:
 		var body struct {
-			ProjectID   *int64 `json:"project_id"`
-			Description string `json:"description"`
+			RepositoryID *int64 `json:"repository_id"`
+			Description  string `json:"description"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			jsonErr(w, err.Error(), http.StatusBadRequest)
@@ -33,21 +57,12 @@ func (h *Handler) HandleSpecDrafts(w http.ResponseWriter, r *http.Request) {
 		}
 
 		draft, err := svc.CreateDraftAndStartChat(r.Context(), authoring.CreateDraftAndStartChatParams{
-			ProjectID:         body.ProjectID,
+			RepositoryID:      body.RepositoryID,
 			Description:       body.Description,
 			SpecBuilderPrompt: authoring.SpecBuilderPrompt,
 		})
 		if err != nil {
-			statusCode := http.StatusInternalServerError
-			errMsg := err.Error()
-			if strings.Contains(errMsg, "required") {
-				statusCode = http.StatusUnprocessableEntity
-			} else if strings.Contains(errMsg, "not found") {
-				statusCode = http.StatusNotFound
-			} else if strings.Contains(errMsg, "not configured") {
-				statusCode = http.StatusUnprocessableEntity
-			}
-			jsonErr(w, errMsg, statusCode)
+			jsonErr(w, err.Error(), draftErrorStatus(err))
 			return
 		}
 
@@ -112,14 +127,7 @@ func (h *Handler) HandleSpecDraft(w http.ResponseWriter, r *http.Request) {
 			Content: body.Content,
 		})
 		if err != nil {
-			statusCode := http.StatusInternalServerError
-			errMsg := err.Error()
-			if strings.Contains(errMsg, "not found") {
-				statusCode = http.StatusNotFound
-			} else if strings.Contains(errMsg, "not configured") {
-				statusCode = http.StatusUnprocessableEntity
-			}
-			jsonErr(w, errMsg, statusCode)
+			jsonErr(w, err.Error(), draftErrorStatus(err))
 			return
 		}
 

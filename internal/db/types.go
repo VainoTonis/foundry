@@ -12,16 +12,19 @@ type Project struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// Spec is owned by a Repository (identified by RepositoryID). The physical
+// SQL column backing this ownership remains project_id; RepositoryID is
+// the externally-facing name for that same column.
 type Spec struct {
-	ID        int64     `json:"id"`
-	Title     string    `json:"title"`
-	Content   string    `json:"content"`
-	Track     string    `json:"track"`
-	Status    string    `json:"status"`
-	ProjectID int64     `json:"project_id"`
-	Tags      []byte    `json:"tags"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID           int64     `json:"id"`
+	Title        string    `json:"title"`
+	Content      string    `json:"content"`
+	Track        string    `json:"track"`
+	Status       string    `json:"status"`
+	RepositoryID int64     `json:"repository_id"`
+	Tags         []byte    `json:"tags"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 type Workflow struct {
@@ -67,23 +70,23 @@ type PhaseLog struct {
 }
 
 type KnownCerberusSession struct {
-	Session       string     `json:"session"`
-	Type          string     `json:"type"`
-	FoundryStatus string     `json:"foundry_status"`
-	ProjectID     *int64     `json:"project_id,omitempty"`
-	ProjectName   string     `json:"project_name"`
-	ProjectRepo   string     `json:"project_repo"`
-	SpecID        *int64     `json:"spec_id,omitempty"`
-	SpecTitle     string     `json:"spec_title"`
-	WorkflowID    *int64     `json:"workflow_id,omitempty"`
-	PhaseID       *int64     `json:"phase_id,omitempty"`
-	PhaseName     string     `json:"phase_name"`
-	DraftID       *int64     `json:"draft_id,omitempty"`
-	DraftTitle    string     `json:"draft_title"`
-	LastUpdatedAt time.Time  `json:"last_updated_at"`
-	FinishedAt    *time.Time `json:"finished_at,omitempty"`
-	SafeToClean   bool       `json:"safe_to_clean"`
-	UnsafeReason  string     `json:"unsafe_reason,omitempty"`
+	Session             string     `json:"session"`
+	Type                string     `json:"type"`
+	FoundryStatus       string     `json:"foundry_status"`
+	RepositoryID        *int64     `json:"repository_id,omitempty"`
+	RepositoryName      string     `json:"repository_name"`
+	RepositoryLocalPath string     `json:"repository_local_path"`
+	SpecID              *int64     `json:"spec_id,omitempty"`
+	SpecTitle           string     `json:"spec_title"`
+	WorkflowID          *int64     `json:"workflow_id,omitempty"`
+	PhaseID             *int64     `json:"phase_id,omitempty"`
+	PhaseName           string     `json:"phase_name"`
+	DraftID             *int64     `json:"draft_id,omitempty"`
+	DraftTitle          string     `json:"draft_title"`
+	LastUpdatedAt       time.Time  `json:"last_updated_at"`
+	FinishedAt          *time.Time `json:"finished_at,omitempty"`
+	SafeToClean         bool       `json:"safe_to_clean"`
+	UnsafeReason        string     `json:"unsafe_reason,omitempty"`
 }
 
 type AppSetting struct {
@@ -92,9 +95,13 @@ type AppSetting struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// SpecDraft is owned by a Repository (identified by RepositoryID), which
+// may be unset for drafts not yet attached to one. The physical SQL
+// column backing this ownership remains project_id; RepositoryID is the
+// externally-facing name for that same column.
 type SpecDraft struct {
 	ID                    int64           `json:"id"`
-	ProjectID             *int64          `json:"project_id"`
+	RepositoryID          *int64          `json:"repository_id"`
 	Title                 string          `json:"title"`
 	CerberusSession       string          `json:"cerberus_session"`
 	Messages              json.RawMessage `json:"messages"`

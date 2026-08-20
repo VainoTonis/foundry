@@ -40,6 +40,23 @@ func (h *Handler) HandleWorkflows(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// Workflow execution runs Cerberus against the repository's local
+	// worktree, so a remote-only repository (no local path configured yet)
+	// cannot be used to start a workflow. This is reported as a conflict
+	// rather than allowed to fail deep inside the runner.
+	repo, err := db.GetRepository(r.Context(), h.pool, sp.RepositoryID)
+	if errors.Is(err, db.ErrNotFound) {
+		jsonErr(w, "repository not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		jsonErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if _, err := repo.RequireLocalPath(); err != nil {
+		jsonErr(w, err.Error(), http.StatusConflict)
+		return
+	}
 	maxCost := body.MaxCostUSD
 	if maxCost == nil {
 		def := h.defaultBudget
@@ -134,7 +151,7 @@ func (h *Handler) HandleWorkflow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleWorkflowFollowUp(w http.ResponseWriter, r *http.Request, workflowID int64) {
-	wf, sp, _, err := h.workflowProject(r.Context(), workflowID)
+	wf, sp, repo, err := h.workflowRepository(r.Context(), workflowID)
 	if errors.Is(err, db.ErrNotFound) {
 		jsonErr(w, "not found", http.StatusNotFound)
 		return
@@ -145,6 +162,12 @@ func (h *Handler) handleWorkflowFollowUp(w http.ResponseWriter, r *http.Request,
 	}
 	if wf.Status != "failed" {
 		jsonErr(w, "follow-up runs can only be created for failed workflows", http.StatusConflict)
+		return
+	}
+	// A follow-up run re-executes against the same repository, so it is
+	// equally subject to the local-path requirement as the initial run.
+	if _, err := repo.RequireLocalPath(); err != nil {
+		jsonErr(w, err.Error(), http.StatusConflict)
 		return
 	}
 	phases, err := db.ListPhasesByWorkflow(r.Context(), h.pool, workflowID)
@@ -165,7 +188,7 @@ func (h *Handler) handleWorkflowFollowUp(w http.ResponseWriter, r *http.Request,
 
 	content := h.buildFollowUpSpecContent(r.Context(), sp, wf, failed)
 	newTitle := "Follow-up: " + sp.Title
-	newSpec, err := db.CreateSpec(r.Context(), h.pool, sp.ProjectID, newTitle, content, sp.Tags)
+	newSpec, err := db.CreateSpec(r.Context(), h.pool, sp.RepositoryID, newTitle, content, sp.Tags)
 	if err != nil {
 		jsonErr(w, err.Error(), http.StatusInternalServerError)
 		return

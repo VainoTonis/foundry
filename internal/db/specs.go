@@ -8,8 +8,8 @@ import (
 )
 
 type ListSpecsFilter struct {
-	Status    string
-	ProjectID int64
+	Status       string
+	RepositoryID int64
 }
 
 type UpdateSpecParams struct {
@@ -20,14 +20,14 @@ type UpdateSpecParams struct {
 	Status  *string
 }
 
-func CreateSpec(ctx context.Context, pool *pgxpool.Pool, projectID int64, title, content string, tags []byte) (Spec, error) {
+func CreateSpec(ctx context.Context, pool *pgxpool.Pool, repositoryID int64, title, content string, tags []byte) (Spec, error) {
 	var s Spec
 	err := pool.QueryRow(ctx,
 		`INSERT INTO specs (project_id, title, content, tags)
 		 VALUES ($1, $2, $3, $4)
 		 RETURNING id, title, content, track, status, project_id, tags, created_at, updated_at`,
-		projectID, title, content, tags,
-	).Scan(&s.ID, &s.Title, &s.Content, &s.Track, &s.Status, &s.ProjectID, &s.Tags, &s.CreatedAt, &s.UpdatedAt)
+		repositoryID, title, content, tags,
+	).Scan(&s.ID, &s.Title, &s.Content, &s.Track, &s.Status, &s.RepositoryID, &s.Tags, &s.CreatedAt, &s.UpdatedAt)
 	return s, err
 }
 
@@ -40,9 +40,9 @@ func ListSpecs(ctx context.Context, pool *pgxpool.Pool, f ListSpecsFilter) ([]Sp
 		args = append(args, f.Status)
 		n++
 	}
-	if f.ProjectID != 0 {
+	if f.RepositoryID != 0 {
 		q += ` AND project_id = $` + itoa(n)
-		args = append(args, f.ProjectID)
+		args = append(args, f.RepositoryID)
 		n++
 	}
 	q += ` ORDER BY id`
@@ -54,7 +54,7 @@ func ListSpecs(ctx context.Context, pool *pgxpool.Pool, f ListSpecsFilter) ([]Sp
 	var out []Spec
 	for rows.Next() {
 		var s Spec
-		if err := rows.Scan(&s.ID, &s.Title, &s.Content, &s.Track, &s.Status, &s.ProjectID, &s.Tags, &s.CreatedAt, &s.UpdatedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.Title, &s.Content, &s.Track, &s.Status, &s.RepositoryID, &s.Tags, &s.CreatedAt, &s.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, s)
@@ -66,7 +66,7 @@ func GetSpec(ctx context.Context, pool *pgxpool.Pool, id int64) (Spec, error) {
 	var s Spec
 	err := pool.QueryRow(ctx,
 		`SELECT id, title, content, track, status, project_id, tags, created_at, updated_at FROM specs WHERE id = $1`, id,
-	).Scan(&s.ID, &s.Title, &s.Content, &s.Track, &s.Status, &s.ProjectID, &s.Tags, &s.CreatedAt, &s.UpdatedAt)
+	).Scan(&s.ID, &s.Title, &s.Content, &s.Track, &s.Status, &s.RepositoryID, &s.Tags, &s.CreatedAt, &s.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		return s, ErrNotFound
 	}
@@ -107,7 +107,7 @@ func UpdateSpec(ctx context.Context, pool *pgxpool.Pool, id int64, p UpdateSpecP
 		` RETURNING id, title, content, track, status, project_id, tags, created_at, updated_at`
 	var s Spec
 	err := pool.QueryRow(ctx, q, args...).Scan(
-		&s.ID, &s.Title, &s.Content, &s.Track, &s.Status, &s.ProjectID, &s.Tags, &s.CreatedAt, &s.UpdatedAt,
+		&s.ID, &s.Title, &s.Content, &s.Track, &s.Status, &s.RepositoryID, &s.Tags, &s.CreatedAt, &s.UpdatedAt,
 	)
 	if err == pgx.ErrNoRows {
 		return s, ErrNotFound

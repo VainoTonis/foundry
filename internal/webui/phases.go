@@ -65,9 +65,11 @@ func (s *Handler) handleUIPhaseDiffFragment(w http.ResponseWriter, r *http.Reque
 		msg = err.Error()
 	} else if spec, err := db.GetSpec(r.Context(), s.pool, wf.SpecID); err != nil {
 		msg = err.Error()
-	} else if proj, err := db.GetProject(r.Context(), s.pool, spec.ProjectID); err != nil {
+	} else if repo, err := db.GetRepository(r.Context(), s.pool, spec.RepositoryID); err != nil {
 		msg = err.Error()
-	} else if d, err := s.cerb.WithRepo(proj.RepoPath).Diff(r.Context(), *ph.CerberusSession); err != nil {
+	} else if repoLocalPath, err := repo.RequireLocalPath(); err != nil {
+		msg = err.Error()
+	} else if d, err := s.cerb.WithRepo(repoLocalPath).Diff(r.Context(), *ph.CerberusSession); err != nil {
 		msg = err.Error()
 	} else {
 		diff = d

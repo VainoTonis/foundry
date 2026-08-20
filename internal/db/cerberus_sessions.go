@@ -25,7 +25,7 @@ func ListKnownCerberusSessions(ctx context.Context, pool *pgxpool.Pool) ([]Known
 	for rows.Next() {
 		var k KnownCerberusSession
 		var typ string
-		if err := rows.Scan(&k.Session, &typ, &k.FoundryStatus, &k.ProjectID, &k.ProjectName, &k.ProjectRepo, &k.SpecID, &k.SpecTitle, &k.WorkflowID, &k.PhaseID, &k.PhaseName, &k.LastUpdatedAt, &k.FinishedAt); err != nil {
+		if err := rows.Scan(&k.Session, &typ, &k.FoundryStatus, &k.RepositoryID, &k.RepositoryName, &k.RepositoryLocalPath, &k.SpecID, &k.SpecTitle, &k.WorkflowID, &k.PhaseID, &k.PhaseName, &k.LastUpdatedAt, &k.FinishedAt); err != nil {
 			return nil, err
 		}
 		k.Type = typ
@@ -54,7 +54,7 @@ func ListKnownCerberusSessions(ctx context.Context, pool *pgxpool.Pool) ([]Known
 	for rows.Next() {
 		var k KnownCerberusSession
 		var typ string
-		if err := rows.Scan(&k.Session, &typ, &k.FoundryStatus, &k.ProjectID, &k.ProjectName, &k.ProjectRepo, &k.DraftID, &k.DraftTitle, &k.LastUpdatedAt); err != nil {
+		if err := rows.Scan(&k.Session, &typ, &k.FoundryStatus, &k.RepositoryID, &k.RepositoryName, &k.RepositoryLocalPath, &k.DraftID, &k.DraftTitle, &k.LastUpdatedAt); err != nil {
 			return nil, err
 		}
 		k.Type = typ

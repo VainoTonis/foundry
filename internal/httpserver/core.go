@@ -61,9 +61,15 @@ func NewServer(pool *pgxpool.Pool, runner *workflow.Runner, cerb *cerberus.Clien
 		SpecDraftsService:   s.newSpecDraftsService,
 		ChatService:         func() httpapi.ChatService { return s.chatSvc },
 		Cerberus:            cerb,
-		ProjectRepoForWorkflow: func(ctx context.Context, workflowID int64) (string, error) {
-			_, _, project, err := s.workflowProject(ctx, workflowID)
-			return project.RepoPath, err
+		RepositoryLocalPathForWorkflow: func(ctx context.Context, workflowID int64) (string, error) {
+			_, _, repo, err := s.workflowRepository(ctx, workflowID)
+			if err != nil {
+				return "", err
+			}
+			if repo.LocalPath == nil {
+				return "", nil
+			}
+			return *repo.LocalPath, nil
 		},
 		RemoveProfileFile: removeProfileFile,
 	})

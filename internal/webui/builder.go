@@ -8,6 +8,7 @@ import (
 
 	"github.com/tonis2/foundry/internal/authoring"
 	"github.com/tonis2/foundry/internal/db"
+	"github.com/tonis2/foundry/internal/repository"
 )
 
 type chatMessage struct{ Role, Content string }
@@ -21,7 +22,7 @@ func (s *Handler) handleUISpecBuilderPage(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Handler) handleUISpecBuilderStartFragment(w http.ResponseWriter, r *http.Request) {
-	projects, _ := db.ListProjects(r.Context(), s.pool)
+	repos, _ := db.ListRepositories(r.Context(), s.pool)
 	drafts, _ := db.ListSpecDrafts(r.Context(), s.pool)
 	active := []db.SpecDraft{}
 	for _, d := range drafts {
@@ -31,9 +32,9 @@ func (s *Handler) handleUISpecBuilderStartFragment(w http.ResponseWriter, r *htt
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := templates.ExecuteTemplate(w, "builder.start", struct {
-		Projects []db.Project
-		Drafts   []db.SpecDraft
-	}{projects, active}); err != nil {
+		Repositories []repository.Repository
+		Drafts       []db.SpecDraft
+	}{repos, active}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -64,22 +65,22 @@ func (s *Handler) handleUISpecBuilderDetailFragment(w http.ResponseWriter, r *ht
 	var msgs []chatMessage
 	_ = json.Unmarshal(draft.Messages, &msgs)
 	preview := authoring.ExtractFinalSpec(draft.Messages)
-	var proj db.Project
-	hasProject := false
-	if draft.ProjectID != nil {
-		if p, err := db.GetProject(r.Context(), s.pool, *draft.ProjectID); err == nil {
-			proj = p
-			hasProject = true
+	var repo repository.Repository
+	hasRepository := false
+	if draft.RepositoryID != nil {
+		if r, err := db.GetRepository(r.Context(), s.pool, *draft.RepositoryID); err == nil {
+			repo = r
+			hasRepository = true
 		}
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := templates.ExecuteTemplate(w, "builder.detail", struct {
-		Draft      db.SpecDraft
-		Messages   []chatMessage
-		Preview    string
-		Project    db.Project
-		HasProject bool
-	}{draft, msgs, preview, proj, hasProject}); err != nil {
+		Draft         db.SpecDraft
+		Messages      []chatMessage
+		Preview       string
+		Repository    repository.Repository
+		HasRepository bool
+	}{draft, msgs, preview, repo, hasRepository}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }

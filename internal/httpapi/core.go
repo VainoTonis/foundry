@@ -32,12 +32,12 @@ type Config struct {
 		Start(int64)
 		Stop(int64)
 	}
-	DefaultBudget          float64
-	SpecDraftsService      func() *authoring.Service
-	ChatService            func() ChatService
-	Cerberus               *cerberus.Client
-	ProjectRepoForWorkflow func(context.Context, int64) (string, error)
-	RemoveProfileFile      func(string)
+	DefaultBudget                  float64
+	SpecDraftsService              func() *authoring.Service
+	ChatService                    func() ChatService
+	Cerberus                       *cerberus.Client
+	RepositoryLocalPathForWorkflow func(context.Context, int64) (string, error)
+	RemoveProfileFile              func(string)
 }
 
 type Handler struct {
@@ -50,27 +50,27 @@ type Handler struct {
 		Start(int64)
 		Stop(int64)
 	}
-	defaultBudget          float64
-	specDraftsService      func() *authoring.Service
-	chatSvc                func() ChatService
-	cerb                   *cerberus.Client
-	projectRepoForWorkflow func(context.Context, int64) (string, error)
-	removeProfileFile      func(string)
+	defaultBudget                  float64
+	specDraftsService              func() *authoring.Service
+	chatSvc                        func() ChatService
+	cerb                           *cerberus.Client
+	repositoryLocalPathForWorkflow func(context.Context, int64) (string, error)
+	removeProfileFile              func(string)
 }
 
 func New(pool *pgxpool.Pool, cfg Config) *Handler {
 	return &Handler{
-		pool:                   pool,
-		gitRoot:                cfg.GitRoot,
-		configPath:             cfg.ConfigPath,
-		loadRuntimeSettings:    cfg.LoadRuntimeSettings,
-		updateRuntime:          cfg.UpdateRuntime,
-		workflowRunner:         cfg.WorkflowRunner,
-		defaultBudget:          cfg.DefaultBudget,
-		specDraftsService:      cfg.SpecDraftsService,
-		chatSvc:                cfg.ChatService,
-		cerb:                   cfg.Cerberus,
-		projectRepoForWorkflow: cfg.ProjectRepoForWorkflow,
-		removeProfileFile:      cfg.RemoveProfileFile,
+		pool:                           pool,
+		gitRoot:                        cfg.GitRoot,
+		configPath:                     cfg.ConfigPath,
+		loadRuntimeSettings:            cfg.LoadRuntimeSettings,
+		updateRuntime:                  cfg.UpdateRuntime,
+		workflowRunner:                 cfg.WorkflowRunner,
+		defaultBudget:                  cfg.DefaultBudget,
+		specDraftsService:              cfg.SpecDraftsService,
+		chatSvc:                        cfg.ChatService,
+		cerb:                           cfg.Cerberus,
+		repositoryLocalPathForWorkflow: cfg.RepositoryLocalPathForWorkflow,
+		removeProfileFile:              cfg.RemoveProfileFile,
 	}
 }

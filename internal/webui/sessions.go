@@ -106,7 +106,7 @@ func (s *Handler) knownCerberusSessionViews(ctx context.Context, withStatus bool
 		if withStatus && s.cerb != nil {
 			var status string
 			var err error
-			repoPath := strings.TrimSpace(k.ProjectRepo)
+			repoPath := strings.TrimSpace(k.RepositoryLocalPath)
 			if repoPath != "" {
 				status, err = s.cerb.WithRepo(repoPath).Status(ctx, k.Session)
 			} else {

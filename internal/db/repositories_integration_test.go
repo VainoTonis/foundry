@@ -146,6 +146,318 @@ func createTestRepository(t *testing.T, pool *pgxpool.Pool, r repository.Reposit
 	return created
 }
 
+// TestSpecToWorkflowExecution_Postgres exercises the full spec-to-workflow
+// ownership chain (CreateSpec -> ListSpecs filter -> CreateWorkflow ->
+// UpdateWorkflowStatus -> WorkflowTotalCost) against real PostgreSQL, for
+// both a local-only and a remote-only Repository. Externally this chain is
+// expressed in terms of Repository/RepositoryID (Spec.RepositoryID,
+// ListSpecsFilter.RepositoryID); physically it remains specs.project_id.
+func TestSpecToWorkflowExecution_Postgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+
+	for _, tc := range []struct {
+		name string
+		repo repository.Repository
+	}{
+		{"local-only repository", repository.Repository{Name: "spec-workflow-local"}},
+		{"remote-only repository", repository.Repository{Name: "spec-workflow-remote"}},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			repo := tc.repo
+			if tc.name == "local-only repository" {
+				local := newLocalGitRepo(t)
+				repo.LocalPath = &local
+			} else {
+				remote := "https://github.com/foo/" + tc.repo.Name + ".git"
+				repo.RemoteURL = &remote
+			}
+			createdRepo := createTestRepository(t, pool, repo)
+
+			spec, err := CreateSpec(ctx, pool, createdRepo.ID, "spec title", "spec content", []byte(`[]`))
+			if err != nil {
+				t.Fatalf("CreateSpec() error = %v", err)
+			}
+			t.Cleanup(func() { _ = DeleteSpec(context.Background(), pool, spec.ID) })
+			if spec.RepositoryID != createdRepo.ID {
+				t.Fatalf("Spec.RepositoryID = %d, want %d", spec.RepositoryID, createdRepo.ID)
+			}
+
+			gotSpec, err := GetSpec(ctx, pool, spec.ID)
+			if err != nil {
+				t.Fatalf("GetSpec() error = %v", err)
+			}
+			if gotSpec.RepositoryID != createdRepo.ID {
+				t.Fatalf("GetSpec().RepositoryID = %d, want %d", gotSpec.RepositoryID, createdRepo.ID)
+			}
+
+			listed, err := ListSpecs(ctx, pool, ListSpecsFilter{RepositoryID: createdRepo.ID})
+			if err != nil {
+				t.Fatalf("ListSpecs() error = %v", err)
+			}
+			found := false
+			for _, s := range listed {
+				if s.ID == spec.ID {
+					found = true
+				}
+				if s.RepositoryID != createdRepo.ID {
+					t.Fatalf("ListSpecs() returned spec %d owned by repository %d, want only %d", s.ID, s.RepositoryID, createdRepo.ID)
+				}
+			}
+			if !found {
+				t.Fatalf("ListSpecs(RepositoryID=%d) = %+v, want spec %d present", createdRepo.ID, listed, spec.ID)
+			}
+
+			wf, err := CreateWorkflow(ctx, pool, spec.ID, "poc", nil)
+			if err != nil {
+				t.Fatalf("CreateWorkflow() error = %v", err)
+			}
+			t.Cleanup(func() { _ = DeleteWorkflow(context.Background(), pool, wf.ID) })
+
+			workflows, err := ListWorkflowsBySpec(ctx, pool, spec.ID)
+			if err != nil {
+				t.Fatalf("ListWorkflowsBySpec() error = %v", err)
+			}
+			if len(workflows) != 1 || workflows[0].ID != wf.ID {
+				t.Fatalf("ListWorkflowsBySpec() = %+v, want single workflow with id %d", workflows, wf.ID)
+			}
+
+			if err := UpdateWorkflowStatus(ctx, pool, wf.ID, "done"); err != nil {
+				t.Fatalf("UpdateWorkflowStatus() error = %v", err)
+			}
+			gotWf, err := GetWorkflow(ctx, pool, wf.ID)
+			if err != nil {
+				t.Fatalf("GetWorkflow() error = %v", err)
+			}
+			if gotWf.Status != "done" {
+				t.Fatalf("GetWorkflow().Status = %q, want %q", gotWf.Status, "done")
+			}
+			if gotWf.FinishedAt == nil {
+				t.Fatal("GetWorkflow().FinishedAt = nil, want set after transitioning to done")
+			}
+
+			cost, err := WorkflowTotalCost(ctx, pool, wf.ID)
+			if err != nil {
+				t.Fatalf("WorkflowTotalCost() error = %v", err)
+			}
+			if cost != 0 {
+				t.Fatalf("WorkflowTotalCost() = %v, want 0 with no phases", cost)
+			}
+		})
+	}
+}
+
+// TestDraftSave_Postgres exercises spec draft save round-trips (create,
+// get, get-by-cerberus-session, update) against real PostgreSQL, for both
+// a local-only and a remote-only Repository, as well as an unattached
+// (nil RepositoryID) draft. Externally this uses SpecDraft.RepositoryID;
+// physically it remains spec_drafts.project_id.
+func TestDraftSave_Postgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+
+	t.Run("draft owned by a local-only repository saves and reads back", func(t *testing.T) {
+		local := newLocalGitRepo(t)
+		repo := createTestRepository(t, pool, repository.Repository{Name: "draft-save-local", LocalPath: &local})
+
+		draft, err := CreateSpecDraft(ctx, pool, &repo.ID, "draft title")
+		if err != nil {
+			t.Fatalf("CreateSpecDraft() error = %v", err)
+		}
+		t.Cleanup(func() { _ = DeleteSpecDraft(context.Background(), pool, draft.ID) })
+		if draft.RepositoryID == nil || *draft.RepositoryID != repo.ID {
+			t.Fatalf("SpecDraft.RepositoryID = %v, want %d", draft.RepositoryID, repo.ID)
+		}
+
+		got, err := GetSpecDraft(ctx, pool, draft.ID)
+		if err != nil {
+			t.Fatalf("GetSpecDraft() error = %v", err)
+		}
+		if got.RepositoryID == nil || *got.RepositoryID != repo.ID {
+			t.Fatalf("GetSpecDraft().RepositoryID = %v, want %d", got.RepositoryID, repo.ID)
+		}
+
+		session := "draft-save-local-session"
+		updated, err := UpdateSpecDraft(ctx, pool, draft.ID, UpdateSpecDraftParams{CerberusSession: &session})
+		if err != nil {
+			t.Fatalf("UpdateSpecDraft() error = %v", err)
+		}
+		if updated.CerberusSession != session {
+			t.Fatalf("UpdateSpecDraft().CerberusSession = %q, want %q", updated.CerberusSession, session)
+		}
+		if updated.RepositoryID == nil || *updated.RepositoryID != repo.ID {
+			t.Fatalf("UpdateSpecDraft().RepositoryID = %v, want unchanged %d", updated.RepositoryID, repo.ID)
+		}
+
+		bySession, err := GetSpecDraftByCerberusSession(ctx, pool, session)
+		if err != nil {
+			t.Fatalf("GetSpecDraftByCerberusSession() error = %v", err)
+		}
+		if bySession.ID != draft.ID {
+			t.Fatalf("GetSpecDraftByCerberusSession().ID = %d, want %d", bySession.ID, draft.ID)
+		}
+		if bySession.RepositoryID == nil || *bySession.RepositoryID != repo.ID {
+			t.Fatalf("GetSpecDraftByCerberusSession().RepositoryID = %v, want %d", bySession.RepositoryID, repo.ID)
+		}
+	})
+
+	t.Run("draft owned by a remote-only repository saves and reads back", func(t *testing.T) {
+		remote := "https://github.com/foo/draft-save-remote.git"
+		repo := createTestRepository(t, pool, repository.Repository{Name: "draft-save-remote", RemoteURL: &remote})
+
+		draft, err := CreateSpecDraft(ctx, pool, &repo.ID, "draft title")
+		if err != nil {
+			t.Fatalf("CreateSpecDraft() error = %v", err)
+		}
+		t.Cleanup(func() { _ = DeleteSpecDraft(context.Background(), pool, draft.ID) })
+		if draft.RepositoryID == nil || *draft.RepositoryID != repo.ID {
+			t.Fatalf("SpecDraft.RepositoryID = %v, want %d", draft.RepositoryID, repo.ID)
+		}
+
+		got, err := GetSpecDraft(ctx, pool, draft.ID)
+		if err != nil {
+			t.Fatalf("GetSpecDraft() error = %v", err)
+		}
+		if got.RepositoryID == nil || *got.RepositoryID != repo.ID {
+			t.Fatalf("GetSpecDraft().RepositoryID = %v, want %d", got.RepositoryID, repo.ID)
+		}
+	})
+
+	t.Run("draft with no repository saves and reads back with a nil RepositoryID", func(t *testing.T) {
+		draft, err := CreateSpecDraft(ctx, pool, nil, "unattached draft")
+		if err != nil {
+			t.Fatalf("CreateSpecDraft() error = %v", err)
+		}
+		t.Cleanup(func() { _ = DeleteSpecDraft(context.Background(), pool, draft.ID) })
+		if draft.RepositoryID != nil {
+			t.Fatalf("SpecDraft.RepositoryID = %v, want nil", draft.RepositoryID)
+		}
+
+		got, err := GetSpecDraft(ctx, pool, draft.ID)
+		if err != nil {
+			t.Fatalf("GetSpecDraft() error = %v", err)
+		}
+		if got.RepositoryID != nil {
+			t.Fatalf("GetSpecDraft().RepositoryID = %v, want nil", got.RepositoryID)
+		}
+	})
+}
+
+// TestCerberusSessionLookup_Postgres exercises ListKnownCerberusSessions
+// against real PostgreSQL for both a workflow-phase-backed session (owned,
+// via specs.project_id, by a local-only Repository) and a spec-draft-backed
+// session (owned by a remote-only Repository), confirming the returned
+// RepositoryID/RepositoryName/RepositoryLocalPath fields reflect the
+// correct Repository despite the physical join through project_id.
+func TestCerberusSessionLookup_Postgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+
+	t.Run("a terminal workflow phase session resolves to its local-only repository", func(t *testing.T) {
+		local := newLocalGitRepo(t)
+		repo := createTestRepository(t, pool, repository.Repository{Name: "cerberus-lookup-local", LocalPath: &local})
+
+		spec, err := CreateSpec(ctx, pool, repo.ID, "cerberus lookup spec", "content", []byte(`[]`))
+		if err != nil {
+			t.Fatalf("CreateSpec() error = %v", err)
+		}
+		t.Cleanup(func() { _ = DeleteSpec(context.Background(), pool, spec.ID) })
+
+		wf, err := CreateWorkflow(ctx, pool, spec.ID, "poc", nil)
+		if err != nil {
+			t.Fatalf("CreateWorkflow() error = %v", err)
+		}
+		t.Cleanup(func() { _ = DeleteWorkflow(context.Background(), pool, wf.ID) })
+
+		session := "cerberus-lookup-local-session"
+		var phaseID int64
+		row := pool.QueryRow(ctx,
+			`INSERT INTO phases (workflow_id, position, name, goal, status, cerberus_session)
+			 VALUES ($1, 1, 'phase-1', 'goal', 'done', $2) RETURNING id`,
+			wf.ID, session,
+		)
+		if err := row.Scan(&phaseID); err != nil {
+			t.Fatalf("insert phase: %v", err)
+		}
+
+		sessions, err := ListKnownCerberusSessions(ctx, pool)
+		if err != nil {
+			t.Fatalf("ListKnownCerberusSessions() error = %v", err)
+		}
+		var found *KnownCerberusSession
+		for i := range sessions {
+			if sessions[i].Session == session {
+				found = &sessions[i]
+			}
+		}
+		if found == nil {
+			t.Fatalf("ListKnownCerberusSessions() did not include session %q", session)
+		}
+		if found.Type != "workflow_phase" {
+			t.Fatalf("Type = %q, want %q", found.Type, "workflow_phase")
+		}
+		if found.RepositoryID == nil || *found.RepositoryID != repo.ID {
+			t.Fatalf("RepositoryID = %v, want %d", found.RepositoryID, repo.ID)
+		}
+		if found.RepositoryName != repo.Name {
+			t.Fatalf("RepositoryName = %q, want %q", found.RepositoryName, repo.Name)
+		}
+		if found.RepositoryLocalPath != local {
+			t.Fatalf("RepositoryLocalPath = %q, want %q", found.RepositoryLocalPath, local)
+		}
+		if !found.SafeToClean {
+			t.Fatal("SafeToClean = false for a done phase, want true")
+		}
+	})
+
+	t.Run("an active spec-draft session resolves to its remote-only repository", func(t *testing.T) {
+		remote := "https://github.com/foo/cerberus-lookup-remote.git"
+		repo := createTestRepository(t, pool, repository.Repository{Name: "cerberus-lookup-remote", RemoteURL: &remote})
+
+		session := "cerberus-lookup-remote-session"
+		draft, err := CreateSpecDraft(ctx, pool, &repo.ID, "remote draft")
+		if err != nil {
+			t.Fatalf("CreateSpecDraft() error = %v", err)
+		}
+		t.Cleanup(func() { _ = DeleteSpecDraft(context.Background(), pool, draft.ID) })
+		if _, err := UpdateSpecDraft(ctx, pool, draft.ID, UpdateSpecDraftParams{CerberusSession: &session}); err != nil {
+			t.Fatalf("UpdateSpecDraft() error = %v", err)
+		}
+
+		sessions, err := ListKnownCerberusSessions(ctx, pool)
+		if err != nil {
+			t.Fatalf("ListKnownCerberusSessions() error = %v", err)
+		}
+		var found *KnownCerberusSession
+		for i := range sessions {
+			if sessions[i].Session == session {
+				found = &sessions[i]
+			}
+		}
+		if found == nil {
+			t.Fatalf("ListKnownCerberusSessions() did not include session %q", session)
+		}
+		if found.Type != "spec_draft" {
+			t.Fatalf("Type = %q, want %q", found.Type, "spec_draft")
+		}
+		if found.RepositoryID == nil || *found.RepositoryID != repo.ID {
+			t.Fatalf("RepositoryID = %v, want %d", found.RepositoryID, repo.ID)
+		}
+		if found.RepositoryName != repo.Name {
+			t.Fatalf("RepositoryName = %q, want %q", found.RepositoryName, repo.Name)
+		}
+		// remote-only repository has no repo_path; the lookup's COALESCE
+		// must surface that as an empty string, not fail to scan.
+		if found.RepositoryLocalPath != "" {
+			t.Fatalf("RepositoryLocalPath = %q, want empty for remote-only repository", found.RepositoryLocalPath)
+		}
+		if found.SafeToClean {
+			t.Fatal("SafeToClean = true for an active draft, want false")
+		}
+	})
+}
+
 func TestRepositoriesCRUD_Postgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()

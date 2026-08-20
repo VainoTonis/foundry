@@ -171,8 +171,8 @@ func (s *Server) cleanKnownCerberusSession(w http.ResponseWriter, r *http.Reques
 		jsonErr(w, "refusing to clean active session: "+item.UnsafeReason, http.StatusConflict)
 		return
 	}
-	if strings.TrimSpace(item.ProjectRepo) != "" {
-		err = s.cerb.WithRepo(item.ProjectRepo).Clean(r.Context(), item.Session)
+	if strings.TrimSpace(item.RepositoryLocalPath) != "" {
+		err = s.cerb.WithRepo(item.RepositoryLocalPath).Clean(r.Context(), item.Session)
 	} else {
 		err = s.cerb.Clean(r.Context(), item.Session)
 	}
@@ -196,8 +196,8 @@ func (s *Server) knownCerberusSessionViews(ctx context.Context, withStatus bool)
 		if withStatus && s.cerb != nil {
 			var status string
 			var err error
-			if strings.TrimSpace(k.ProjectRepo) != "" {
-				status, err = s.cerb.WithRepo(k.ProjectRepo).Status(ctx, k.Session)
+			if strings.TrimSpace(k.RepositoryLocalPath) != "" {
+				status, err = s.cerb.WithRepo(k.RepositoryLocalPath).Status(ctx, k.Session)
 			} else {
 				status, err = s.cerb.Status(ctx, k.Session)
 			}

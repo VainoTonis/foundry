@@ -115,8 +115,8 @@ func (h *Handler) HandlePhase(w http.ResponseWriter, r *http.Request) {
 			var cerberusCmd interface {
 				Clean(context.Context, string) error
 			} = h.cerb
-			if h.projectRepoForWorkflow != nil {
-				if repo, err := h.projectRepoForWorkflow(r.Context(), ph.WorkflowID); err == nil && strings.TrimSpace(repo) != "" {
+			if h.repositoryLocalPathForWorkflow != nil {
+				if repo, err := h.repositoryLocalPathForWorkflow(r.Context(), ph.WorkflowID); err == nil && strings.TrimSpace(repo) != "" {
 					cerberusCmd = h.cerb.WithRepo(repo)
 				}
 			}

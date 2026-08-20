@@ -1,6 +1,9 @@
 package repository
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestValidate(t *testing.T) {
 	local := "/home/user/repo"
@@ -62,3 +65,38 @@ func TestValidate(t *testing.T) {
 }
 
 func strPtr(s string) *string { return &s }
+
+// TestRequireLocalPath covers RequireLocalPath's behavior on the three
+// cases workflow execution and spec authoring care about: a local path
+// present, absent, and remote-only (no local path at all). It must be
+// possible for callers to classify "no local path" via errors.Is(err,
+// ErrNoLocalPath) so remote-only repositories can be reported as a
+// conflict rather than a generic error.
+func TestRequireLocalPath(t *testing.T) {
+	local := "/home/user/repo"
+	remote := "https://github.com/foo/bar.git"
+
+	t.Run("local path present", func(t *testing.T) {
+		got, err := Repository{Name: "bar", LocalPath: &local}.RequireLocalPath()
+		if err != nil {
+			t.Fatalf("RequireLocalPath() error = %v, want nil", err)
+		}
+		if got != local {
+			t.Fatalf("RequireLocalPath() = %q, want %q", got, local)
+		}
+	})
+
+	t.Run("remote-only repository", func(t *testing.T) {
+		_, err := Repository{Name: "bar", RemoteURL: &remote}.RequireLocalPath()
+		if !errors.Is(err, ErrNoLocalPath) {
+			t.Fatalf("RequireLocalPath() error = %v, want wrapped ErrNoLocalPath", err)
+		}
+	})
+
+	t.Run("whitespace-only local path is treated as absent", func(t *testing.T) {
+		_, err := Repository{Name: "bar", LocalPath: strPtr("   "), RemoteURL: &remote}.RequireLocalPath()
+		if !errors.Is(err, ErrNoLocalPath) {
+			t.Fatalf("RequireLocalPath() error = %v, want wrapped ErrNoLocalPath", err)
+		}
+	})
+}

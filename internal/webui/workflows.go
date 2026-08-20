@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/tonis2/foundry/internal/db"
+	"github.com/tonis2/foundry/internal/repository"
 )
 
 func (s *Handler) handleUIWorkflow(w http.ResponseWriter, r *http.Request) {
@@ -33,7 +34,7 @@ func (s *Handler) handleUIWorkflowFragment(w http.ResponseWriter, r *http.Reques
 	}
 	sp, _ := db.GetSpec(r.Context(), s.pool, wf.SpecID)
 	plan, _ := db.GetPlanByWorkflow(r.Context(), s.pool, wf.ID)
-	proj, _ := db.GetProject(r.Context(), s.pool, sp.ProjectID)
+	repo, _ := db.GetRepository(r.Context(), s.pool, sp.RepositoryID)
 	phases, err := db.ListPhasesByWorkflow(r.Context(), s.pool, id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -49,12 +50,12 @@ func (s *Handler) handleUIWorkflowFragment(w http.ResponseWriter, r *http.Reques
 		Workflow         db.Workflow
 		Spec             db.Spec // immutable execution snapshot
 		Plan             db.Plan
-		Project          db.Project
+		Repository       repository.Repository
 		Phases           []db.Phase
 		InitialPhase     db.Phase
 		HasInitialPhase  bool
 		CurrentPhaseName string
-	}{wf, sp, plan, proj, phases, initialPhase, hasInitialPhase, currentPhaseName}); err != nil {
+	}{wf, sp, plan, repo, phases, initialPhase, hasInitialPhase, currentPhaseName}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }

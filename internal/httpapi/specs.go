@@ -16,10 +16,10 @@ func (h *Handler) HandleSpecs(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
 		var body struct {
-			ProjectID int64           `json:"project_id"`
-			Title     string          `json:"title"`
-			Content   string          `json:"content"`
-			Tags      json.RawMessage `json:"tags"`
+			RepositoryID int64           `json:"repository_id"`
+			Title        string          `json:"title"`
+			Content      string          `json:"content"`
+			Tags         json.RawMessage `json:"tags"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			jsonErr(w, err.Error(), http.StatusBadRequest)
@@ -29,7 +29,7 @@ func (h *Handler) HandleSpecs(w http.ResponseWriter, r *http.Request) {
 		if body.Tags != nil {
 			tags = body.Tags
 		}
-		sp, err := db.CreateSpec(r.Context(), h.pool, body.ProjectID, body.Title, body.Content, tags)
+		sp, err := db.CreateSpec(r.Context(), h.pool, body.RepositoryID, body.Title, body.Content, tags)
 		if err != nil {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -39,8 +39,8 @@ func (h *Handler) HandleSpecs(w http.ResponseWriter, r *http.Request) {
 		f := db.ListSpecsFilter{
 			Status: r.URL.Query().Get("status"),
 		}
-		if pid := r.URL.Query().Get("project_id"); pid != "" {
-			f.ProjectID, _ = strconv.ParseInt(pid, 10, 64)
+		if rid := r.URL.Query().Get("repository_id"); rid != "" {
+			f.RepositoryID, _ = strconv.ParseInt(rid, 10, 64)
 		}
 		list, err := db.ListSpecs(r.Context(), h.pool, f)
 		if err != nil {

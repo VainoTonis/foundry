@@ -1,8 +1,13 @@
 package workflow
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"testing"
+
+	"github.com/tonis2/foundry/internal/db"
+	"github.com/tonis2/foundry/internal/repository"
 )
 
 func TestBuildPhaseFeedbackFromVerdictNotesFilesAndCommit(t *testing.T) {
@@ -50,4 +55,15 @@ func contains(xs []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func TestRunPhaseFailsFastForRemoteOnlyRepository(t *testing.T) {
+	remote := "https://github.com/foo/bar.git"
+	repo := repository.Repository{Name: "remote-only", RemoteURL: &remote}
+
+	r := &Runner{}
+	err := r.runPhase(context.Background(), db.Workflow{}, repo, db.Phase{}, "", "", nil)
+	if !errors.Is(err, repository.ErrNoLocalPath) {
+		t.Fatalf("runPhase() error = %v, want wrapped repository.ErrNoLocalPath", err)
+	}
 }
