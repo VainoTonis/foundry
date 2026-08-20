@@ -19,7 +19,7 @@
     <form id="plan-repo-form-{{.Plan.ID}}" class="panel-form" data-plan-repo-form data-plan-id="{{.Plan.ID}}">
       <div class="field">
         <label>Repository IDs, ordered (position 0 = primary), comma separated</label>
-        <input type="text" name="repository_ids" value="{{range $i, $r := .Plan.Repositories}}{{if $i}},{{end}}{{$r.ProjectID}}{{end}}" placeholder="e.g. 3,1,2">
+        <input type="text" name="repository_ids" value="{{range $i, $r := .Plan.Repositories}}{{if $i}},{{end}}{{$r.RepositoryID}}{{end}}" placeholder="e.g. 3,1,2">
       </div>
       <button class="btn btn-secondary" type="submit">Update repositories</button>
     </form>

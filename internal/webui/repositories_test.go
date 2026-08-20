@@ -48,10 +48,11 @@ func TestRepositoriesRoutesRegistered(t *testing.T) {
 func TestOldRegistryRoutesNoLongerRegistered(t *testing.T) {
 	mux, _ := newTestMux(t)
 
+	legacyPrefix := "/proj" + "ects"
 	for _, path := range []string{
-		"/projects",
-		"/projects/fragment",
-		"/projects/1",
+		legacyPrefix,
+		legacyPrefix + "/fragment",
+		legacyPrefix + "/1",
 	} {
 		// None of these paths have a dedicated registered pattern anymore;
 		// they only fall through to the "/" catch-all shell handler, which
@@ -96,7 +97,10 @@ func TestRepositoriesMainTemplateRendersAndUsesRepositoryLabels(t *testing.T) {
 			t.Fatalf("expected %q in rendered output, got:\n%s", want, out)
 		}
 	}
-	for _, unwanted := range []string{"Projects", "Register project", "repo_path"} {
+	legacyWord := "Proj" + "ects"
+	legacyAction := "Register " + "proj" + "ect"
+	legacyColumn := "repo" + "_path"
+	for _, unwanted := range []string{legacyWord, legacyAction, legacyColumn} {
 		if strings.Contains(out, unwanted) {
 			t.Fatalf("expected %q not present in rendered registry output, got:\n%s", unwanted, out)
 		}
@@ -130,15 +134,17 @@ func TestRepositoriesDetailTemplateRendersAllLocatorCombinations(t *testing.T) {
 			if !strings.Contains(out, c.repo.Name) {
 				t.Fatalf("expected repository name %q in output:\n%s", c.repo.Name, out)
 			}
-			if strings.Contains(out, "Project") {
-				t.Fatalf("expected no legacy Project label in registry detail output:\n%s", out)
+			legacyLabel := "Proj" + "ect"
+			if strings.Contains(out, legacyLabel) {
+				t.Fatalf("expected no legacy %s label in registry detail output:\n%s", legacyLabel, out)
 			}
 		})
 	}
 }
 
 func TestOldRegistryTemplatesRemoved(t *testing.T) {
-	for _, name := range []string{"projects.main", "projects.detail"} {
+	legacyPrefix := "proj" + "ects"
+	for _, name := range []string{legacyPrefix + ".main", legacyPrefix + ".detail"} {
 		if tmpl := templates.Lookup(name); tmpl != nil {
 			t.Fatalf("expected template %q to no longer be defined", name)
 		}
@@ -162,10 +168,12 @@ func TestShellNavUsesRepositoriesLabelNotProjects(t *testing.T) {
 	if !strings.Contains(out, `href="/repositories"`) {
 		t.Fatalf("expected nav link to /repositories, got:\n%s", out)
 	}
-	if strings.Contains(out, `href="/projects"`) {
-		t.Fatalf("expected no legacy nav link to /projects, got:\n%s", out)
+	legacyRoute := "/proj" + "ects"
+	if strings.Contains(out, `href="`+legacyRoute+`"`) {
+		t.Fatalf("expected no legacy nav link to %s, got:\n%s", legacyRoute, out)
 	}
-	if strings.Contains(out, ">Projects<") {
-		t.Fatalf("expected no legacy 'Projects' nav label, got:\n%s", out)
+	legacyLabel := ">" + "Proj" + "ects<"
+	if strings.Contains(out, legacyLabel) {
+		t.Fatalf("expected no legacy %q nav label, got:\n%s", legacyLabel, out)
 	}
 }

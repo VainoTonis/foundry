@@ -45,55 +45,55 @@ func deleteTestPlan(t *testing.T, pool *pgxpool.Pool, id int64) {
 	}
 }
 
-// TestCreatePlan_InvalidProjectIDs_Postgres exercises CreatePlan's
-// validation and transactional rollback behavior: an empty project id
-// list, a duplicate project id, and a project id that does not exist
+// TestCreatePlan_InvalidRepositoryIDs_Postgres exercises CreatePlan's
+// validation and transactional rollback behavior: an empty repository id
+// list, a duplicate repository id, and a repository id that does not exist
 // must all fail without persisting a plan row or any plan_repositories
 // rows.
-func TestCreatePlan_InvalidProjectIDs_Postgres(t *testing.T) {
+func TestCreatePlan_InvalidRepositoryIDs_Postgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 
-	t.Run("empty project id list errors and persists nothing", func(t *testing.T) {
+	t.Run("empty repository id list errors and persists nothing", func(t *testing.T) {
 		title := "plan-empty-project-ids"
 		_, err := CreatePlan(ctx, pool, nil, title, "summary", "content")
 		if err == nil {
-			t.Fatal("CreatePlan() error = nil, want an error for an empty project id list")
+			t.Fatal("CreatePlan() error = nil, want an error for an empty repository id list")
 		}
 		if got := countPlansByTitle(t, pool, title); got != 0 {
 			t.Fatalf("plans with title %q after failed CreatePlan() = %d, want 0", title, got)
 		}
 	})
 
-	t.Run("duplicate project id errors and persists nothing", func(t *testing.T) {
+	t.Run("duplicate repository id errors and persists nothing", func(t *testing.T) {
 		repo := createTestPlanRepo(t, pool, "dup")
 
 		title := "plan-duplicate-project-id"
 		_, err := CreatePlan(ctx, pool, []int64{repo.ID, repo.ID}, title, "summary", "content")
 		if err == nil {
-			t.Fatal("CreatePlan() error = nil, want an error for a duplicated project id")
+			t.Fatal("CreatePlan() error = nil, want an error for a duplicated repository id")
 		}
 		if got := countPlansByTitle(t, pool, title); got != 0 {
 			t.Fatalf("plans with title %q after failed CreatePlan() = %d, want 0", title, got)
 		}
 
 		var n int
-		if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM plan_repositories WHERE project_id = $1`, repo.ID).Scan(&n); err != nil {
+		if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM plan_repositories WHERE repository_id = $1`, repo.ID).Scan(&n); err != nil {
 			t.Fatalf("count plan_repositories: %v", err)
 		}
 		if n != 0 {
-			t.Fatalf("plan_repositories rows for project %d = %d, want 0", repo.ID, n)
+			t.Fatalf("plan_repositories rows for repository %d = %d, want 0", repo.ID, n)
 		}
 	})
 
-	t.Run("unknown project id errors and rolls back the whole transaction", func(t *testing.T) {
+	t.Run("unknown repository id errors and rolls back the whole transaction", func(t *testing.T) {
 		repo := createTestPlanRepo(t, pool, "unknown-sibling")
-		const neverIssuedProjectID int64 = 1 << 40
+		const neverIssuedRepositoryID int64 = 1 << 40
 
 		title := "plan-unknown-project-id"
-		_, err := CreatePlan(ctx, pool, []int64{repo.ID, neverIssuedProjectID}, title, "summary", "content")
+		_, err := CreatePlan(ctx, pool, []int64{repo.ID, neverIssuedRepositoryID}, title, "summary", "content")
 		if err == nil {
-			t.Fatal("CreatePlan() error = nil, want an error for an unknown project id")
+			t.Fatal("CreatePlan() error = nil, want an error for an unknown repository id")
 		}
 		if !errors.Is(err, ErrNotFound) {
 			t.Fatalf("CreatePlan() error = %v, want it to wrap ErrNotFound", err)
@@ -102,14 +102,14 @@ func TestCreatePlan_InvalidProjectIDs_Postgres(t *testing.T) {
 			t.Fatalf("plans with title %q after failed CreatePlan() = %d, want 0", title, got)
 		}
 
-		// The valid sibling project id must not have been left with a
+		// The valid sibling repository id must not have been left with a
 		// plan_repositories row from the rolled-back transaction either.
 		var n int
-		if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM plan_repositories WHERE project_id = $1`, repo.ID).Scan(&n); err != nil {
+		if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM plan_repositories WHERE repository_id = $1`, repo.ID).Scan(&n); err != nil {
 			t.Fatalf("count plan_repositories: %v", err)
 		}
 		if n != 0 {
-			t.Fatalf("plan_repositories rows for project %d = %d, want 0 after rollback", repo.ID, n)
+			t.Fatalf("plan_repositories rows for repository %d = %d, want 0 after rollback", repo.ID, n)
 		}
 	})
 }
@@ -144,15 +144,15 @@ func TestPlanRepositories_RoundTrip_Postgres(t *testing.T) {
 			if repos[i].Position != i {
 				t.Fatalf("%s Repositories[%d].Position = %d, want %d", label, i, repos[i].Position, i)
 			}
-			if repos[i].ProjectID != want {
-				t.Fatalf("%s Repositories[%d].ProjectID = %d, want %d", label, i, repos[i].ProjectID, want)
+			if repos[i].RepositoryID != want {
+				t.Fatalf("%s Repositories[%d].RepositoryID = %d, want %d", label, i, repos[i].RepositoryID, want)
 			}
 			if repos[i].Repository.ID != want {
 				t.Fatalf("%s Repositories[%d].Repository.ID = %d, want %d", label, i, repos[i].Repository.ID, want)
 			}
 		}
-		if repos[0].ProjectID != primary.ID {
-			t.Fatalf("%s Repositories[0] (primary) = %d, want %d", label, repos[0].ProjectID, primary.ID)
+		if repos[0].RepositoryID != primary.ID {
+			t.Fatalf("%s Repositories[0] (primary) = %d, want %d", label, repos[0].RepositoryID, primary.ID)
 		}
 	}
 

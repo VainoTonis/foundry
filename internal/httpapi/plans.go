@@ -91,7 +91,7 @@ func (h *Handler) runPlan(w http.ResponseWriter, r *http.Request, id int64) {
 			content += "\n\n## Phase " + strconv.Itoa(i+1) + ": Step " + strconv.Itoa(i+1) + "\n\n" + step.Text
 		}
 	}
-	sp, err := db.CreateSpec(r.Context(), h.pool, plan.Repositories[0].ProjectID, plan.Title, content, []byte("[]"))
+	sp, err := db.CreateSpec(r.Context(), h.pool, plan.Repositories[0].RepositoryID, plan.Title, content, []byte("[]"))
 	if err != nil {
 		jsonErr(w, err.Error(), http.StatusInternalServerError)
 		return

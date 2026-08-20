@@ -10,12 +10,12 @@ import (
 	"github.com/tonis2/foundry/internal/repository"
 )
 
-func planRepo(position int, projectID int64, name string) db.PlanRepository {
+func planRepo(position int, repositoryID int64, name string) db.PlanRepository {
 	return db.PlanRepository{
-		Position:  position,
-		ProjectID: projectID,
+		Position:     position,
+		RepositoryID: repositoryID,
 		Repository: repository.Repository{
-			ID:   projectID,
+			ID:   repositoryID,
 			Name: name,
 		},
 	}

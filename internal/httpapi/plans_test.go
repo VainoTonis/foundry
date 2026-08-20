@@ -96,14 +96,14 @@ func TestHandlePlanPatchRepositoryIDs(t *testing.T) {
 	}
 	var updated struct {
 		Repositories []struct {
-			Position  int   `json:"position"`
-			ProjectID int64 `json:"project_id"`
+			Position     int   `json:"position"`
+			RepositoryID int64 `json:"repository_id"`
 		} `json:"repositories"`
 	}
 	if err := json.Unmarshal(patchRec.Body.Bytes(), &updated); err != nil {
 		t.Fatalf("unmarshal patch response: %v", err)
 	}
-	if len(updated.Repositories) != 1 || updated.Repositories[0].ProjectID != newRepo || updated.Repositories[0].Position != 0 {
+	if len(updated.Repositories) != 1 || updated.Repositories[0].RepositoryID != newRepo || updated.Repositories[0].Position != 0 {
 		t.Fatalf("unexpected repositories after patch: %+v", updated.Repositories)
 	}
 }

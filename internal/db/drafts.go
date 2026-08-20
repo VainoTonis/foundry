@@ -46,8 +46,8 @@ func IsSpecDraftSafeToCleanStatus(status string) bool {
 func CreateSpecDraft(ctx context.Context, pool *pgxpool.Pool, repositoryID *int64, title string) (SpecDraft, error) {
 	var d SpecDraft
 	err := pool.QueryRow(ctx,
-		`INSERT INTO spec_drafts (project_id, title) VALUES ($1, $2)
-		 RETURNING id, project_id, title, cerberus_session, messages, status, original_intent, current_decision_needed, created_at, updated_at`,
+		`INSERT INTO spec_drafts (repository_id, title) VALUES ($1, $2)
+		 RETURNING id, repository_id, title, cerberus_session, messages, status, original_intent, current_decision_needed, created_at, updated_at`,
 		repositoryID, title,
 	).Scan(&d.ID, &d.RepositoryID, &d.Title, &d.CerberusSession, &d.Messages, &d.Status, &d.OriginalIntent, &d.CurrentDecisionNeeded, &d.CreatedAt, &d.UpdatedAt)
 	return d, err
@@ -56,7 +56,7 @@ func CreateSpecDraft(ctx context.Context, pool *pgxpool.Pool, repositoryID *int6
 func GetSpecDraft(ctx context.Context, pool *pgxpool.Pool, id int64) (SpecDraft, error) {
 	var d SpecDraft
 	err := pool.QueryRow(ctx,
-		`SELECT id, project_id, title, cerberus_session, messages, status, original_intent, current_decision_needed, created_at, updated_at FROM spec_drafts WHERE id = $1`, id,
+		`SELECT id, repository_id, title, cerberus_session, messages, status, original_intent, current_decision_needed, created_at, updated_at FROM spec_drafts WHERE id = $1`, id,
 	).Scan(&d.ID, &d.RepositoryID, &d.Title, &d.CerberusSession, &d.Messages, &d.Status, &d.OriginalIntent, &d.CurrentDecisionNeeded, &d.CreatedAt, &d.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		return d, ErrNotFound
@@ -67,7 +67,7 @@ func GetSpecDraft(ctx context.Context, pool *pgxpool.Pool, id int64) (SpecDraft,
 func GetSpecDraftByCerberusSession(ctx context.Context, pool *pgxpool.Pool, cerberusSession string) (SpecDraft, error) {
 	var d SpecDraft
 	err := pool.QueryRow(ctx,
-		`SELECT id, project_id, title, cerberus_session, messages, status, original_intent, current_decision_needed, created_at, updated_at FROM spec_drafts WHERE cerberus_session = $1`, cerberusSession,
+		`SELECT id, repository_id, title, cerberus_session, messages, status, original_intent, current_decision_needed, created_at, updated_at FROM spec_drafts WHERE cerberus_session = $1`, cerberusSession,
 	).Scan(&d.ID, &d.RepositoryID, &d.Title, &d.CerberusSession, &d.Messages, &d.Status, &d.OriginalIntent, &d.CurrentDecisionNeeded, &d.CreatedAt, &d.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		return d, ErrNotFound
@@ -77,7 +77,7 @@ func GetSpecDraftByCerberusSession(ctx context.Context, pool *pgxpool.Pool, cerb
 
 func ListSpecDrafts(ctx context.Context, pool *pgxpool.Pool) ([]SpecDraft, error) {
 	rows, err := pool.Query(ctx,
-		`SELECT id, project_id, title, cerberus_session, messages, status, original_intent, current_decision_needed, created_at, updated_at FROM spec_drafts ORDER BY id DESC`,
+		`SELECT id, repository_id, title, cerberus_session, messages, status, original_intent, current_decision_needed, created_at, updated_at FROM spec_drafts ORDER BY id DESC`,
 	)
 	if err != nil {
 		return nil, err
@@ -130,7 +130,7 @@ func UpdateSpecDraft(ctx context.Context, pool *pgxpool.Pool, id int64, p Update
 	}
 	args = append(args, id)
 	q := `UPDATE spec_drafts SET ` + joinComma(set) + ` WHERE id = $` + itoa(n) +
-		` RETURNING id, project_id, title, cerberus_session, messages, status, original_intent, current_decision_needed, created_at, updated_at`
+		` RETURNING id, repository_id, title, cerberus_session, messages, status, original_intent, current_decision_needed, created_at, updated_at`
 	var d SpecDraft
 	err := pool.QueryRow(ctx, q, args...).Scan(
 		&d.ID, &d.RepositoryID, &d.Title, &d.CerberusSession, &d.Messages, &d.Status, &d.OriginalIntent, &d.CurrentDecisionNeeded, &d.CreatedAt, &d.UpdatedAt,

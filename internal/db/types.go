@@ -7,15 +7,8 @@ import (
 	"github.com/tonis2/foundry/internal/repository"
 )
 
-type Project struct {
-	ID        int64     `json:"id"`
-	Name      string    `json:"name"`
-	RepoPath  string    `json:"repo_path"`
-	CreatedAt time.Time `json:"created_at"`
-}
-
 // Spec is owned by a Repository (identified by RepositoryID). The physical
-// SQL column backing this ownership remains project_id; RepositoryID is
+// SQL column backing this ownership is repository_id; RepositoryID is
 // the externally-facing name for that same column.
 type Spec struct {
 	ID           int64     `json:"id"`
@@ -99,7 +92,7 @@ type AppSetting struct {
 
 // SpecDraft is owned by a Repository (identified by RepositoryID), which
 // may be unset for drafts not yet attached to one. The physical SQL
-// column backing this ownership remains project_id; RepositoryID is the
+// column backing this ownership is repository_id; RepositoryID is the
 // externally-facing name for that same column.
 type SpecDraft struct {
 	ID                    int64           `json:"id"`
@@ -182,9 +175,9 @@ type Profile struct {
 // repository. Repository carries the resolved Repository fields
 // (name/locators) needed by callers without a further lookup.
 type PlanRepository struct {
-	Position   int                   `json:"position"`
-	ProjectID  int64                 `json:"project_id"`
-	Repository repository.Repository `json:"repository"`
+	Position     int                   `json:"position"`
+	RepositoryID int64                 `json:"repository_id"`
+	Repository   repository.Repository `json:"repository"`
 }
 
 type Plan struct {
@@ -213,8 +206,8 @@ type PlanStep struct {
 // (the feedback_repositories table). Unlike PlanRepository this is an
 // unordered set: feedback has no notion of a primary repository.
 type FeedbackRepository struct {
-	ProjectID  int64                 `json:"project_id"`
-	Repository repository.Repository `json:"repository"`
+	RepositoryID int64                 `json:"repository_id"`
+	Repository   repository.Repository `json:"repository"`
 }
 
 type Feedback struct {

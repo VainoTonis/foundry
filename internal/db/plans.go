@@ -39,12 +39,12 @@ func scanPlan(row pgx.Row) (Plan, error) {
 }
 
 // loadPlanRepositories returns the ordered (position 0 first) repository
-// membership for a single plan, resolving each project_id to its
+// membership for a single plan, resolving each repository_id to its
 // Repository fields in the same query (no N+1 per repository).
 func loadPlanRepositories(ctx context.Context, q querier, planID int64) ([]PlanRepository, error) {
 	rows, err := q.Query(ctx,
-		`SELECT pr.position, pr.project_id, proj.name, proj.repo_path, proj.remote_url, proj.created_at
-		 FROM plan_repositories pr JOIN projects proj ON proj.id = pr.project_id
+		`SELECT pr.position, pr.repository_id, proj.name, proj.local_path, proj.remote_url, proj.created_at
+		 FROM plan_repositories pr JOIN repositories proj ON proj.id = pr.repository_id
 		 WHERE pr.plan_id = $1 ORDER BY pr.position`, planID)
 	if err != nil {
 		return nil, err
@@ -53,10 +53,10 @@ func loadPlanRepositories(ctx context.Context, q querier, planID int64) ([]PlanR
 	var out []PlanRepository
 	for rows.Next() {
 		var pr PlanRepository
-		if err := rows.Scan(&pr.Position, &pr.ProjectID, &pr.Repository.Name, &pr.Repository.LocalPath, &pr.Repository.RemoteURL, &pr.Repository.CreatedAt); err != nil {
+		if err := rows.Scan(&pr.Position, &pr.RepositoryID, &pr.Repository.Name, &pr.Repository.LocalPath, &pr.Repository.RemoteURL, &pr.Repository.CreatedAt); err != nil {
 			return nil, err
 		}
-		pr.Repository.ID = pr.ProjectID
+		pr.Repository.ID = pr.RepositoryID
 		out = append(out, pr)
 	}
 	return out, rows.Err()
@@ -71,8 +71,8 @@ func loadPlanRepositoriesForPlans(ctx context.Context, q querier, planIDs []int6
 		return out, nil
 	}
 	rows, err := q.Query(ctx,
-		`SELECT pr.plan_id, pr.position, pr.project_id, proj.name, proj.repo_path, proj.remote_url, proj.created_at
-		 FROM plan_repositories pr JOIN projects proj ON proj.id = pr.project_id
+		`SELECT pr.plan_id, pr.position, pr.repository_id, proj.name, proj.local_path, proj.remote_url, proj.created_at
+		 FROM plan_repositories pr JOIN repositories proj ON proj.id = pr.repository_id
 		 WHERE pr.plan_id = ANY($1) ORDER BY pr.plan_id, pr.position`, planIDs)
 	if err != nil {
 		return nil, err
@@ -81,10 +81,10 @@ func loadPlanRepositoriesForPlans(ctx context.Context, q querier, planIDs []int6
 	for rows.Next() {
 		var planID int64
 		var pr PlanRepository
-		if err := rows.Scan(&planID, &pr.Position, &pr.ProjectID, &pr.Repository.Name, &pr.Repository.LocalPath, &pr.Repository.RemoteURL, &pr.Repository.CreatedAt); err != nil {
+		if err := rows.Scan(&planID, &pr.Position, &pr.RepositoryID, &pr.Repository.Name, &pr.Repository.LocalPath, &pr.Repository.RemoteURL, &pr.Repository.CreatedAt); err != nil {
 			return nil, err
 		}
-		pr.Repository.ID = pr.ProjectID
+		pr.Repository.ID = pr.RepositoryID
 		out[planID] = append(out[planID], pr)
 	}
 	return out, rows.Err()
@@ -97,13 +97,13 @@ type UpdatePlanStepParams struct {
 }
 
 // CreatePlan creates a plan owned by the given ordered, non-empty list of
-// project ids (position 0 is the primary repository) and its
+// repository ids (position 0 is the primary repository) and its
 // plan_repositories rows, all in a single transaction. It returns an
-// error and leaves no rows persisted if projectIDs is empty, contains a
-// duplicate id, or contains an id that does not exist in projects.
-func CreatePlan(ctx context.Context, pool *pgxpool.Pool, projectIDs []int64, title, summary, content string) (Plan, error) {
-	if len(projectIDs) == 0 {
-		return Plan{}, fmt.Errorf("create plan: at least one project id is required")
+// error and leaves no rows persisted if repositoryIDs is empty, contains a
+// duplicate id, or contains an id that does not exist in repositories.
+func CreatePlan(ctx context.Context, pool *pgxpool.Pool, repositoryIDs []int64, title, summary, content string) (Plan, error) {
+	if len(repositoryIDs) == 0 {
+		return Plan{}, fmt.Errorf("create plan: at least one repository id is required")
 	}
 
 	tx, err := pool.Begin(ctx)
@@ -121,21 +121,21 @@ func CreatePlan(ctx context.Context, pool *pgxpool.Pool, projectIDs []int64, tit
 		return Plan{}, err
 	}
 
-	for position, projectID := range projectIDs {
+	for position, repositoryID := range repositoryIDs {
 		if _, err := tx.Exec(ctx,
-			`INSERT INTO plan_repositories (plan_id, project_id, position) VALUES ($1, $2, $3)`,
-			p.ID, projectID, position,
+			`INSERT INTO plan_repositories (plan_id, repository_id, position) VALUES ($1, $2, $3)`,
+			p.ID, repositoryID, position,
 		); err != nil {
 			var pgErr *pgconn.PgError
 			if errors.As(err, &pgErr) {
 				switch pgErr.Code {
 				case "23503": // foreign_key_violation
-					return Plan{}, fmt.Errorf("create plan: project %d does not exist: %w", projectID, ErrNotFound)
+					return Plan{}, fmt.Errorf("create plan: repository %d does not exist: %w", repositoryID, ErrNotFound)
 				case "23505": // unique_violation
-					return Plan{}, fmt.Errorf("create plan: project %d listed more than once", projectID)
+					return Plan{}, fmt.Errorf("create plan: repository %d listed more than once", repositoryID)
 				}
 			}
-			return Plan{}, fmt.Errorf("create plan: insert plan_repositories for project %d: %w", projectID, err)
+			return Plan{}, fmt.Errorf("create plan: insert plan_repositories for repository %d: %w", repositoryID, err)
 		}
 	}
 
@@ -206,7 +206,7 @@ func UpdatePlan(ctx context.Context, pool *pgxpool.Pool, id int64, p UpdatePlanP
 		seen := make(map[int64]bool, len(*p.RepositoryIDs))
 		for _, pid := range *p.RepositoryIDs {
 			if seen[pid] {
-				return Plan{}, fmt.Errorf("update plan: project %d listed more than once", pid)
+				return Plan{}, fmt.Errorf("update plan: repository %d listed more than once", pid)
 			}
 			seen[pid] = true
 		}
@@ -272,21 +272,21 @@ func UpdatePlan(ctx context.Context, pool *pgxpool.Pool, id int64, p UpdatePlanP
 		if _, err := tx.Exec(ctx, `DELETE FROM plan_repositories WHERE plan_id = $1`, id); err != nil {
 			return Plan{}, err
 		}
-		for position, projectID := range *p.RepositoryIDs {
+		for position, repositoryID := range *p.RepositoryIDs {
 			if _, err := tx.Exec(ctx,
-				`INSERT INTO plan_repositories (plan_id, project_id, position) VALUES ($1, $2, $3)`,
-				id, projectID, position,
+				`INSERT INTO plan_repositories (plan_id, repository_id, position) VALUES ($1, $2, $3)`,
+				id, repositoryID, position,
 			); err != nil {
 				var pgErr *pgconn.PgError
 				if errors.As(err, &pgErr) {
 					switch pgErr.Code {
 					case "23503": // foreign_key_violation
-						return Plan{}, fmt.Errorf("update plan: project %d does not exist: %w", projectID, ErrNotFound)
+						return Plan{}, fmt.Errorf("update plan: repository %d does not exist: %w", repositoryID, ErrNotFound)
 					case "23505": // unique_violation
-						return Plan{}, fmt.Errorf("update plan: project %d listed more than once", projectID)
+						return Plan{}, fmt.Errorf("update plan: repository %d listed more than once", repositoryID)
 					}
 				}
-				return Plan{}, fmt.Errorf("update plan: insert plan_repositories for project %d: %w", projectID, err)
+				return Plan{}, fmt.Errorf("update plan: insert plan_repositories for repository %d: %w", repositoryID, err)
 			}
 		}
 	}

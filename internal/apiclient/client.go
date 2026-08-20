@@ -35,9 +35,9 @@ type Repository struct {
 // PlanRepository is one ordered member of a Plan's repository membership.
 // Position 0 is the plan's primary repository.
 type PlanRepository struct {
-	Position   int        `json:"position"`
-	ProjectID  int64      `json:"project_id"`
-	Repository Repository `json:"repository"`
+	Position     int        `json:"position"`
+	RepositoryID int64      `json:"repository_id"`
+	Repository   Repository `json:"repository"`
 }
 
 // Plan represents a foundry plan.

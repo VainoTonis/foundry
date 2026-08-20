@@ -12,9 +12,8 @@ import (
 // Externally, the domain is expressed in terms of the canonical Repository
 // (internal/repository) and its RepositoryID, matching the naming used
 // elsewhere for repository ownership (see Spec.RepositoryID and
-// SpecDraft.RepositoryID in types.go). The physical SQL backing this
-// remains the chat_session_projects join table and its project_id column,
-// left unchanged so no migration is required.
+// SpecDraft.RepositoryID in types.go). The physical SQL backing this is
+// the chat_session_repositories join table and its repository_id column.
 
 // AttachRepositoryToSession attaches the Repository identified by
 // repositoryID as context for the chat session identified by sessionID.
@@ -22,7 +21,7 @@ import (
 // no-op.
 func AttachRepositoryToSession(ctx context.Context, pool *pgxpool.Pool, sessionID, repositoryID int64) error {
 	_, err := pool.Exec(ctx,
-		`INSERT INTO chat_session_projects (session_id, project_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+		`INSERT INTO chat_session_repositories (session_id, repository_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
 		sessionID, repositoryID,
 	)
 	return err
@@ -33,7 +32,7 @@ func AttachRepositoryToSession(ctx context.Context, pool *pgxpool.Pool, sessionI
 // Detaching a Repository that is not attached is a no-op.
 func DetachRepositoryFromSession(ctx context.Context, pool *pgxpool.Pool, sessionID, repositoryID int64) error {
 	_, err := pool.Exec(ctx,
-		`DELETE FROM chat_session_projects WHERE session_id = $1 AND project_id = $2`,
+		`DELETE FROM chat_session_repositories WHERE session_id = $1 AND repository_id = $2`,
 		sessionID, repositoryID,
 	)
 	return err
@@ -43,12 +42,12 @@ func DetachRepositoryFromSession(ctx context.Context, pool *pgxpool.Pool, sessio
 // the chat session identified by sessionID, ordered by attachment time.
 // A Repository with no LocalPath (remote-only) is returned safely with a
 // nil LocalPath, exactly as ListRepositories/GetRepository do, rather
-// than failing to scan a NULL repo_path column.
+// than failing to scan a NULL local_path column.
 func ListSessionRepositories(ctx context.Context, pool *pgxpool.Pool, sessionID int64) ([]repository.Repository, error) {
 	rows, err := pool.Query(ctx,
 		`SELECT `+repositorySelectColumns+`
-		 FROM projects p
-		 JOIN chat_session_projects csp ON csp.project_id = p.id
+		 FROM repositories p
+		 JOIN chat_session_repositories csp ON csp.repository_id = p.id
 		 WHERE csp.session_id = $1
 		 ORDER BY csp.added_at`,
 		sessionID,

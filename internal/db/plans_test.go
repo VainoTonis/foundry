@@ -9,9 +9,9 @@ import (
 	"github.com/tonis2/foundry/internal/repository"
 )
 
-// TestCreatePlan_EmptyProjectIDs confirms an empty project id list is
+// TestCreatePlan_EmptyRepositoryIDs confirms an empty repository id list is
 // rejected and leaves no plan row behind.
-func TestCreatePlan_EmptyProjectIDs(t *testing.T) {
+func TestCreatePlan_EmptyRepositoryIDs(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 
@@ -19,7 +19,7 @@ func TestCreatePlan_EmptyProjectIDs(t *testing.T) {
 
 	_, err := CreatePlan(ctx, pool, nil, "empty-list", "summary", "content")
 	if err == nil {
-		t.Fatal("CreatePlan() error = nil, want error for empty project id list")
+		t.Fatal("CreatePlan() error = nil, want error for empty repository id list")
 	}
 
 	after := countPlans(t, pool)
@@ -28,10 +28,10 @@ func TestCreatePlan_EmptyProjectIDs(t *testing.T) {
 	}
 }
 
-// TestCreatePlan_DuplicateProjectID confirms a duplicate project id in the
-// list is rejected (per the plan_repositories UNIQUE(plan_id, project_id)
+// TestCreatePlan_DuplicateRepositoryID confirms a duplicate repository id in the
+// list is rejected (per the plan_repositories UNIQUE(plan_id, repository_id)
 // constraint) and leaves no plan or plan_repositories rows behind.
-func TestCreatePlan_DuplicateProjectID(t *testing.T) {
+func TestCreatePlan_DuplicateRepositoryID(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 
@@ -45,22 +45,22 @@ func TestCreatePlan_DuplicateProjectID(t *testing.T) {
 
 	_, err := CreatePlan(ctx, pool, []int64{repo.ID, repo.ID}, "dup", "summary", "content")
 	if err == nil {
-		t.Fatal("CreatePlan() error = nil, want error for duplicate project id")
+		t.Fatal("CreatePlan() error = nil, want error for duplicate repository id")
 	}
 
 	if got := countPlans(t, pool); got != beforePlans {
-		t.Fatalf("CreatePlan() with duplicate project id left %d plan row(s) behind, want %d", got, beforePlans)
+		t.Fatalf("CreatePlan() with duplicate repository id left %d plan row(s) behind, want %d", got, beforePlans)
 	}
 	if got := countPlanRepositories(t, pool); got != beforeMembers {
-		t.Fatalf("CreatePlan() with duplicate project id left %d plan_repositories row(s) behind, want %d", got, beforeMembers)
+		t.Fatalf("CreatePlan() with duplicate repository id left %d plan_repositories row(s) behind, want %d", got, beforeMembers)
 	}
 }
 
-// TestCreatePlan_UnknownProjectID confirms an unknown project id is
+// TestCreatePlan_UnknownRepositoryID confirms an unknown repository id is
 // rejected (foreign key violation) and the whole transaction is rolled
 // back, leaving no plan or plan_repositories rows behind -- including for
-// any valid project ids listed alongside the unknown one.
-func TestCreatePlan_UnknownProjectID(t *testing.T) {
+// any valid repository ids listed alongside the unknown one.
+func TestCreatePlan_UnknownRepositoryID(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 
@@ -69,21 +69,21 @@ func TestCreatePlan_UnknownProjectID(t *testing.T) {
 		RemoteURL: strPtr("https://github.com/foo/plan-unknown-project-valid.git"),
 	})
 
-	const neverIssuedProjectID int64 = 1 << 40
+	const neverIssuedRepositoryID int64 = 1 << 40
 
 	beforePlans := countPlans(t, pool)
 	beforeMembers := countPlanRepositories(t, pool)
 
-	_, err := CreatePlan(ctx, pool, []int64{repo.ID, neverIssuedProjectID}, "unknown", "summary", "content")
+	_, err := CreatePlan(ctx, pool, []int64{repo.ID, neverIssuedRepositoryID}, "unknown", "summary", "content")
 	if err == nil {
-		t.Fatal("CreatePlan() error = nil, want error for unknown project id")
+		t.Fatal("CreatePlan() error = nil, want error for unknown repository id")
 	}
 
 	if got := countPlans(t, pool); got != beforePlans {
-		t.Fatalf("CreatePlan() with unknown project id left %d plan row(s) behind, want %d", got, beforePlans)
+		t.Fatalf("CreatePlan() with unknown repository id left %d plan row(s) behind, want %d", got, beforePlans)
 	}
 	if got := countPlanRepositories(t, pool); got != beforeMembers {
-		t.Fatalf("CreatePlan() with unknown project id left %d plan_repositories row(s) behind, want %d", got, beforeMembers)
+		t.Fatalf("CreatePlan() with unknown repository id left %d plan_repositories row(s) behind, want %d", got, beforeMembers)
 	}
 }
 
@@ -143,7 +143,7 @@ func TestCreateAndGetPlan_MultipleRepositories(t *testing.T) {
 }
 
 // assertOrderedRepositories checks that repos is exactly the given
-// project ids, in order, with position 0 as the primary (first) entry.
+// repository ids, in order, with position 0 as the primary (first) entry.
 func assertOrderedRepositories(t *testing.T, label string, repos []PlanRepository, wantOrder ...int64) {
 	t.Helper()
 	if len(repos) != len(wantOrder) {
@@ -153,8 +153,8 @@ func assertOrderedRepositories(t *testing.T, label string, repos []PlanRepositor
 		if repos[i].Position != i {
 			t.Fatalf("%s Repositories[%d].Position = %d, want %d", label, i, repos[i].Position, i)
 		}
-		if repos[i].ProjectID != want {
-			t.Fatalf("%s Repositories[%d].ProjectID = %d, want %d", label, i, repos[i].ProjectID, want)
+		if repos[i].RepositoryID != want {
+			t.Fatalf("%s Repositories[%d].RepositoryID = %d, want %d", label, i, repos[i].RepositoryID, want)
 		}
 		if repos[i].Repository.ID != want {
 			t.Fatalf("%s Repositories[%d].Repository.ID = %d, want %d", label, i, repos[i].Repository.ID, want)
@@ -268,8 +268,8 @@ func TestUpdatePlan_RepositoryIDs_Unknown(t *testing.T) {
 		}
 	})
 
-	const neverIssuedProjectID int64 = 1 << 40
-	badIDs := []int64{validReplacement.ID, neverIssuedProjectID}
+	const neverIssuedRepositoryID int64 = 1 << 40
+	badIDs := []int64{validReplacement.ID, neverIssuedRepositoryID}
 	if _, err := UpdatePlan(ctx, pool, plan.ID, UpdatePlanParams{RepositoryIDs: &badIDs}); err == nil {
 		t.Fatal("UpdatePlan() error = nil, want error for unknown repository id")
 	}

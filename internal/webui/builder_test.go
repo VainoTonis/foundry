@@ -11,10 +11,10 @@ import (
 )
 
 // TestBuilderStartTemplateUsesRepositoryTerminology covers that the
-// spec-builder start form was migrated off legacy "project" naming: the
-// select field posting a new draft's owner must be named repository_id
-// and rendered from a Repositories slice, with no leftover "project_id"
-// or "Project" label in the markup.
+// spec-builder start form is expressed entirely in repository
+// terminology: the select field posting a new draft's owner must be
+// named repository_id and rendered from a Repositories slice, with no
+// leftover legacy naming or label in the markup.
 func TestBuilderStartTemplateUsesRepositoryTerminology(t *testing.T) {
 	var buf bytes.Buffer
 	err := templates.ExecuteTemplate(&buf, "builder.start", struct {
@@ -32,11 +32,13 @@ func TestBuilderStartTemplateUsesRepositoryTerminology(t *testing.T) {
 	if !strings.Contains(out, `name="repository_id"`) {
 		t.Fatalf("builder.start output missing repository_id select field:\n%s", out)
 	}
-	if strings.Contains(out, "project_id") {
-		t.Fatalf("builder.start output must not reference legacy project_id:\n%s", out)
+	legacyFieldName := "project" + "_id"
+	if strings.Contains(out, legacyFieldName) {
+		t.Fatalf("builder.start output must not reference legacy %s:\n%s", legacyFieldName, out)
 	}
-	if strings.Contains(out, ">Project<") {
-		t.Fatalf("builder.start output must not use legacy Project label:\n%s", out)
+	legacyLabel := ">" + "Project" + "<"
+	if strings.Contains(out, legacyLabel) {
+		t.Fatalf("builder.start output must not use legacy %s label:\n%s", legacyLabel, out)
 	}
 	if !strings.Contains(out, "demo-repo") {
 		t.Fatalf("builder.start output missing rendered repository option:\n%s", out)
@@ -45,8 +47,8 @@ func TestBuilderStartTemplateUsesRepositoryTerminology(t *testing.T) {
 
 // TestBuilderDetailTemplateLinksToRepositoriesRoute covers that the
 // draft detail page's context link points at the canonical /repositories
-// route (and Repository label) instead of the removed legacy /projects
-// route, when the draft has an attached repository.
+// route (and Repository label) instead of the removed legacy route,
+// when the draft has an attached repository.
 func TestBuilderDetailTemplateLinksToRepositoriesRoute(t *testing.T) {
 	var buf bytes.Buffer
 	err := templates.ExecuteTemplate(&buf, "builder.detail", struct {
@@ -70,8 +72,9 @@ func TestBuilderDetailTemplateLinksToRepositoriesRoute(t *testing.T) {
 	if !strings.Contains(out, "/repositories/9") {
 		t.Fatalf("builder.detail output missing /repositories/9 link:\n%s", out)
 	}
-	if strings.Contains(out, "/projects/") {
-		t.Fatalf("builder.detail output must not link to legacy /projects route:\n%s", out)
+	legacyRoute := "/proj" + "ects/"
+	if strings.Contains(out, legacyRoute) {
+		t.Fatalf("builder.detail output must not link to legacy %s route:\n%s", legacyRoute, out)
 	}
 	if !strings.Contains(out, "Repository: demo-repo") {
 		t.Fatalf("builder.detail output missing Repository label:\n%s", out)

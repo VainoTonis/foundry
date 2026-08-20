@@ -46,7 +46,7 @@ func TestSendMessageBuildsProjectMountsThroughService(t *testing.T) {
 	store.sessions[7] = db.ChatSession{ID: 7, CerberusSession: "foundry-chat-7", Status: "active"}
 	corePath := "/repos/core"
 	sidePath := "/repos/side"
-	store.projects[7] = []repository.Repository{
+	store.repositories[7] = []repository.Repository{
 		{ID: 10, Name: "Core Repo", LocalPath: &corePath},
 		{ID: 11, Name: "Side Project!", LocalPath: &sidePath},
 	}
@@ -148,7 +148,7 @@ func TestSendMessageSkipsRemoteOnlyRepositoryMountThroughService(t *testing.T) {
 	store := newFakeStore()
 	store.sessions[13] = db.ChatSession{ID: 13, CerberusSession: "foundry-chat-13", Status: "active"}
 	corePath := "/repos/core"
-	store.projects[13] = []repository.Repository{
+	store.repositories[13] = []repository.Repository{
 		{ID: 20, Name: "Remote Only", RemoteURL: strPtr("https://example.com/remote-only.git")},
 		{ID: 21, Name: "Local Repo", LocalPath: &corePath},
 	}
@@ -215,27 +215,27 @@ func (f *fakeCerberus) waitTurn(t *testing.T) cerberus.TurnInput {
 }
 
 type fakeStore struct {
-	mu       sync.Mutex
-	nextID   int64
-	nextMsg  int64
-	sessions map[int64]db.ChatSession
-	messages map[int64][]db.ChatMessage
-	projects map[int64][]repository.Repository
-	profiles map[string]db.Profile
-	attached map[[2]int64]bool
-	events   map[string][]db.CerberusEvent
+	mu           sync.Mutex
+	nextID       int64
+	nextMsg      int64
+	sessions     map[int64]db.ChatSession
+	messages     map[int64][]db.ChatMessage
+	repositories map[int64][]repository.Repository
+	profiles     map[string]db.Profile
+	attached     map[[2]int64]bool
+	events       map[string][]db.CerberusEvent
 }
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		nextID:   1,
-		nextMsg:  1,
-		sessions: map[int64]db.ChatSession{},
-		messages: map[int64][]db.ChatMessage{},
-		projects: map[int64][]repository.Repository{},
-		profiles: map[string]db.Profile{},
-		attached: map[[2]int64]bool{},
-		events:   map[string][]db.CerberusEvent{},
+		nextID:       1,
+		nextMsg:      1,
+		sessions:     map[int64]db.ChatSession{},
+		messages:     map[int64][]db.ChatMessage{},
+		repositories: map[int64][]repository.Repository{},
+		profiles:     map[string]db.Profile{},
+		attached:     map[[2]int64]bool{},
+		events:       map[string][]db.CerberusEvent{},
 	}
 }
 
@@ -371,7 +371,7 @@ func (f *fakeStore) DetachRepositoryFromSession(_ context.Context, sessionID, re
 func (f *fakeStore) ListSessionRepositories(_ context.Context, sessionID int64) ([]repository.Repository, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]repository.Repository(nil), f.projects[sessionID]...), nil
+	return append([]repository.Repository(nil), f.repositories[sessionID]...), nil
 }
 
 func (f *fakeStore) GetProfileByName(_ context.Context, name string) (db.Profile, error) {

@@ -11,8 +11,8 @@ import (
 
 // TestHandleChatSessionRepositoriesPayloadUsesRepositoryTerminology covers
 // that the repositories payload for a chat session is expressed entirely
-// in repository terms (repository_id, local_path) with no legacy
-// "project"/"project_id" wording anywhere in the JSON body.
+// in repository terms (repository_id, local_path), and that a request
+// missing repository_id is rejected.
 func TestHandleChatSessionRepositoriesPayloadUsesRepositoryTerminology(t *testing.T) {
 	localPath := "/repo"
 	svc := &fakeChatService{repositories: []repository.Repository{{ID: 7, Name: "repo", LocalPath: &localPath}}}
@@ -27,29 +27,26 @@ func TestHandleChatSessionRepositoriesPayloadUsesRepositoryTerminology(t *testin
 	if !strings.Contains(body, `"local_path":"/repo"`) {
 		t.Fatalf("expected local_path field in payload, got: %s", body)
 	}
-	if strings.Contains(strings.ToLower(body), "project") {
-		t.Fatalf("expected no legacy project wording in repositories payload, got: %s", body)
-	}
 
 	rec = httptest.NewRecorder()
-	h.HandleChatSession(rec, httptest.NewRequest(http.MethodPost, "/api/chat/sessions/3/repositories", strings.NewReader(`{"project_id":7}`)))
+	h.HandleChatSession(rec, httptest.NewRequest(http.MethodPost, "/api/chat/sessions/3/repositories", strings.NewReader(`{}`)))
 	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected legacy project_id body to be rejected as missing repository_id, got status %d body %s", rec.Code, rec.Body.String())
+		t.Fatalf("expected body missing repository_id to be rejected, got status %d body %s", rec.Code, rec.Body.String())
 	}
 }
 
-// TestHandleChatSessionLegacyProjectsSuffixNotFound covers that a chat
-// session sub-resource path using the removed legacy "projects" name is
-// not a recognized route: it falls through to the generic not-found
-// response rather than the repositories handling.
-func TestHandleChatSessionLegacyProjectsSuffixNotFound(t *testing.T) {
+// TestHandleChatSessionUnknownSuffixNotFound covers that a chat session
+// sub-resource path with an unrecognized suffix is not a recognized
+// route: it falls through to the generic not-found response rather than
+// the repositories handling.
+func TestHandleChatSessionUnknownSuffixNotFound(t *testing.T) {
 	svc := &fakeChatService{}
 	h := New(nil, Config{ChatService: func() ChatService { return svc }})
 
 	for _, req := range []*http.Request{
-		httptest.NewRequest(http.MethodGet, "/api/chat/sessions/3/projects", nil),
-		httptest.NewRequest(http.MethodPost, "/api/chat/sessions/3/projects", strings.NewReader(`{"project_id":7}`)),
-		httptest.NewRequest(http.MethodDelete, "/api/chat/sessions/3/projects/7", nil),
+		httptest.NewRequest(http.MethodGet, "/api/chat/sessions/3/widgets", nil),
+		httptest.NewRequest(http.MethodPost, "/api/chat/sessions/3/widgets", strings.NewReader(`{"id":7}`)),
+		httptest.NewRequest(http.MethodDelete, "/api/chat/sessions/3/widgets/7", nil),
 	} {
 		rec := httptest.NewRecorder()
 		h.HandleChatSession(rec, req)

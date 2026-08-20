@@ -19,7 +19,7 @@ var plansCmd = &cobra.Command{
 var createCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a new plan with steps",
-	Long:  "Create a new plan. Reads JSON from stdin with repository_ids (or legacy project_id), title, summary, content, and optional steps array.",
+	Long:  "Create a new plan. Reads JSON from stdin with repository_ids, title, summary, content, and optional steps array.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client := apiclient.NewClient(apiURL)
 
@@ -32,7 +32,6 @@ var createCmd = &cobra.Command{
 		// Parse the input JSON - steps can be strings or objects
 		var input struct {
 			RepositoryIDs []int64       `json:"repository_ids"`
-			ProjectID     *int64        `json:"project_id"`
 			Title         string        `json:"title"`
 			Summary       string        `json:"summary"`
 			Content       string        `json:"content"`
@@ -44,9 +43,6 @@ var createCmd = &cobra.Command{
 		}
 
 		repositoryIDs := input.RepositoryIDs
-		if len(repositoryIDs) == 0 && input.ProjectID != nil {
-			repositoryIDs = []int64{*input.ProjectID}
-		}
 
 		// Create the plan first
 		planReq := struct {

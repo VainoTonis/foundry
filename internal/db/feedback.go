@@ -33,13 +33,13 @@ func scanFeedback(row interface {
 }
 
 // loadFeedbackRepositories returns the (unordered) repository membership
-// for a single feedback row, resolving each project_id to its Repository
+// for a single feedback row, resolving each repository_id to its Repository
 // fields in the same query (no N+1 per repository).
 func loadFeedbackRepositories(ctx context.Context, q querier, feedbackID int64) ([]FeedbackRepository, error) {
 	rows, err := q.Query(ctx,
-		`SELECT fr.project_id, proj.name, proj.repo_path, proj.remote_url, proj.created_at
-		 FROM feedback_repositories fr JOIN projects proj ON proj.id = fr.project_id
-		 WHERE fr.feedback_id = $1 ORDER BY fr.project_id`, feedbackID)
+		`SELECT fr.repository_id, proj.name, proj.local_path, proj.remote_url, proj.created_at
+		 FROM feedback_repositories fr JOIN repositories proj ON proj.id = fr.repository_id
+		 WHERE fr.feedback_id = $1 ORDER BY fr.repository_id`, feedbackID)
 	if err != nil {
 		return nil, err
 	}
@@ -47,10 +47,10 @@ func loadFeedbackRepositories(ctx context.Context, q querier, feedbackID int64) 
 	var out []FeedbackRepository
 	for rows.Next() {
 		var fr FeedbackRepository
-		if err := rows.Scan(&fr.ProjectID, &fr.Repository.Name, &fr.Repository.LocalPath, &fr.Repository.RemoteURL, &fr.Repository.CreatedAt); err != nil {
+		if err := rows.Scan(&fr.RepositoryID, &fr.Repository.Name, &fr.Repository.LocalPath, &fr.Repository.RemoteURL, &fr.Repository.CreatedAt); err != nil {
 			return nil, err
 		}
-		fr.Repository.ID = fr.ProjectID
+		fr.Repository.ID = fr.RepositoryID
 		out = append(out, fr)
 	}
 	return out, rows.Err()
@@ -66,9 +66,9 @@ func loadFeedbackRepositoriesForFeedbacks(ctx context.Context, q querier, feedba
 		return out, nil
 	}
 	rows, err := q.Query(ctx,
-		`SELECT fr.feedback_id, fr.project_id, proj.name, proj.repo_path, proj.remote_url, proj.created_at
-		 FROM feedback_repositories fr JOIN projects proj ON proj.id = fr.project_id
-		 WHERE fr.feedback_id = ANY($1) ORDER BY fr.feedback_id, fr.project_id`, feedbackIDs)
+		`SELECT fr.feedback_id, fr.repository_id, proj.name, proj.local_path, proj.remote_url, proj.created_at
+		 FROM feedback_repositories fr JOIN repositories proj ON proj.id = fr.repository_id
+		 WHERE fr.feedback_id = ANY($1) ORDER BY fr.feedback_id, fr.repository_id`, feedbackIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -76,10 +76,10 @@ func loadFeedbackRepositoriesForFeedbacks(ctx context.Context, q querier, feedba
 	for rows.Next() {
 		var feedbackID int64
 		var fr FeedbackRepository
-		if err := rows.Scan(&feedbackID, &fr.ProjectID, &fr.Repository.Name, &fr.Repository.LocalPath, &fr.Repository.RemoteURL, &fr.Repository.CreatedAt); err != nil {
+		if err := rows.Scan(&feedbackID, &fr.RepositoryID, &fr.Repository.Name, &fr.Repository.LocalPath, &fr.Repository.RemoteURL, &fr.Repository.CreatedAt); err != nil {
 			return nil, err
 		}
-		fr.Repository.ID = fr.ProjectID
+		fr.Repository.ID = fr.RepositoryID
 		out[feedbackID] = append(out[feedbackID], fr)
 	}
 	return out, rows.Err()
@@ -97,25 +97,25 @@ func insertFeedbackRepositories(ctx context.Context, tx pgx.Tx, feedbackID int64
 	seen := make(map[int64]bool, len(repositoryIDs))
 	for _, id := range repositoryIDs {
 		if seen[id] {
-			return fmt.Errorf("create feedback: project %d listed more than once", id)
+			return fmt.Errorf("create feedback: repository %d listed more than once", id)
 		}
 		seen[id] = true
 	}
-	for _, projectID := range repositoryIDs {
+	for _, repositoryID := range repositoryIDs {
 		if _, err := tx.Exec(ctx,
-			`INSERT INTO feedback_repositories (feedback_id, project_id) VALUES ($1, $2)`,
-			feedbackID, projectID,
+			`INSERT INTO feedback_repositories (feedback_id, repository_id) VALUES ($1, $2)`,
+			feedbackID, repositoryID,
 		); err != nil {
 			var pgErr *pgconn.PgError
 			if errors.As(err, &pgErr) {
 				switch pgErr.Code {
 				case "23503": // foreign_key_violation
-					return fmt.Errorf("create feedback: project %d does not exist: %w", projectID, ErrNotFound)
+					return fmt.Errorf("create feedback: repository %d does not exist: %w", repositoryID, ErrNotFound)
 				case "23505": // unique_violation
-					return fmt.Errorf("create feedback: project %d listed more than once", projectID)
+					return fmt.Errorf("create feedback: repository %d listed more than once", repositoryID)
 				}
 			}
-			return fmt.Errorf("create feedback: insert feedback_repositories for project %d: %w", projectID, err)
+			return fmt.Errorf("create feedback: insert feedback_repositories for repository %d: %w", repositoryID, err)
 		}
 	}
 	return nil
@@ -126,7 +126,7 @@ func insertFeedbackRepositories(ctx context.Context, tx pgx.Tx, feedbackID int64
 // its feedback_repositories rows, all in a single transaction. It returns
 // an error and leaves no rows persisted if repositoryIDs is empty,
 // contains a duplicate id, or contains an id that does not exist in
-// projects.
+// repositories.
 func CreateFeedback(ctx context.Context, pool *pgxpool.Pool, body, model, sessionID string, repositoryIDs []int64) (Feedback, error) {
 	if len(repositoryIDs) == 0 {
 		return Feedback{}, fmt.Errorf("create feedback: at least one repository id is required")
@@ -183,7 +183,7 @@ type StructuredFeedbackInput struct {
 // ids, and its feedback_repositories rows, all in a single transaction.
 // It returns an error and leaves no rows persisted if repositoryIDs is
 // empty, contains a duplicate id, or contains an id that does not exist
-// in projects.
+// in repositories.
 func CreateStructuredFeedback(ctx context.Context, pool *pgxpool.Pool, in StructuredFeedbackInput, repositoryIDs []int64) (Feedback, error) {
 	if len(repositoryIDs) == 0 {
 		return Feedback{}, fmt.Errorf("create feedback: at least one repository id is required")
@@ -281,7 +281,7 @@ func ListFeedbackFiltered(ctx context.Context, pool *pgxpool.Pool, dimension, se
 	}
 	if repositoryID != 0 {
 		args = append(args, repositoryID)
-		query += fmt.Sprintf(" AND EXISTS (SELECT 1 FROM feedback_repositories fr WHERE fr.feedback_id = feedback.id AND fr.project_id = $%d)", len(args))
+		query += fmt.Sprintf(" AND EXISTS (SELECT 1 FROM feedback_repositories fr WHERE fr.feedback_id = feedback.id AND fr.repository_id = $%d)", len(args))
 	}
 	query += " ORDER BY id DESC"
 

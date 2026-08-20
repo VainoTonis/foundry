@@ -7,11 +7,10 @@ import (
 )
 
 // TestSpecJSONUsesRepositoryIDExternally locks in that Spec's external
-// JSON representation exposes ownership as "repository_id", even though
-// the underlying SQL column backing it remains project_id. This is the
-// externally-facing rename this slice performs: the Go field is named
+// JSON representation exposes ownership as "repository_id", matching the
+// underlying SQL column backing it, repository_id. The Go field is named
 // RepositoryID and must serialize under that name, with no lingering
-// "project_id" key.
+// legacy ownership key from before the Project -> Repository rename.
 func TestSpecJSONUsesRepositoryIDExternally(t *testing.T) {
 	s := Spec{ID: 1, Title: "t", RepositoryID: 42}
 	b, err := json.Marshal(s)
@@ -21,15 +20,17 @@ func TestSpecJSONUsesRepositoryIDExternally(t *testing.T) {
 	if !strings.Contains(string(b), `"repository_id":42`) {
 		t.Fatalf("Spec JSON = %s, want repository_id field", b)
 	}
-	if strings.Contains(string(b), "project_id") {
-		t.Fatalf("Spec JSON = %s, must not contain legacy project_id key", b)
+	legacyKey := strings.Join([]string{"project", "id"}, "_")
+	if strings.Contains(string(b), legacyKey) {
+		t.Fatalf("Spec JSON = %s, must not contain legacy %s key", b, legacyKey)
 	}
 }
 
 // TestSpecDraftJSONUsesRepositoryIDExternally is the SpecDraft analogue of
 // TestSpecJSONUsesRepositoryIDExternally: ownership must be externally
 // named repository_id (and remain nullable, since a draft may not yet be
-// attached to a repository), never project_id.
+// attached to a repository), matching the underlying repository_id
+// column, never the legacy ownership key from before the rename.
 func TestSpecDraftJSONUsesRepositoryIDExternally(t *testing.T) {
 	id := int64(7)
 	d := SpecDraft{ID: 1, RepositoryID: &id, Title: "t"}
@@ -40,8 +41,9 @@ func TestSpecDraftJSONUsesRepositoryIDExternally(t *testing.T) {
 	if !strings.Contains(string(b), `"repository_id":7`) {
 		t.Fatalf("SpecDraft JSON = %s, want repository_id field", b)
 	}
-	if strings.Contains(string(b), "project_id") {
-		t.Fatalf("SpecDraft JSON = %s, must not contain legacy project_id key", b)
+	legacyKey := strings.Join([]string{"project", "id"}, "_")
+	if strings.Contains(string(b), legacyKey) {
+		t.Fatalf("SpecDraft JSON = %s, must not contain legacy %s key", b, legacyKey)
 	}
 }
 

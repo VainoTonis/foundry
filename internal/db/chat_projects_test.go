@@ -11,7 +11,7 @@ func TestChatSessionRepositoriesCRUD_Postgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 
-	sess, err := CreateChatSession(ctx, pool, "chat-projects-test-session", "")
+	sess, err := CreateChatSession(ctx, pool, "chat-repositories-test-session", "")
 	if err != nil {
 		t.Fatalf("CreateChatSession() error = %v", err)
 	}

@@ -52,7 +52,7 @@ type UpdateRepositoryParams struct {
 	RemoteURL LocatorField
 }
 
-const repositorySelectColumns = "id, name, repo_path AS local_path, remote_url, created_at"
+const repositorySelectColumns = "id, name, local_path, remote_url, created_at"
 
 func scanRepository(row pgx.Row) (repository.Repository, error) {
 	var r repository.Repository
@@ -170,7 +170,7 @@ func applyRepositoryUpdate(current repository.Repository, p UpdateRepositoryPara
 }
 
 // CreateRepository canonicalizes and validates a canonical Repository, then
-// inserts it, writing its local path (if any) to the physical repo_path
+// inserts it, writing its local path (if any) to the physical local_path
 // column.
 func CreateRepository(ctx context.Context, pool *pgxpool.Pool, r repository.Repository) (repository.Repository, error) {
 	r, err := canonicalizeLocators(r)
@@ -181,7 +181,7 @@ func CreateRepository(ctx context.Context, pool *pgxpool.Pool, r repository.Repo
 		return repository.Repository{}, err
 	}
 	row := pool.QueryRow(ctx,
-		`INSERT INTO projects (name, repo_path, remote_url) VALUES ($1, $2, $3)
+		`INSERT INTO repositories (name, local_path, remote_url) VALUES ($1, $2, $3)
 		 RETURNING `+repositorySelectColumns,
 		r.Name, r.LocalPath, r.RemoteURL,
 	)
@@ -190,7 +190,7 @@ func CreateRepository(ctx context.Context, pool *pgxpool.Pool, r repository.Repo
 
 // ListRepositories returns all canonical repositories ordered by id.
 func ListRepositories(ctx context.Context, pool *pgxpool.Pool) ([]repository.Repository, error) {
-	rows, err := pool.Query(ctx, `SELECT `+repositorySelectColumns+` FROM projects ORDER BY id`)
+	rows, err := pool.Query(ctx, `SELECT `+repositorySelectColumns+` FROM repositories ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +209,7 @@ func ListRepositories(ctx context.Context, pool *pgxpool.Pool) ([]repository.Rep
 // GetRepository fetches a canonical Repository by id, returning ErrNotFound
 // if no row matches.
 func GetRepository(ctx context.Context, pool *pgxpool.Pool, id int64) (repository.Repository, error) {
-	row := pool.QueryRow(ctx, `SELECT `+repositorySelectColumns+` FROM projects WHERE id = $1`, id)
+	row := pool.QueryRow(ctx, `SELECT `+repositorySelectColumns+` FROM repositories WHERE id = $1`, id)
 	r, err := scanRepository(row)
 	if err == pgx.ErrNoRows {
 		return r, ErrNotFound
@@ -247,7 +247,7 @@ func UpdateRepository(ctx context.Context, pool *pgxpool.Pool, id int64, p Updat
 	}
 
 	row := pool.QueryRow(ctx,
-		`UPDATE projects SET name = $1, repo_path = $2, remote_url = $3
+		`UPDATE repositories SET name = $1, local_path = $2, remote_url = $3
 		 WHERE id = $4
 		 RETURNING `+repositorySelectColumns,
 		updated.Name, updated.LocalPath, updated.RemoteURL, id,
@@ -324,7 +324,7 @@ func RefreshRepositories(ctx context.Context, pool *pgxpool.Pool) ([]RefreshResu
 // DeleteRepository deletes a canonical Repository by id, returning
 // ErrNotFound if no row matches.
 func DeleteRepository(ctx context.Context, pool *pgxpool.Pool, id int64) error {
-	tag, err := pool.Exec(ctx, `DELETE FROM projects WHERE id = $1`, id)
+	tag, err := pool.Exec(ctx, `DELETE FROM repositories WHERE id = $1`, id)
 	if err != nil {
 		return err
 	}

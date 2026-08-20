@@ -23,16 +23,16 @@ type UpdateSpecParams struct {
 func CreateSpec(ctx context.Context, pool *pgxpool.Pool, repositoryID int64, title, content string, tags []byte) (Spec, error) {
 	var s Spec
 	err := pool.QueryRow(ctx,
-		`INSERT INTO specs (project_id, title, content, tags)
+		`INSERT INTO specs (repository_id, title, content, tags)
 		 VALUES ($1, $2, $3, $4)
-		 RETURNING id, title, content, track, status, project_id, tags, created_at, updated_at`,
+		 RETURNING id, title, content, track, status, repository_id, tags, created_at, updated_at`,
 		repositoryID, title, content, tags,
 	).Scan(&s.ID, &s.Title, &s.Content, &s.Track, &s.Status, &s.RepositoryID, &s.Tags, &s.CreatedAt, &s.UpdatedAt)
 	return s, err
 }
 
 func ListSpecs(ctx context.Context, pool *pgxpool.Pool, f ListSpecsFilter) ([]Spec, error) {
-	q := `SELECT id, title, content, track, status, project_id, tags, created_at, updated_at FROM specs WHERE 1=1`
+	q := `SELECT id, title, content, track, status, repository_id, tags, created_at, updated_at FROM specs WHERE 1=1`
 	args := []any{}
 	n := 1
 	if f.Status != "" {
@@ -41,7 +41,7 @@ func ListSpecs(ctx context.Context, pool *pgxpool.Pool, f ListSpecsFilter) ([]Sp
 		n++
 	}
 	if f.RepositoryID != 0 {
-		q += ` AND project_id = $` + itoa(n)
+		q += ` AND repository_id = $` + itoa(n)
 		args = append(args, f.RepositoryID)
 		n++
 	}
@@ -65,7 +65,7 @@ func ListSpecs(ctx context.Context, pool *pgxpool.Pool, f ListSpecsFilter) ([]Sp
 func GetSpec(ctx context.Context, pool *pgxpool.Pool, id int64) (Spec, error) {
 	var s Spec
 	err := pool.QueryRow(ctx,
-		`SELECT id, title, content, track, status, project_id, tags, created_at, updated_at FROM specs WHERE id = $1`, id,
+		`SELECT id, title, content, track, status, repository_id, tags, created_at, updated_at FROM specs WHERE id = $1`, id,
 	).Scan(&s.ID, &s.Title, &s.Content, &s.Track, &s.Status, &s.RepositoryID, &s.Tags, &s.CreatedAt, &s.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		return s, ErrNotFound
@@ -104,7 +104,7 @@ func UpdateSpec(ctx context.Context, pool *pgxpool.Pool, id int64, p UpdateSpecP
 	}
 	args = append(args, id)
 	q := `UPDATE specs SET ` + joinComma(set) + ` WHERE id = $` + itoa(n) +
-		` RETURNING id, title, content, track, status, project_id, tags, created_at, updated_at`
+		` RETURNING id, title, content, track, status, repository_id, tags, created_at, updated_at`
 	var s Spec
 	err := pool.QueryRow(ctx, q, args...).Scan(
 		&s.ID, &s.Title, &s.Content, &s.Track, &s.Status, &s.RepositoryID, &s.Tags, &s.CreatedAt, &s.UpdatedAt,

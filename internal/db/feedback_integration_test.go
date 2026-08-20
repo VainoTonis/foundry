@@ -32,11 +32,11 @@ func countFeedbackByBody(t *testing.T, pool *pgxpool.Pool, body string) int {
 	return n
 }
 
-func countFeedbackRepositoriesForProject(t *testing.T, pool *pgxpool.Pool, projectID int64) int {
+func countFeedbackRepositoriesForRepository(t *testing.T, pool *pgxpool.Pool, repositoryID int64) int {
 	t.Helper()
 	var n int
-	if err := pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM feedback_repositories WHERE project_id = $1`, projectID).Scan(&n); err != nil {
-		t.Fatalf("count feedback_repositories for project %d: %v", projectID, err)
+	if err := pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM feedback_repositories WHERE repository_id = $1`, repositoryID).Scan(&n); err != nil {
+		t.Fatalf("count feedback_repositories for repository %d: %v", repositoryID, err)
 	}
 	return n
 }
@@ -80,17 +80,17 @@ func TestCreateFeedback_RepositoryIDs_Postgres(t *testing.T) {
 		if got := countFeedbackByBody(t, pool, body); got != 0 {
 			t.Fatalf("feedback with body %q after failed CreateFeedback() = %d, want 0", body, got)
 		}
-		if got := countFeedbackRepositoriesForProject(t, pool, repo.ID); got != 0 {
-			t.Fatalf("feedback_repositories rows for project %d = %d, want 0", repo.ID, got)
+		if got := countFeedbackRepositoriesForRepository(t, pool, repo.ID); got != 0 {
+			t.Fatalf("feedback_repositories rows for repository %d = %d, want 0", repo.ID, got)
 		}
 	})
 
 	t.Run("unknown repository id errors and rolls back the whole transaction", func(t *testing.T) {
 		repo := createTestFeedbackRepo(t, pool, "unknown-sibling")
-		const neverIssuedProjectID int64 = 1 << 40
+		const neverIssuedRepositoryID int64 = 1 << 40
 
 		body := "feedback-unknown-repo-id"
-		_, err := CreateFeedback(ctx, pool, body, "model", "session", []int64{repo.ID, neverIssuedProjectID})
+		_, err := CreateFeedback(ctx, pool, body, "model", "session", []int64{repo.ID, neverIssuedRepositoryID})
 		if err == nil {
 			t.Fatal("CreateFeedback() error = nil, want an error for an unknown repository id")
 		}
@@ -100,8 +100,8 @@ func TestCreateFeedback_RepositoryIDs_Postgres(t *testing.T) {
 		if got := countFeedbackByBody(t, pool, body); got != 0 {
 			t.Fatalf("feedback with body %q after failed CreateFeedback() = %d, want 0", body, got)
 		}
-		if got := countFeedbackRepositoriesForProject(t, pool, repo.ID); got != 0 {
-			t.Fatalf("feedback_repositories rows for project %d = %d, want 0 after rollback", repo.ID, got)
+		if got := countFeedbackRepositoriesForRepository(t, pool, repo.ID); got != 0 {
+			t.Fatalf("feedback_repositories rows for repository %d = %d, want 0 after rollback", repo.ID, got)
 		}
 	})
 
@@ -177,17 +177,17 @@ func TestCreateStructuredFeedback_RepositoryIDs_Postgres(t *testing.T) {
 		if got := countFeedbackByBody(t, pool, body); got != 0 {
 			t.Fatalf("feedback with body %q after failed CreateStructuredFeedback() = %d, want 0", body, got)
 		}
-		if got := countFeedbackRepositoriesForProject(t, pool, repo.ID); got != 0 {
-			t.Fatalf("feedback_repositories rows for project %d = %d, want 0", repo.ID, got)
+		if got := countFeedbackRepositoriesForRepository(t, pool, repo.ID); got != 0 {
+			t.Fatalf("feedback_repositories rows for repository %d = %d, want 0", repo.ID, got)
 		}
 	})
 
 	t.Run("unknown repository id errors and rolls back the whole transaction", func(t *testing.T) {
 		repo := createTestFeedbackRepo(t, pool, "structured-unknown-sibling")
-		const neverIssuedProjectID int64 = 1 << 40
+		const neverIssuedRepositoryID int64 = 1 << 40
 
 		body := "structured-feedback-unknown-repo-id"
-		_, err := CreateStructuredFeedback(ctx, pool, baseInput(body), []int64{repo.ID, neverIssuedProjectID})
+		_, err := CreateStructuredFeedback(ctx, pool, baseInput(body), []int64{repo.ID, neverIssuedRepositoryID})
 		if err == nil {
 			t.Fatal("CreateStructuredFeedback() error = nil, want an error for an unknown repository id")
 		}
@@ -197,8 +197,8 @@ func TestCreateStructuredFeedback_RepositoryIDs_Postgres(t *testing.T) {
 		if got := countFeedbackByBody(t, pool, body); got != 0 {
 			t.Fatalf("feedback with body %q after failed CreateStructuredFeedback() = %d, want 0", body, got)
 		}
-		if got := countFeedbackRepositoriesForProject(t, pool, repo.ID); got != 0 {
-			t.Fatalf("feedback_repositories rows for project %d = %d, want 0 after rollback", repo.ID, got)
+		if got := countFeedbackRepositoriesForRepository(t, pool, repo.ID); got != 0 {
+			t.Fatalf("feedback_repositories rows for repository %d = %d, want 0 after rollback", repo.ID, got)
 		}
 	})
 
@@ -220,7 +220,7 @@ func TestCreateStructuredFeedback_RepositoryIDs_Postgres(t *testing.T) {
 	})
 }
 
-// assertFeedbackRepos checks that repos is exactly the given project ids
+// assertFeedbackRepos checks that repos is exactly the given repository ids
 // (order-independent, since feedback repository membership is unordered).
 func assertFeedbackRepos(t *testing.T, label string, repos []FeedbackRepository, want ...int64) {
 	t.Helper()
@@ -232,11 +232,11 @@ func assertFeedbackRepos(t *testing.T, label string, repos []FeedbackRepository,
 		wantSet[id] = true
 	}
 	for _, r := range repos {
-		if !wantSet[r.ProjectID] {
-			t.Fatalf("%s Repositories contains unexpected project id %d", label, r.ProjectID)
+		if !wantSet[r.RepositoryID] {
+			t.Fatalf("%s Repositories contains unexpected repository id %d", label, r.RepositoryID)
 		}
-		if r.Repository.ID != r.ProjectID {
-			t.Fatalf("%s Repository.ID = %d, want %d", label, r.Repository.ID, r.ProjectID)
+		if r.Repository.ID != r.RepositoryID {
+			t.Fatalf("%s Repository.ID = %d, want %d", label, r.Repository.ID, r.RepositoryID)
 		}
 	}
 }

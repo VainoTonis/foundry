@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/tonis2/foundry/internal/db"
+	"github.com/tonis2/foundry/internal/repository"
 )
 
 // ---- export ----
@@ -27,10 +28,10 @@ func (h *Handler) HandleExport(w http.ResponseWriter, r *http.Request) {
 		Workflows []exportWorkflow `json:"workflows"`
 	}
 	type exportPayload struct {
-		Projects   []db.Project   `json:"projects"`
-		Specs      []exportSpec   `json:"specs"`
-		SpecDrafts []db.SpecDraft `json:"spec_drafts"`
-		Profiles   []db.Profile   `json:"profiles"`
+		Repositories []repository.Repository `json:"repositories"`
+		Specs        []exportSpec            `json:"specs"`
+		SpecDrafts   []db.SpecDraft          `json:"spec_drafts"`
+		Profiles     []db.Profile            `json:"profiles"`
 	}
 
 	ctx := r.Context()
@@ -42,7 +43,7 @@ func (h *Handler) HandleExport(w http.ResponseWriter, r *http.Request) {
 		return false
 	}
 
-	projects, err := db.ListProjects(ctx, h.pool)
+	repositories, err := db.ListRepositories(ctx, h.pool)
 	if fail(err) {
 		return
 	}
@@ -85,5 +86,5 @@ func (h *Handler) HandleExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jsonOK(w, exportPayload{Projects: projects, Specs: exportSpecs, SpecDrafts: specDrafts, Profiles: profiles}, http.StatusOK)
+	jsonOK(w, exportPayload{Repositories: repositories, Specs: exportSpecs, SpecDrafts: specDrafts, Profiles: profiles}, http.StatusOK)
 }

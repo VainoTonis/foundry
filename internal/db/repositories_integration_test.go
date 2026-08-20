@@ -151,7 +151,7 @@ func createTestRepository(t *testing.T, pool *pgxpool.Pool, r repository.Reposit
 // UpdateWorkflowStatus -> WorkflowTotalCost) against real PostgreSQL, for
 // both a local-only and a remote-only Repository. Externally this chain is
 // expressed in terms of Repository/RepositoryID (Spec.RepositoryID,
-// ListSpecsFilter.RepositoryID); physically it remains specs.project_id.
+// ListSpecsFilter.RepositoryID); physically it is specs.repository_id.
 func TestSpecToWorkflowExecution_Postgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -252,7 +252,7 @@ func TestSpecToWorkflowExecution_Postgres(t *testing.T) {
 // get, get-by-cerberus-session, update) against real PostgreSQL, for both
 // a local-only and a remote-only Repository, as well as an unattached
 // (nil RepositoryID) draft. Externally this uses SpecDraft.RepositoryID;
-// physically it remains spec_drafts.project_id.
+// physically it is spec_drafts.repository_id.
 func TestDraftSave_Postgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -346,10 +346,10 @@ func TestDraftSave_Postgres(t *testing.T) {
 
 // TestCerberusSessionLookup_Postgres exercises ListKnownCerberusSessions
 // against real PostgreSQL for both a workflow-phase-backed session (owned,
-// via specs.project_id, by a local-only Repository) and a spec-draft-backed
+// via specs.repository_id, by a local-only Repository) and a spec-draft-backed
 // session (owned by a remote-only Repository), confirming the returned
 // RepositoryID/RepositoryName/RepositoryLocalPath fields reflect the
-// correct Repository despite the physical join through project_id.
+// correct Repository via the physical join through repository_id.
 func TestCerberusSessionLookup_Postgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -447,7 +447,7 @@ func TestCerberusSessionLookup_Postgres(t *testing.T) {
 		if found.RepositoryName != repo.Name {
 			t.Fatalf("RepositoryName = %q, want %q", found.RepositoryName, repo.Name)
 		}
-		// remote-only repository has no repo_path; the lookup's COALESCE
+		// remote-only repository has no local_path; the lookup's COALESCE
 		// must surface that as an empty string, not fail to scan.
 		if found.RepositoryLocalPath != "" {
 			t.Fatalf("RepositoryLocalPath = %q, want empty for remote-only repository", found.RepositoryLocalPath)
@@ -676,16 +676,16 @@ func TestRepositoriesCRUD_Postgres(t *testing.T) {
 		}
 	})
 
-	t.Run("legacy rows with NULL repo_path read back with a nil LocalPath", func(t *testing.T) {
+	t.Run("legacy rows with NULL local_path read back with a nil LocalPath", func(t *testing.T) {
 		// Bypasses CreateRepository (which always canonicalizes/validates
 		// on write) to reproduce a row shaped like data written before
-		// remote_url existed, or a row whose repo_path was cleared and
+		// remote_url existed, or a row whose local_path was cleared and
 		// only remote_url remains -- exercising the read path's handling
-		// of NULL repo_path directly against the physical column.
+		// of NULL local_path directly against the physical column.
 		remote := "https://github.com/foo/legacy-null-repo-path.git"
 		var id int64
 		row := pool.QueryRow(ctx,
-			`INSERT INTO projects (name, repo_path, remote_url) VALUES ($1, NULL, $2) RETURNING id`,
+			`INSERT INTO repositories (name, local_path, remote_url) VALUES ($1, NULL, $2) RETURNING id`,
 			"legacy-null-repo-path", remote,
 		)
 		if err := row.Scan(&id); err != nil {
@@ -698,7 +698,7 @@ func TestRepositoriesCRUD_Postgres(t *testing.T) {
 			t.Fatalf("GetRepository() error = %v", err)
 		}
 		if got.LocalPath != nil {
-			t.Fatalf("LocalPath = %v, want nil for legacy NULL repo_path", got.LocalPath)
+			t.Fatalf("LocalPath = %v, want nil for legacy NULL local_path", got.LocalPath)
 		}
 		if got.RemoteURL == nil || *got.RemoteURL != remote {
 			t.Fatalf("RemoteURL = %v, want %q", got.RemoteURL, remote)

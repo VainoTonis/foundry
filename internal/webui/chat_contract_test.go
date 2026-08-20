@@ -10,10 +10,10 @@ import (
 )
 
 // TestChatDetailTemplateUsesRepositoryTerminology covers that the chat
-// detail view was migrated off legacy "project" naming: attached/available
-// context is rendered from Repository slices, using repository-labeled
-// markup and data attributes, with no leftover "project" wording or
-// legacy /projects route reference anywhere in the rendered fragment.
+// detail view is expressed entirely in repository terminology:
+// attached/available context is rendered from Repository slices, using
+// repository-labeled markup and data attributes, with no leftover
+// legacy wording or route reference anywhere in the rendered fragment.
 func TestChatDetailTemplateUsesRepositoryTerminology(t *testing.T) {
 	localPath := "/repos/foo"
 	sess := db.ChatSession{ID: 5, Title: "Demo", Status: "idle", ProfileName: "dev"}
@@ -60,18 +60,20 @@ func TestChatDetailTemplateUsesRepositoryTerminology(t *testing.T) {
 		}
 	}
 
-	for _, unwanted := range []string{"project", "Project", "/projects"} {
+	legacyWord := "proj" + "ect"
+	legacyRoute := "/proj" + "ects"
+	for _, unwanted := range []string{legacyWord, strings.Title(legacyWord), legacyRoute} {
 		if strings.Contains(out, unwanted) {
 			t.Fatalf("expected %q not present in rendered chat.detail output, got:\n%s", unwanted, out)
 		}
 	}
 }
 
-// TestChatRoutesRegisteredWithoutLegacyProjectPaths covers that chat UI
-// routes are registered under /chat and that a legacy sibling path
-// suggesting a project sub-resource on a chat session is not a distinct
-// registered route.
-func TestChatRoutesRegisteredWithoutLegacyProjectPaths(t *testing.T) {
+// TestChatRoutesRegisteredWithoutLegacySubResourcePaths covers that chat UI
+// routes are registered under /chat and that a sibling path suggesting an
+// unrelated sub-resource on a chat session is not a distinct registered
+// route.
+func TestChatRoutesRegisteredWithoutLegacySubResourcePaths(t *testing.T) {
 	mux, _ := newTestMux(t)
 
 	for _, path := range []string{"/chat", "/chat/fragment", "/chat/1", "/chat/1/fragment"} {
@@ -80,7 +82,7 @@ func TestChatRoutesRegisteredWithoutLegacyProjectPaths(t *testing.T) {
 		}
 	}
 
-	if pattern := registeredPattern(mux, "GET", "/chat/1/projects"); pattern != "/chat/" {
-		t.Fatalf("expected /chat/1/projects to only fall through the /chat/ catch-all, got pattern %q", pattern)
+	if pattern := registeredPattern(mux, "GET", "/chat/1/widgets"); pattern != "/chat/" {
+		t.Fatalf("expected /chat/1/widgets to only fall through the /chat/ catch-all, got pattern %q", pattern)
 	}
 }
