@@ -75,16 +75,31 @@ foundry plans update <id> [...] # Update a plan
 foundry plans update-step [...] # Update a plan step
 ```
 
-### Projects subcommands
+### Repositories subcommands
 
 ```sh
-foundry projects create [...]  # Create a new project
-foundry projects list          # List all projects
-foundry projects get <id>      # Get a project by ID
-foundry projects update <id> [...] # Update a project
-foundry projects delete <id>   # Delete a project
-foundry projects discover      # Discover projects
+foundry repositories create [...]  # Create a new repository (JSON on stdin: name, local_path, remote_url)
+foundry repositories list          # List all repositories
+foundry repositories get <id>      # Get a repository by ID
+foundry repositories update <id> [...] # Update a repository (JSON on stdin; null explicitly clears a locator)
+foundry repositories delete <id>   # Delete a repository
 ```
+
+Discovering local Git checkouts under `git_root` and refreshing missing `remote_url` values from each checkout's `origin` remote are web UI actions on the `/repositories` page, not separate CLI subcommands.
+
+#### Repository locator rules
+
+A repository is identified by `local_path`, `remote_url`, or both — at least one is required and enforced by the database. A repository with only `remote_url` is remote-only: it can be attached for context (chat, spec/draft ownership, feedback) but cannot be the primary repository of a plan that gets executed, since execution needs a local checkout.
+
+Refresh (`/repositories?refresh=1` in the UI) fills in `remote_url` only for repositories that have a `local_path` but no `remote_url` yet, by reading that checkout's local `origin` remote and normalizing it. It never overwrites an existing `remote_url`, whether set by a previous refresh or configured explicitly.
+
+#### Plan repository membership
+
+A plan has an ordered, non-empty list of repositories (`repository_ids` on create/update, at least one required). Position 0 is the plan's **primary** repository. Running a plan only ever executes against the primary repository, and requires it to have a `local_path`; a remote-only primary returns a conflict instead of running. The other, non-primary repositories are context only.
+
+#### Feedback scoping and legacy feedback
+
+New free-form and structured session feedback must be linked to one or more repositories (`repository_ids`, at least one required) and can be filtered by `repository_id`. Feedback rows that existed before this scoping was introduced are preserved as-is with `scope_status: "legacy_unscoped"` and no repository links; they are excluded by repository filtering but otherwise behave like any other feedback row. `knowledge_feedback` is unrelated and was never scoped to repositories.
 
 ### Global options
 
