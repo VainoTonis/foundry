@@ -2,17 +2,92 @@ package db
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type UpdatePlanParams struct {
-	Status    *string
-	ProjectID *int64
-	Title     *string
-	Summary   *string
-	Content   *string
+	Status        *string
+	Title         *string
+	Summary       *string
+	Content       *string
+	RepositoryIDs *[]int64
+}
+
+// querier is satisfied by both *pgxpool.Pool and pgx.Tx, so plan-loading
+// helpers can run either against a pool or inside an in-progress
+// transaction (e.g. right after CreatePlan inserts plan_repositories rows,
+// before commit).
+type querier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
+const planSelectColumns = `p.id, p.title, p.summary, p.content,
+		COALESCE((SELECT w.status FROM plan_workflows pw JOIN workflows w ON w.id = pw.workflow_id WHERE pw.plan_id = p.id ORDER BY w.id DESC LIMIT 1), p.status),
+		p.created_at, p.updated_at`
+
+func scanPlan(row pgx.Row) (Plan, error) {
+	var p Plan
+	err := row.Scan(&p.ID, &p.Title, &p.Summary, &p.Content, &p.Status, &p.CreatedAt, &p.UpdatedAt)
+	return p, err
+}
+
+// loadPlanRepositories returns the ordered (position 0 first) repository
+// membership for a single plan, resolving each project_id to its
+// Repository fields in the same query (no N+1 per repository).
+func loadPlanRepositories(ctx context.Context, q querier, planID int64) ([]PlanRepository, error) {
+	rows, err := q.Query(ctx,
+		`SELECT pr.position, pr.project_id, proj.name, proj.repo_path, proj.remote_url, proj.created_at
+		 FROM plan_repositories pr JOIN projects proj ON proj.id = pr.project_id
+		 WHERE pr.plan_id = $1 ORDER BY pr.position`, planID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PlanRepository
+	for rows.Next() {
+		var pr PlanRepository
+		if err := rows.Scan(&pr.Position, &pr.ProjectID, &pr.Repository.Name, &pr.Repository.LocalPath, &pr.Repository.RemoteURL, &pr.Repository.CreatedAt); err != nil {
+			return nil, err
+		}
+		pr.Repository.ID = pr.ProjectID
+		out = append(out, pr)
+	}
+	return out, rows.Err()
+}
+
+// loadPlanRepositoriesForPlans returns the ordered repository membership
+// for every plan id in planIDs, grouped by plan id, in a single query
+// (avoiding an N+1 query per plan for callers like ListPlans).
+func loadPlanRepositoriesForPlans(ctx context.Context, q querier, planIDs []int64) (map[int64][]PlanRepository, error) {
+	out := make(map[int64][]PlanRepository, len(planIDs))
+	if len(planIDs) == 0 {
+		return out, nil
+	}
+	rows, err := q.Query(ctx,
+		`SELECT pr.plan_id, pr.position, pr.project_id, proj.name, proj.repo_path, proj.remote_url, proj.created_at
+		 FROM plan_repositories pr JOIN projects proj ON proj.id = pr.project_id
+		 WHERE pr.plan_id = ANY($1) ORDER BY pr.plan_id, pr.position`, planIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var planID int64
+		var pr PlanRepository
+		if err := rows.Scan(&planID, &pr.Position, &pr.ProjectID, &pr.Repository.Name, &pr.Repository.LocalPath, &pr.Repository.RemoteURL, &pr.Repository.CreatedAt); err != nil {
+			return nil, err
+		}
+		pr.Repository.ID = pr.ProjectID
+		out[planID] = append(out[planID], pr)
+	}
+	return out, rows.Err()
 }
 
 type UpdatePlanStepParams struct {
@@ -21,64 +96,128 @@ type UpdatePlanStepParams struct {
 	ParallelGroup *int
 }
 
-func CreatePlan(ctx context.Context, pool *pgxpool.Pool, projectID int64, title, summary, content string) (Plan, error) {
-	var p Plan
-	err := pool.QueryRow(ctx,
-		`INSERT INTO plans (project_id, repo_name, title, summary, content, status)
-		 SELECT id, name, $2, $3, $4, 'pending' FROM projects WHERE id = $1
-		 RETURNING id, project_id, repo_name, title, summary, content, status, created_at, updated_at`,
-		projectID, title, summary, content,
-	).Scan(&p.ID, &p.ProjectID, &p.RepoName, &p.Title, &p.Summary, &p.Content, &p.Status, &p.CreatedAt, &p.UpdatedAt)
-	if err == pgx.ErrNoRows {
-		return p, ErrNotFound
+// CreatePlan creates a plan owned by the given ordered, non-empty list of
+// project ids (position 0 is the primary repository) and its
+// plan_repositories rows, all in a single transaction. It returns an
+// error and leaves no rows persisted if projectIDs is empty, contains a
+// duplicate id, or contains an id that does not exist in projects.
+func CreatePlan(ctx context.Context, pool *pgxpool.Pool, projectIDs []int64, title, summary, content string) (Plan, error) {
+	if len(projectIDs) == 0 {
+		return Plan{}, fmt.Errorf("create plan: at least one project id is required")
 	}
-	return p, err
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return Plan{}, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	p, err := scanPlan(tx.QueryRow(ctx,
+		`INSERT INTO plans (title, summary, content, status) VALUES ($1, $2, $3, 'pending')
+		 RETURNING id, title, summary, content, status, created_at, updated_at`,
+		title, summary, content,
+	))
+	if err != nil {
+		return Plan{}, err
+	}
+
+	for position, projectID := range projectIDs {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO plan_repositories (plan_id, project_id, position) VALUES ($1, $2, $3)`,
+			p.ID, projectID, position,
+		); err != nil {
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) {
+				switch pgErr.Code {
+				case "23503": // foreign_key_violation
+					return Plan{}, fmt.Errorf("create plan: project %d does not exist: %w", projectID, ErrNotFound)
+				case "23505": // unique_violation
+					return Plan{}, fmt.Errorf("create plan: project %d listed more than once", projectID)
+				}
+			}
+			return Plan{}, fmt.Errorf("create plan: insert plan_repositories for project %d: %w", projectID, err)
+		}
+	}
+
+	repos, err := loadPlanRepositories(ctx, tx, p.ID)
+	if err != nil {
+		return Plan{}, err
+	}
+	p.Repositories = repos
+
+	if err := tx.Commit(ctx); err != nil {
+		return Plan{}, err
+	}
+	return p, nil
 }
 
 func GetPlan(ctx context.Context, pool *pgxpool.Pool, id int64) (Plan, error) {
-	var p Plan
-	err := pool.QueryRow(ctx,
-		`SELECT p.id, p.project_id, p.repo_name, p.title, p.summary, p.content,
-		 COALESCE((SELECT w.status FROM plan_workflows pw JOIN workflows w ON w.id = pw.workflow_id WHERE pw.plan_id = p.id ORDER BY w.id DESC LIMIT 1), p.status),
-		 p.created_at, p.updated_at FROM plans p WHERE p.id = $1`, id,
-	).Scan(&p.ID, &p.ProjectID, &p.RepoName, &p.Title, &p.Summary, &p.Content, &p.Status, &p.CreatedAt, &p.UpdatedAt)
+	p, err := scanPlan(pool.QueryRow(ctx, `SELECT `+planSelectColumns+` FROM plans p WHERE p.id = $1`, id))
 	if err == pgx.ErrNoRows {
 		return p, ErrNotFound
 	}
-	return p, err
+	if err != nil {
+		return p, err
+	}
+	repos, err := loadPlanRepositories(ctx, pool, p.ID)
+	if err != nil {
+		return p, err
+	}
+	p.Repositories = repos
+	return p, nil
 }
 
 func ListPlans(ctx context.Context, pool *pgxpool.Pool) ([]Plan, error) {
-	rows, err := pool.Query(ctx, `SELECT p.id, p.project_id, p.repo_name, p.title, p.summary, p.content,
-		COALESCE((SELECT w.status FROM plan_workflows pw JOIN workflows w ON w.id = pw.workflow_id WHERE pw.plan_id = p.id ORDER BY w.id DESC LIMIT 1), p.status),
-		p.created_at, p.updated_at FROM plans p ORDER BY p.id DESC`)
+	rows, err := pool.Query(ctx, `SELECT `+planSelectColumns+` FROM plans p ORDER BY p.id DESC`)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	var out []Plan
+	var ids []int64
 	for rows.Next() {
-		var p Plan
-		if err := rows.Scan(&p.ID, &p.ProjectID, &p.RepoName, &p.Title, &p.Summary, &p.Content, &p.Status, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		p, err := scanPlan(rows)
+		if err != nil {
+			rows.Close()
 			return nil, err
 		}
 		out = append(out, p)
+		ids = append(ids, p.ID)
 	}
-	return out, rows.Err()
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	repoByPlan, err := loadPlanRepositoriesForPlans(ctx, pool, ids)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].Repositories = repoByPlan[out[i].ID]
+	}
+	return out, nil
 }
 
 func UpdatePlan(ctx context.Context, pool *pgxpool.Pool, id int64, p UpdatePlanParams) (Plan, error) {
+	if p.RepositoryIDs != nil && len(*p.RepositoryIDs) == 0 {
+		return Plan{}, fmt.Errorf("update plan: repository_ids must contain at least one repository id")
+	}
+	if p.RepositoryIDs != nil {
+		seen := make(map[int64]bool, len(*p.RepositoryIDs))
+		for _, pid := range *p.RepositoryIDs {
+			if seen[pid] {
+				return Plan{}, fmt.Errorf("update plan: project %d listed more than once", pid)
+			}
+			seen[pid] = true
+		}
+	}
+
 	set := []string{}
 	args := []any{}
 	n := 1
 	if p.Status != nil {
 		set = append(set, "status = $"+itoa(n))
 		args = append(args, *p.Status)
-		n++
-	}
-	if p.ProjectID != nil {
-		set = append(set, "project_id = $"+itoa(n))
-		args = append(args, *p.ProjectID)
 		n++
 	}
 	if p.Title != nil {
@@ -96,31 +235,93 @@ func UpdatePlan(ctx context.Context, pool *pgxpool.Pool, id int64, p UpdatePlanP
 		args = append(args, *p.Content)
 		n++
 	}
-	if len(set) == 0 {
+	if len(set) == 0 && p.RepositoryIDs == nil {
 		return GetPlan(ctx, pool, id)
 	}
-	set = append(set, "updated_at = NOW()")
-	args = append(args, id)
-	q := `UPDATE plans SET ` + joinComma(set) + ` WHERE id = $` + itoa(n) +
-		` RETURNING id, project_id, repo_name, title, summary, content, status, created_at, updated_at`
-	var out Plan
-	err := pool.QueryRow(ctx, q, args...).Scan(&out.ID, &out.ProjectID, &out.RepoName, &out.Title, &out.Summary, &out.Content, &out.Status, &out.CreatedAt, &out.UpdatedAt)
-	if err == pgx.ErrNoRows {
-		return out, ErrNotFound
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return Plan{}, err
 	}
-	return out, err
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	var out Plan
+	if len(set) > 0 {
+		set = append(set, "updated_at = NOW()")
+		args = append(args, id)
+		q := `UPDATE plans SET ` + joinComma(set) + ` WHERE id = $` + itoa(n) +
+			` RETURNING id, title, summary, content, status, created_at, updated_at`
+		out, err = scanPlan(tx.QueryRow(ctx, q, args...))
+		if err == pgx.ErrNoRows {
+			return out, ErrNotFound
+		}
+		if err != nil {
+			return out, err
+		}
+	} else {
+		out, err = scanPlan(tx.QueryRow(ctx, `SELECT `+planSelectColumns+` FROM plans p WHERE p.id = $1`, id))
+		if err == pgx.ErrNoRows {
+			return out, ErrNotFound
+		}
+		if err != nil {
+			return out, err
+		}
+	}
+
+	if p.RepositoryIDs != nil {
+		if _, err := tx.Exec(ctx, `DELETE FROM plan_repositories WHERE plan_id = $1`, id); err != nil {
+			return Plan{}, err
+		}
+		for position, projectID := range *p.RepositoryIDs {
+			if _, err := tx.Exec(ctx,
+				`INSERT INTO plan_repositories (plan_id, project_id, position) VALUES ($1, $2, $3)`,
+				id, projectID, position,
+			); err != nil {
+				var pgErr *pgconn.PgError
+				if errors.As(err, &pgErr) {
+					switch pgErr.Code {
+					case "23503": // foreign_key_violation
+						return Plan{}, fmt.Errorf("update plan: project %d does not exist: %w", projectID, ErrNotFound)
+					case "23505": // unique_violation
+						return Plan{}, fmt.Errorf("update plan: project %d listed more than once", projectID)
+					}
+				}
+				return Plan{}, fmt.Errorf("update plan: insert plan_repositories for project %d: %w", projectID, err)
+			}
+		}
+	}
+
+	repos, err := loadPlanRepositories(ctx, tx, out.ID)
+	if err != nil {
+		return out, err
+	}
+	out.Repositories = repos
+
+	if err := tx.Commit(ctx); err != nil {
+		return Plan{}, err
+	}
+	return out, nil
 }
 
 func GetPlanByWorkflow(ctx context.Context, pool *pgxpool.Pool, workflowID int64) (Plan, error) {
 	var p Plan
-	err := pool.QueryRow(ctx, `SELECT p.id, p.project_id, p.repo_name, p.title, p.summary, p.content, w.status, p.created_at, p.updated_at
-		FROM plan_workflows pw JOIN plans p ON p.id = pw.plan_id JOIN workflows w ON w.id = pw.workflow_id
-		WHERE pw.workflow_id = $1`, workflowID).
-		Scan(&p.ID, &p.ProjectID, &p.RepoName, &p.Title, &p.Summary, &p.Content, &p.Status, &p.CreatedAt, &p.UpdatedAt)
+	err := pool.QueryRow(ctx,
+		`SELECT p.id, p.title, p.summary, p.content, w.status, p.created_at, p.updated_at
+		 FROM plan_workflows pw JOIN plans p ON p.id = pw.plan_id JOIN workflows w ON w.id = pw.workflow_id
+		 WHERE pw.workflow_id = $1`, workflowID).
+		Scan(&p.ID, &p.Title, &p.Summary, &p.Content, &p.Status, &p.CreatedAt, &p.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		return p, ErrNotFound
 	}
-	return p, err
+	if err != nil {
+		return p, err
+	}
+	repos, err := loadPlanRepositories(ctx, pool, p.ID)
+	if err != nil {
+		return p, err
+	}
+	p.Repositories = repos
+	return p, nil
 }
 
 func LinkPlanWorkflow(ctx context.Context, pool *pgxpool.Pool, planID, workflowID int64) error {

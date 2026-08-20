@@ -14,20 +14,20 @@ func (h *Handler) HandlePlans(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
 		var body struct {
-			ProjectID int64  `json:"project_id"`
-			Title     string `json:"title"`
-			Summary   string `json:"summary"`
-			Content   string `json:"content"`
+			RepositoryIDs []int64 `json:"repository_ids"`
+			Title         string  `json:"title"`
+			Summary       string  `json:"summary"`
+			Content       string  `json:"content"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			jsonErr(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if body.ProjectID == 0 {
-			jsonErr(w, "project_id is required", http.StatusBadRequest)
+		if len(body.RepositoryIDs) == 0 {
+			jsonErr(w, "repository_ids is required and must contain at least one repository id", http.StatusBadRequest)
 			return
 		}
-		p, err := db.CreatePlan(r.Context(), h.pool, body.ProjectID, body.Title, body.Summary, body.Content)
+		p, err := db.CreatePlan(r.Context(), h.pool, body.RepositoryIDs, body.Title, body.Summary, body.Content)
 		if errors.Is(err, db.ErrNotFound) {
 			jsonErr(w, "project not found", http.StatusNotFound)
 			return
@@ -68,8 +68,12 @@ func (h *Handler) runPlan(w http.ResponseWriter, r *http.Request, id int64) {
 		jsonErr(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if plan.ProjectID == nil {
-		jsonErr(w, "plan has no project; update project_id before running", http.StatusConflict)
+	if len(plan.Repositories) == 0 {
+		jsonErr(w, "plan has no repositories", http.StatusConflict)
+		return
+	}
+	if localPath := plan.Repositories[0].Repository.LocalPath; localPath == nil || strings.TrimSpace(*localPath) == "" {
+		jsonErr(w, "primary repository has no local checkout; cannot run plan", http.StatusConflict)
 		return
 	}
 	steps, err := db.ListPlanSteps(r.Context(), h.pool, id)
@@ -87,7 +91,7 @@ func (h *Handler) runPlan(w http.ResponseWriter, r *http.Request, id int64) {
 			content += "\n\n## Phase " + strconv.Itoa(i+1) + ": Step " + strconv.Itoa(i+1) + "\n\n" + step.Text
 		}
 	}
-	sp, err := db.CreateSpec(r.Context(), h.pool, *plan.ProjectID, plan.Title, content, []byte("[]"))
+	sp, err := db.CreateSpec(r.Context(), h.pool, plan.Repositories[0].ProjectID, plan.Title, content, []byte("[]"))
 	if err != nil {
 		jsonErr(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -142,17 +146,21 @@ func (h *Handler) HandlePlan(w http.ResponseWriter, r *http.Request) {
 		jsonOK(w, p, http.StatusOK)
 	case suffix == "" && r.Method == http.MethodPatch:
 		var body struct {
-			Status    *string `json:"status"`
-			ProjectID *int64  `json:"project_id"`
-			Title     *string `json:"title"`
-			Summary   *string `json:"summary"`
-			Content   *string `json:"content"`
+			Status        *string  `json:"status"`
+			Title         *string  `json:"title"`
+			Summary       *string  `json:"summary"`
+			Content       *string  `json:"content"`
+			RepositoryIDs *[]int64 `json:"repository_ids"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			jsonErr(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		p, err := db.UpdatePlan(r.Context(), h.pool, id, db.UpdatePlanParams{Status: body.Status, ProjectID: body.ProjectID, Title: body.Title, Summary: body.Summary, Content: body.Content})
+		if body.RepositoryIDs != nil && len(*body.RepositoryIDs) == 0 {
+			jsonErr(w, "repository_ids must contain at least one repository id", http.StatusBadRequest)
+			return
+		}
+		p, err := db.UpdatePlan(r.Context(), h.pool, id, db.UpdatePlanParams{Status: body.Status, Title: body.Title, Summary: body.Summary, Content: body.Content, RepositoryIDs: body.RepositoryIDs})
 		if errors.Is(err, db.ErrNotFound) {
 			jsonErr(w, "not found", http.StatusNotFound)
 			return

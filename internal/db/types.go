@@ -3,6 +3,8 @@ package db
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/tonis2/foundry/internal/repository"
 )
 
 type Project struct {
@@ -175,16 +177,25 @@ type Profile struct {
 	UpdatedAt    time.Time         `json:"updated_at"`
 }
 
+// PlanRepository is one ordered member of a Plan's repository membership
+// (the plan_repositories table). Position 0 is the plan's primary
+// repository. Repository carries the resolved Repository fields
+// (name/locators) needed by callers without a further lookup.
+type PlanRepository struct {
+	Position   int                   `json:"position"`
+	ProjectID  int64                 `json:"project_id"`
+	Repository repository.Repository `json:"repository"`
+}
+
 type Plan struct {
-	ID        int64     `json:"id"`
-	ProjectID *int64    `json:"project_id,omitempty"`
-	RepoName  string    `json:"repo_name"` // retained for legacy plans and display
-	Title     string    `json:"title"`
-	Summary   string    `json:"summary"`
-	Content   string    `json:"content"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID           int64            `json:"id"`
+	Repositories []PlanRepository `json:"repositories"`
+	Title        string           `json:"title"`
+	Summary      string           `json:"summary"`
+	Content      string           `json:"content"`
+	Status       string           `json:"status"`
+	CreatedAt    time.Time        `json:"created_at"`
+	UpdatedAt    time.Time        `json:"updated_at"`
 }
 
 type PlanStep struct {

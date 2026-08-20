@@ -177,7 +177,7 @@ func (svc *Service) SaveDraft(ctx context.Context, params SaveDraftParams) (int6
 	}
 
 	parsed := planspec.Parse(specContent)
-	plan, err := db.CreatePlan(ctx, svc.pool, repoID, title, parsed.GlobalContext, specContent)
+	plan, err := db.CreatePlan(ctx, svc.pool, []int64{repoID}, title, parsed.GlobalContext, specContent)
 	if err != nil {
 		return 0, fmt.Errorf("create plan: %w", err)
 	}

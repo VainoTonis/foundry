@@ -19,7 +19,7 @@ var plansCmd = &cobra.Command{
 var createCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a new plan with steps",
-	Long:  "Create a new plan. Reads JSON from stdin with project_id, title, summary, content, and optional steps array.",
+	Long:  "Create a new plan. Reads JSON from stdin with repository_ids (or legacy project_id), title, summary, content, and optional steps array.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client := apiclient.NewClient(apiURL)
 
@@ -31,28 +31,34 @@ var createCmd = &cobra.Command{
 
 		// Parse the input JSON - steps can be strings or objects
 		var input struct {
-			ProjectID int64         `json:"project_id"`
-			Title     string        `json:"title"`
-			Summary   string        `json:"summary"`
-			Content   string        `json:"content"`
-			Steps     []interface{} `json:"steps"`
+			RepositoryIDs []int64       `json:"repository_ids"`
+			ProjectID     *int64        `json:"project_id"`
+			Title         string        `json:"title"`
+			Summary       string        `json:"summary"`
+			Content       string        `json:"content"`
+			Steps         []interface{} `json:"steps"`
 		}
 
 		if err := json.Unmarshal(data, &input); err != nil {
 			return fmt.Errorf("failed to parse JSON: %w", err)
 		}
 
+		repositoryIDs := input.RepositoryIDs
+		if len(repositoryIDs) == 0 && input.ProjectID != nil {
+			repositoryIDs = []int64{*input.ProjectID}
+		}
+
 		// Create the plan first
 		planReq := struct {
-			ProjectID int64  `json:"project_id"`
-			Title     string `json:"title"`
-			Summary   string `json:"summary"`
-			Content   string `json:"content"`
+			RepositoryIDs []int64 `json:"repository_ids"`
+			Title         string  `json:"title"`
+			Summary       string  `json:"summary"`
+			Content       string  `json:"content"`
 		}{
-			ProjectID: input.ProjectID,
-			Title:     input.Title,
-			Summary:   input.Summary,
-			Content:   input.Content,
+			RepositoryIDs: repositoryIDs,
+			Title:         input.Title,
+			Summary:       input.Summary,
+			Content:       input.Content,
 		}
 
 		var plan apiclient.Plan
@@ -192,7 +198,7 @@ var listCmd = &cobra.Command{
 var updateCmd = &cobra.Command{
 	Use:   "update <id>",
 	Short: "Update a plan",
-	Long:  "Update a plan. Reads JSON from stdin with fields to update (status, project_id, title, summary, content).",
+	Long:  "Update a plan. Reads JSON from stdin with fields to update (status, title, summary, content).",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client := apiclient.NewClient(apiURL)
@@ -211,20 +217,16 @@ var updateCmd = &cobra.Command{
 
 		// Build update request with optional fields
 		updateReq := struct {
-			Status    *string `json:"status,omitempty"`
-			ProjectID *int64  `json:"project_id,omitempty"`
-			Title     *string `json:"title,omitempty"`
-			Summary   *string `json:"summary,omitempty"`
-			Content   *string `json:"content,omitempty"`
+			Status        *string  `json:"status,omitempty"`
+			Title         *string  `json:"title,omitempty"`
+			Summary       *string  `json:"summary,omitempty"`
+			Content       *string  `json:"content,omitempty"`
+			RepositoryIDs *[]int64 `json:"repository_ids,omitempty"`
 		}{}
 
 		if status, ok := updateData["status"]; ok && status != nil {
 			s := fmt.Sprintf("%v", status)
 			updateReq.Status = &s
-		}
-		if projectID, ok := updateData["project_id"].(float64); ok {
-			id := int64(projectID)
-			updateReq.ProjectID = &id
 		}
 		if title, ok := updateData["title"]; ok && title != nil {
 			t := fmt.Sprintf("%v", title)
@@ -237,6 +239,21 @@ var updateCmd = &cobra.Command{
 		if content, ok := updateData["content"]; ok && content != nil {
 			c := fmt.Sprintf("%v", content)
 			updateReq.Content = &c
+		}
+		if repoIDsVal, ok := updateData["repository_ids"]; ok && repoIDsVal != nil {
+			arr, ok := repoIDsVal.([]interface{})
+			if !ok {
+				return fmt.Errorf("repository_ids must be an array of integers")
+			}
+			ids := make([]int64, 0, len(arr))
+			for _, v := range arr {
+				n, ok := v.(float64)
+				if !ok {
+					return fmt.Errorf("repository_ids must be an array of integers")
+				}
+				ids = append(ids, int64(n))
+			}
+			updateReq.RepositoryIDs = &ids
 		}
 
 		var plan apiclient.Plan

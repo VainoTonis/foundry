@@ -3,17 +3,48 @@
   <nav class="plan-local-nav" aria-label="Plan context"><a href="/plans" hx-get="/plans/fragment" hx-target="#app" hx-push-url="/plans">Plans</a></nav>
   <header class="plan-hero">
     <div><p class="eyebrow">Plan #{{.Plan.ID}}</p><h1>{{.Plan.Title}}</h1><div class="plan-meta">Status: {{.Plan.Status}}</div></div>
-    <div class="card-actions"><span class="chip chip-{{.Plan.Status}}">{{.Plan.Status}}</span>{{if .Plan.ProjectID}}<button class="btn btn-primary" data-json-post="/api/plans/{{.Plan.ID}}/run" data-body='{}' data-redirect-template="/workflows/{id}">Run in Foundry</button>{{end}}</div>
+    <div class="card-actions"><span class="chip chip-{{.Plan.Status}}">{{.Plan.Status}}</span>{{if .Plan.Repositories}}<button class="btn btn-primary" data-json-post="/api/plans/{{.Plan.ID}}/run" data-body='{}' data-redirect-template="/workflows/{id}">Run in Foundry</button>{{end}}</div>
   </header>
   {{if .Plan.Summary}}<section class="plan-summary-section"><h2>Summary</h2><p>{{.Plan.Summary}}</p></section>{{end}}
   {{if .Plan.Content}}<section class="plan-summary-section"><h2>Specification</h2><pre class="spec-content">{{.Plan.Content}}</pre></section>{{end}}
   <section class="plan-details">
     <dl class="fact-list">
-      <div><dt>Repository</dt><dd>{{.Plan.RepoName}}</dd></div>
+      {{range .Plan.Repositories}}<div><dt>Repository{{if eq .Position 0}} (primary){{end}}</dt><dd>{{.Repository.Name}}<br><small>{{if .Repository.LocalPath}}{{.Repository.LocalPath}}{{else if .Repository.RemoteURL}}{{.Repository.RemoteURL}}{{else}}no local checkout{{end}}</small></dd></div>{{end}}
       <div><dt>Created</dt><dd>{{.Plan.CreatedAt.Format "2006-01-02 15:04"}}</dd></div>
       <div><dt>Updated</dt><dd>{{.Plan.UpdatedAt.Format "2006-01-02 15:04"}}</dd></div>
     </dl>
   </section>
+  <section class="plan-repos-edit">
+    <h2>Repository membership</h2>
+    <form id="plan-repo-form-{{.Plan.ID}}" class="panel-form" data-plan-repo-form data-plan-id="{{.Plan.ID}}">
+      <div class="field">
+        <label>Repository IDs, ordered (position 0 = primary), comma separated</label>
+        <input type="text" name="repository_ids" value="{{range $i, $r := .Plan.Repositories}}{{if $i}},{{end}}{{$r.ProjectID}}{{end}}" placeholder="e.g. 3,1,2">
+      </div>
+      <button class="btn btn-secondary" type="submit">Update repositories</button>
+    </form>
+  </section>
+  <script>
+  (function() {
+    var form = document.getElementById('plan-repo-form-{{.Plan.ID}}');
+    if (!form || form.dataset.bound) return;
+    form.dataset.bound = '1';
+    form.addEventListener('submit', async function(e) {
+      e.preventDefault();
+      clearError();
+      var raw = form.elements['repository_ids'].value || '';
+      var ids = raw.split(',').map(function(s) { return parseInt(s.trim(), 10); }).filter(function(n) { return !isNaN(n); });
+      try {
+        await sendJSON('PATCH', '/api/plans/' + form.dataset.planId, { repository_ids: ids });
+        toast('Saved', 'success');
+        refresh('/plans/' + form.dataset.planId + '/fragment', '#app');
+      } catch (err) {
+        showError(err.message || String(err));
+        toast(err.message || String(err), 'error');
+      }
+    });
+  })();
+  </script>
   {{if .Steps}}<section class="plan-steps-section">
     <h2>Steps</h2>
     <div class="plan-steps-list">{{range .Steps}}<article class="plan-step-item">
