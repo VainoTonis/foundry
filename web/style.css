@@ -553,17 +553,17 @@ button:disabled, .btn:disabled, [aria-busy="true"] { opacity: .62; cursor: not-a
   width: 100%; padding: .5rem .6rem; border: 3px solid var(--border); background: #fffaf0;
   color: var(--ink); font-family: var(--font); font-size: .9rem; font-weight: 700;
 }
-.chat-settings-projects { display: flex; flex-direction: column; gap: .5rem; }
-.chat-settings-project-row {
+.chat-settings-repositories { display: flex; flex-direction: column; gap: .5rem; }
+.chat-settings-repository-row {
   display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: .6rem;
   padding: .5rem .6rem; border: 2px solid var(--border); background: var(--paper-2);
 }
-.chat-settings-project-name { font-weight: 950; font-size: .85rem; }
-.chat-settings-project-path { font-family: var(--mono); font-size: .74rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.chat-settings-project-remove { padding: .2rem .5rem; min-height: 0; font-size: .72rem; }
-.chat-settings-add-project { display: flex; gap: .5rem; align-items: stretch; margin-top: .4rem; }
-.chat-settings-add-project .chat-settings-select { flex: 1; }
-.chat-settings-add-project .btn { white-space: nowrap; }
+.chat-settings-repository-name { font-weight: 950; font-size: .85rem; }
+.chat-settings-repository-path { font-family: var(--mono); font-size: .74rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.chat-settings-repository-remove { padding: .2rem .5rem; min-height: 0; font-size: .72rem; }
+.chat-settings-add-repository { display: flex; gap: .5rem; align-items: stretch; margin-top: .4rem; }
+.chat-settings-add-repository .chat-settings-select { flex: 1; }
+.chat-settings-add-repository .btn { white-space: nowrap; }
 .chat-settings-empty { color: var(--muted); font-size: .84rem; }
 .chat-settings-actions { display: flex; gap: .5rem; flex-wrap: wrap; margin-bottom: .6rem; }
 .chat-settings-meta { font-family: var(--mono); font-size: .76rem; color: var(--muted); }
@@ -769,10 +769,10 @@ input,select,textarea { background:var(--bg); color:var(--ink); border:1px solid
 .console-drawer::backdrop { background:#0000; transition:background-color .18s ease,overlay .18s allow-discrete,display .18s allow-discrete; }
 .console-drawer[open]::backdrop { background:#0007; }
 @starting-style { .console-drawer[open]::backdrop { background:#0000; } }
-.chat-settings-project-row { grid-template-columns:minmax(0,1fr) auto; background:var(--paper-2); border:1px solid var(--border); }
-.chat-settings-project-row > div { min-width:0; }
-.chat-settings-project-name,.chat-settings-project-path { display:block; max-width:100%; }
-.chat-settings-project-row .btn { flex:none; }
+.chat-settings-repository-row { grid-template-columns:minmax(0,1fr) auto; background:var(--paper-2); border:1px solid var(--border); }
+.chat-settings-repository-row > div { min-width:0; }
+.chat-settings-repository-name,.chat-settings-repository-path { display:block; max-width:100%; }
+.chat-settings-repository-row .btn { flex:none; }
 
 @media (max-width: 800px) {
   .app-shell { grid-template-columns:1fr; }

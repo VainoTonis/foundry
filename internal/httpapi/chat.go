@@ -10,6 +10,7 @@ import (
 
 	"github.com/tonis2/foundry/internal/chat"
 	"github.com/tonis2/foundry/internal/db"
+	"github.com/tonis2/foundry/internal/repository"
 )
 
 // HandleChatSessions handles GET /api/chat/sessions and POST /api/chat/sessions.
@@ -166,26 +167,26 @@ func (h *Handler) HandleChatSession(w http.ResponseWriter, r *http.Request) {
 		}
 		w.WriteHeader(http.StatusNoContent)
 
-	case suffix == "projects" && r.Method == http.MethodGet:
-		projects, err := svc.ListSessionProjects(r.Context(), id)
+	case suffix == "repositories" && r.Method == http.MethodGet:
+		repos, err := svc.ListSessionRepositories(r.Context(), id)
 		if err != nil {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		if projects == nil {
-			projects = []db.Project{}
+		if repos == nil {
+			repos = []repository.Repository{}
 		}
-		jsonOK(w, projects, http.StatusOK)
+		jsonOK(w, repos, http.StatusOK)
 
-	case suffix == "projects" && r.Method == http.MethodPost:
+	case suffix == "repositories" && r.Method == http.MethodPost:
 		var body struct {
-			ProjectID int64 `json:"project_id"`
+			RepositoryID int64 `json:"repository_id"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ProjectID == 0 {
-			jsonErr(w, "project_id required", http.StatusBadRequest)
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.RepositoryID == 0 {
+			jsonErr(w, "repository_id required", http.StatusBadRequest)
 			return
 		}
-		if err := svc.AttachProject(r.Context(), id, body.ProjectID); err != nil {
+		if err := svc.AttachRepository(r.Context(), id, body.RepositoryID); err != nil {
 			if errors.Is(err, chat.ErrSessionBusy) {
 				jsonErr(w, "session has an active turn", http.StatusConflict)
 				return
@@ -199,14 +200,14 @@ func (h *Handler) HandleChatSession(w http.ResponseWriter, r *http.Request) {
 		}
 		w.WriteHeader(http.StatusNoContent)
 
-	case strings.HasPrefix(suffix, "projects/") && r.Method == http.MethodDelete:
-		pidStr := strings.TrimPrefix(suffix, "projects/")
-		pid, err := strconv.ParseInt(pidStr, 10, 64)
+	case strings.HasPrefix(suffix, "repositories/") && r.Method == http.MethodDelete:
+		repositoryIDStr := strings.TrimPrefix(suffix, "repositories/")
+		repositoryID, err := strconv.ParseInt(repositoryIDStr, 10, 64)
 		if err != nil {
-			jsonErr(w, "invalid project id", http.StatusBadRequest)
+			jsonErr(w, "invalid repository id", http.StatusBadRequest)
 			return
 		}
-		if err := svc.DetachProject(r.Context(), id, pid); err != nil {
+		if err := svc.DetachRepository(r.Context(), id, repositoryID); err != nil {
 			if errors.Is(err, chat.ErrSessionBusy) {
 				jsonErr(w, "session has an active turn", http.StatusConflict)
 				return

@@ -1,6 +1,6 @@
 {{define "chat.list"}}
 <div class="console-page" data-page="chat">
-  <header class="console-page-header"><div><p class="console-label">Project dialogue</p><h1>Chat</h1><p>Persistent conversations with repository context</p></div></header>
+  <header class="console-page-header"><div><p class="console-label">Repository dialogue</p><h1>Chat</h1><p>Persistent conversations with repository context</p></div></header>
   <section class="console-workspace">
     <div class="console-toolbar"><input class="console-search" type="search" placeholder="Search chat history…" data-list-search="chat-records"><form class="console-new-chat" data-json data-include-empty method="post" action="/api/chat/sessions" data-redirect-template="/chat/{id}"><select name="profile_name" aria-label="Cerberus profile"><option value="">Runtime{{if .RuntimeProfile}}: {{.RuntimeProfile}}{{end}}</option>{{range .Profiles}}<option value="{{.Name}}">{{.Name}}</option>{{end}}</select><button class="btn btn-primary">[+] New chat</button></form><span class="console-count">{{len .Sessions}} records</span></div>
     <div class="console-table-head"><span>Conversation</span><span>Profile</span><span>Status</span><span>Actions</span></div>

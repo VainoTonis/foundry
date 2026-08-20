@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tonis2/foundry/internal/cerberus"
 	"github.com/tonis2/foundry/internal/db"
+	"github.com/tonis2/foundry/internal/repository"
 )
 
 var (
@@ -223,8 +224,9 @@ func (s *Service) DeleteSession(ctx context.Context, id int64) error {
 	return s.store.DeleteChatSession(ctx, id)
 }
 
-// AttachProject attaches a project to a session and resets the cerberus container.
-func (s *Service) AttachProject(ctx context.Context, sessionID, projectID int64) error {
+// AttachRepository attaches a Repository as context for a session and
+// resets the cerberus container.
+func (s *Service) AttachRepository(ctx context.Context, sessionID, repositoryID int64) error {
 	sess, err := s.store.GetChatSession(ctx, sessionID)
 	if err != nil {
 		return fmt.Errorf("get session: %w", err)
@@ -232,8 +234,8 @@ func (s *Service) AttachProject(ctx context.Context, sessionID, projectID int64)
 	if sess.Status == "streaming" {
 		return ErrSessionBusy
 	}
-	if err := s.store.AttachProjectToSession(ctx, sessionID, projectID); err != nil {
-		return fmt.Errorf("attach project: %w", err)
+	if err := s.store.AttachRepositoryToSession(ctx, sessionID, repositoryID); err != nil {
+		return fmt.Errorf("attach repository: %w", err)
 	}
 	if sess.CerberusUUID != "" {
 		_ = s.cerb.Clean(ctx, sess.CerberusSession)
@@ -242,8 +244,9 @@ func (s *Service) AttachProject(ctx context.Context, sessionID, projectID int64)
 	return nil
 }
 
-// DetachProject detaches a project from a session and resets the cerberus container.
-func (s *Service) DetachProject(ctx context.Context, sessionID, projectID int64) error {
+// DetachRepository detaches a Repository from a session's context and
+// resets the cerberus container.
+func (s *Service) DetachRepository(ctx context.Context, sessionID, repositoryID int64) error {
 	sess, err := s.store.GetChatSession(ctx, sessionID)
 	if err != nil {
 		return fmt.Errorf("get session: %w", err)
@@ -251,8 +254,8 @@ func (s *Service) DetachProject(ctx context.Context, sessionID, projectID int64)
 	if sess.Status == "streaming" {
 		return ErrSessionBusy
 	}
-	if err := s.store.DetachProjectFromSession(ctx, sessionID, projectID); err != nil {
-		return fmt.Errorf("detach project: %w", err)
+	if err := s.store.DetachRepositoryFromSession(ctx, sessionID, repositoryID); err != nil {
+		return fmt.Errorf("detach repository: %w", err)
 	}
 	if sess.CerberusUUID != "" {
 		_ = s.cerb.Clean(ctx, sess.CerberusSession)
@@ -261,9 +264,9 @@ func (s *Service) DetachProject(ctx context.Context, sessionID, projectID int64)
 	return nil
 }
 
-// ListSessionProjects returns all projects attached to a session.
-func (s *Service) ListSessionProjects(ctx context.Context, sessionID int64) ([]db.Project, error) {
-	return s.store.ListSessionProjects(ctx, sessionID)
+// ListSessionRepositories returns all Repositories attached to a session.
+func (s *Service) ListSessionRepositories(ctx context.Context, sessionID int64) ([]repository.Repository, error) {
+	return s.store.ListSessionRepositories(ctx, sessionID)
 }
 
 var nonAlphaNum = regexp.MustCompile(`[^a-z0-9]+`)
@@ -300,20 +303,28 @@ func (s *Service) sendTurn(sess db.ChatSession, content string) {
 		}
 	}
 
-	projects, err := s.store.ListSessionProjects(ctx, sess.ID)
+	repos, err := s.store.ListSessionRepositories(ctx, sess.ID)
 	if err != nil {
-		log.Printf("chat turn %d: list session projects: %v", sess.ID, err)
+		log.Printf("chat turn %d: list session repositories: %v", sess.ID, err)
 	}
-	for i, p := range projects {
+	mountIndex := 0
+	for _, r := range repos {
+		// A remote-only Repository (no LocalPath) has nothing to mount into
+		// the container; it is simply skipped rather than causing a failure,
+		// so remote-only repository context remains safe to attach.
+		if r.LocalPath == nil || strings.TrimSpace(*r.LocalPath) == "" {
+			continue
+		}
 		containerPath := "/workspace"
-		if i > 0 {
-			containerPath = "/workspace/" + slugify(p.Name)
+		if mountIndex > 0 {
+			containerPath = "/workspace/" + slugify(r.Name)
 		}
 		input.ExtraMounts = append(input.ExtraMounts, cerberus.Mount{
-			Host:      p.RepoPath,
+			Host:      *r.LocalPath,
 			Container: containerPath,
 			ReadOnly:  true,
 		})
+		mountIndex++
 	}
 	if len(input.ExtraMounts) > 0 {
 		lines := []string{"Attached project dirs (read-only):"}

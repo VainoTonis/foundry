@@ -4,27 +4,49 @@ import (
 	"context"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/tonis2/foundry/internal/repository"
 )
 
-func AttachProjectToSession(ctx context.Context, pool *pgxpool.Pool, sessionID, projectID int64) error {
+// This file manages the repository context attached to a chat session.
+// Externally, the domain is expressed in terms of the canonical Repository
+// (internal/repository) and its RepositoryID, matching the naming used
+// elsewhere for repository ownership (see Spec.RepositoryID and
+// SpecDraft.RepositoryID in types.go). The physical SQL backing this
+// remains the chat_session_projects join table and its project_id column,
+// left unchanged so no migration is required.
+
+// AttachRepositoryToSession attaches the Repository identified by
+// repositoryID as context for the chat session identified by sessionID.
+// Attaching the same Repository to the same session more than once is a
+// no-op.
+func AttachRepositoryToSession(ctx context.Context, pool *pgxpool.Pool, sessionID, repositoryID int64) error {
 	_, err := pool.Exec(ctx,
 		`INSERT INTO chat_session_projects (session_id, project_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-		sessionID, projectID,
+		sessionID, repositoryID,
 	)
 	return err
 }
 
-func DetachProjectFromSession(ctx context.Context, pool *pgxpool.Pool, sessionID, projectID int64) error {
+// DetachRepositoryFromSession removes the Repository identified by
+// repositoryID from the chat session identified by sessionID's context.
+// Detaching a Repository that is not attached is a no-op.
+func DetachRepositoryFromSession(ctx context.Context, pool *pgxpool.Pool, sessionID, repositoryID int64) error {
 	_, err := pool.Exec(ctx,
 		`DELETE FROM chat_session_projects WHERE session_id = $1 AND project_id = $2`,
-		sessionID, projectID,
+		sessionID, repositoryID,
 	)
 	return err
 }
 
-func ListSessionProjects(ctx context.Context, pool *pgxpool.Pool, sessionID int64) ([]Project, error) {
+// ListSessionRepositories returns every canonical Repository attached to
+// the chat session identified by sessionID, ordered by attachment time.
+// A Repository with no LocalPath (remote-only) is returned safely with a
+// nil LocalPath, exactly as ListRepositories/GetRepository do, rather
+// than failing to scan a NULL repo_path column.
+func ListSessionRepositories(ctx context.Context, pool *pgxpool.Pool, sessionID int64) ([]repository.Repository, error) {
 	rows, err := pool.Query(ctx,
-		`SELECT p.id, p.name, p.repo_path, p.created_at
+		`SELECT `+repositorySelectColumns+`
 		 FROM projects p
 		 JOIN chat_session_projects csp ON csp.project_id = p.id
 		 WHERE csp.session_id = $1
@@ -35,13 +57,13 @@ func ListSessionProjects(ctx context.Context, pool *pgxpool.Pool, sessionID int6
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Project
+	var out []repository.Repository
 	for rows.Next() {
-		var p Project
-		if err := rows.Scan(&p.ID, &p.Name, &p.RepoPath, &p.CreatedAt); err != nil {
+		r, err := scanRepository(rows)
+		if err != nil {
 			return nil, err
 		}
-		out = append(out, p)
+		out = append(out, r)
 	}
 	return out, rows.Err()
 }

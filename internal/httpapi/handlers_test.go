@@ -13,6 +13,7 @@ import (
 	"github.com/tonis2/foundry/internal/authoring"
 	"github.com/tonis2/foundry/internal/chat"
 	"github.com/tonis2/foundry/internal/db"
+	"github.com/tonis2/foundry/internal/repository"
 )
 
 func TestSettingsPatchSeparatesRuntimeKeys(t *testing.T) {
@@ -182,26 +183,27 @@ func TestHandleChatSessionMessageMapsBusyToConflict(t *testing.T) {
 	}
 }
 
-func TestHandleChatSessionProjectsThroughAPI(t *testing.T) {
-	svc := &fakeChatService{projects: []db.Project{{ID: 7, Name: "repo", RepoPath: "/repo"}}}
+func TestHandleChatSessionRepositoriesThroughAPI(t *testing.T) {
+	localPath := "/repo"
+	svc := &fakeChatService{repositories: []repository.Repository{{ID: 7, Name: "repo", LocalPath: &localPath}}}
 	h := New(nil, Config{ChatService: func() ChatService { return svc }})
 
 	rec := httptest.NewRecorder()
-	h.HandleChatSession(rec, httptest.NewRequest(http.MethodGet, "/api/chat/sessions/3/projects", nil))
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"repo_path":"/repo"`) {
+	h.HandleChatSession(rec, httptest.NewRequest(http.MethodGet, "/api/chat/sessions/3/repositories", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"local_path":"/repo"`) {
 		t.Fatalf("GET status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 
 	rec = httptest.NewRecorder()
-	h.HandleChatSession(rec, httptest.NewRequest(http.MethodPost, "/api/chat/sessions/3/projects", bytes.NewBufferString(`{"project_id":7}`)))
-	if rec.Code != http.StatusNoContent || svc.attachedSessionID != 3 || svc.attachedProjectID != 7 {
-		t.Fatalf("POST status = %d attach = %d/%d body = %s", rec.Code, svc.attachedSessionID, svc.attachedProjectID, rec.Body.String())
+	h.HandleChatSession(rec, httptest.NewRequest(http.MethodPost, "/api/chat/sessions/3/repositories", bytes.NewBufferString(`{"repository_id":7}`)))
+	if rec.Code != http.StatusNoContent || svc.attachedSessionID != 3 || svc.attachedRepositoryID != 7 {
+		t.Fatalf("POST status = %d attach = %d/%d body = %s", rec.Code, svc.attachedSessionID, svc.attachedRepositoryID, rec.Body.String())
 	}
 
 	rec = httptest.NewRecorder()
-	h.HandleChatSession(rec, httptest.NewRequest(http.MethodDelete, "/api/chat/sessions/3/projects/7", nil))
-	if rec.Code != http.StatusNoContent || svc.detachedSessionID != 3 || svc.detachedProjectID != 7 {
-		t.Fatalf("DELETE status = %d detach = %d/%d body = %s", rec.Code, svc.detachedSessionID, svc.detachedProjectID, rec.Body.String())
+	h.HandleChatSession(rec, httptest.NewRequest(http.MethodDelete, "/api/chat/sessions/3/repositories/7", nil))
+	if rec.Code != http.StatusNoContent || svc.detachedSessionID != 3 || svc.detachedRepositoryID != 7 {
+		t.Fatalf("DELETE status = %d detach = %d/%d body = %s", rec.Code, svc.detachedSessionID, svc.detachedRepositoryID, rec.Body.String())
 	}
 }
 
@@ -215,11 +217,11 @@ type fakeChatService struct {
 	sentProfile    *string
 	sendErr        error
 
-	projects          []db.Project
-	attachedSessionID int64
-	attachedProjectID int64
-	detachedSessionID int64
-	detachedProjectID int64
+	repositories         []repository.Repository
+	attachedSessionID    int64
+	attachedRepositoryID int64
+	detachedSessionID    int64
+	detachedRepositoryID int64
 }
 
 func (f *fakeChatService) CreateSession(_ context.Context, profileName string) (db.ChatSession, error) {
@@ -250,20 +252,20 @@ func (f *fakeChatService) UpdateSessionProfile(context.Context, int64, string) e
 
 func (f *fakeChatService) DeleteSession(context.Context, int64) error { return nil }
 
-func (f *fakeChatService) AttachProject(_ context.Context, sessionID, projectID int64) error {
+func (f *fakeChatService) AttachRepository(_ context.Context, sessionID, repositoryID int64) error {
 	f.attachedSessionID = sessionID
-	f.attachedProjectID = projectID
+	f.attachedRepositoryID = repositoryID
 	return nil
 }
 
-func (f *fakeChatService) DetachProject(_ context.Context, sessionID, projectID int64) error {
+func (f *fakeChatService) DetachRepository(_ context.Context, sessionID, repositoryID int64) error {
 	f.detachedSessionID = sessionID
-	f.detachedProjectID = projectID
+	f.detachedRepositoryID = repositoryID
 	return nil
 }
 
-func (f *fakeChatService) ListSessionProjects(context.Context, int64) ([]db.Project, error) {
-	return f.projects, nil
+func (f *fakeChatService) ListSessionRepositories(context.Context, int64) ([]repository.Repository, error) {
+	return f.repositories, nil
 }
 
 var _ ChatService = (*fakeChatService)(nil)

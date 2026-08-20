@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/tonis2/foundry/internal/db"
+	"github.com/tonis2/foundry/internal/repository"
 )
 
 type chatSessionView struct {
@@ -76,24 +77,24 @@ func (h *Handler) handleUIChatDetailFragment(w http.ResponseWriter, r *http.Requ
 	}
 	profiles, _ := db.ListProfiles(r.Context(), h.pool)
 	sessions, _ := db.ListChatSessions(r.Context(), h.pool)
-	attachedProjects, _ := db.ListSessionProjects(r.Context(), h.pool, id)
-	allProjects, _ := db.ListProjects(r.Context(), h.pool)
-	if attachedProjects == nil {
-		attachedProjects = []db.Project{}
+	attachedRepos, _ := db.ListSessionRepositories(r.Context(), h.pool, id)
+	allRepos, _ := db.ListRepositories(r.Context(), h.pool)
+	if attachedRepos == nil {
+		attachedRepos = []repository.Repository{}
 	}
 
-	attachedSet := make(map[int64]bool, len(attachedProjects))
-	for _, p := range attachedProjects {
-		attachedSet[p.ID] = true
+	attachedSet := make(map[int64]bool, len(attachedRepos))
+	for _, r := range attachedRepos {
+		attachedSet[r.ID] = true
 	}
-	var availableProjects []db.Project
-	for _, p := range allProjects {
-		if !attachedSet[p.ID] {
-			availableProjects = append(availableProjects, p)
+	var availableRepos []repository.Repository
+	for _, repo := range allRepos {
+		if !attachedSet[repo.ID] {
+			availableRepos = append(availableRepos, repo)
 		}
 	}
-	if availableProjects == nil {
-		availableProjects = []db.Project{}
+	if availableRepos == nil {
+		availableRepos = []repository.Repository{}
 	}
 
 	_, runtimeProfile := h.runtimeProfiles()
@@ -105,9 +106,9 @@ func (h *Handler) handleUIChatDetailFragment(w http.ResponseWriter, r *http.Requ
 		Sessions          []db.ChatSession
 		ActiveProfileName string
 		RuntimeProfile    string
-		AttachedProjects  []db.Project
-		AvailableProjects []db.Project
-	}{sess, msgs, profiles, sessions, activeProfileName(sess.ProfileName, runtimeProfile), runtimeProfile, attachedProjects, availableProjects}); err != nil {
+		AttachedRepositories  []repository.Repository
+		AvailableRepositories []repository.Repository
+	}{sess, msgs, profiles, sessions, activeProfileName(sess.ProfileName, runtimeProfile), runtimeProfile, attachedRepos, availableRepos}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }

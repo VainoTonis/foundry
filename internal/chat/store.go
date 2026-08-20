@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tonis2/foundry/internal/cerberus"
 	"github.com/tonis2/foundry/internal/db"
+	"github.com/tonis2/foundry/internal/repository"
 )
 
 type cerberusClient interface {
@@ -33,9 +34,9 @@ type store interface {
 	ClearChatSessionUUID(context.Context, int64) error
 	InsertChatMessage(context.Context, int64, string, string) (db.ChatMessage, error)
 	ListChatMessages(context.Context, int64) ([]db.ChatMessage, error)
-	AttachProjectToSession(context.Context, int64, int64) error
-	DetachProjectFromSession(context.Context, int64, int64) error
-	ListSessionProjects(context.Context, int64) ([]db.Project, error)
+	AttachRepositoryToSession(context.Context, int64, int64) error
+	DetachRepositoryFromSession(context.Context, int64, int64) error
+	ListSessionRepositories(context.Context, int64) ([]repository.Repository, error)
 	GetProfileByName(context.Context, string) (db.Profile, error)
 	ListCerberusEvents(context.Context, string, int64) ([]db.CerberusEvent, error)
 	DeleteCerberusEvents(context.Context, string) error
@@ -118,16 +119,16 @@ func (s pgStore) ListChatMessages(ctx context.Context, sessionID int64) ([]db.Ch
 	return db.ListChatMessages(ctx, s.pool, sessionID)
 }
 
-func (s pgStore) AttachProjectToSession(ctx context.Context, sessionID, projectID int64) error {
-	return db.AttachProjectToSession(ctx, s.pool, sessionID, projectID)
+func (s pgStore) AttachRepositoryToSession(ctx context.Context, sessionID, repositoryID int64) error {
+	return db.AttachRepositoryToSession(ctx, s.pool, sessionID, repositoryID)
 }
 
-func (s pgStore) DetachProjectFromSession(ctx context.Context, sessionID, projectID int64) error {
-	return db.DetachProjectFromSession(ctx, s.pool, sessionID, projectID)
+func (s pgStore) DetachRepositoryFromSession(ctx context.Context, sessionID, repositoryID int64) error {
+	return db.DetachRepositoryFromSession(ctx, s.pool, sessionID, repositoryID)
 }
 
-func (s pgStore) ListSessionProjects(ctx context.Context, sessionID int64) ([]db.Project, error) {
-	return db.ListSessionProjects(ctx, s.pool, sessionID)
+func (s pgStore) ListSessionRepositories(ctx context.Context, sessionID int64) ([]repository.Repository, error) {
+	return db.ListSessionRepositories(ctx, s.pool, sessionID)
 }
 
 func (s pgStore) GetProfileByName(ctx context.Context, name string) (db.Profile, error) {

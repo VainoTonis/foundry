@@ -200,27 +200,27 @@ document.addEventListener('click', (event) => {
     return;
   }
 
-  // "Add" button in the settings dialog project section.
-  const addProjectBtn = event.target.closest('#chat-add-project-btn');
-  if (addProjectBtn) {
+  // "Add" button in the settings dialog repository section.
+  const addRepositoryBtn = event.target.closest('#chat-add-repository-btn');
+  if (addRepositoryBtn) {
     event.preventDefault();
-    const sessionId = addProjectBtn.dataset.sessionId;
-    const select = document.getElementById('chat-add-project-select');
-    const projectId = select?.value;
-    if (!projectId) return;
-    sendJSON('POST', `/api/chat/sessions/${sessionId}/projects`, { project_id: Number(projectId) })
+    const sessionId = addRepositoryBtn.dataset.sessionId;
+    const select = document.getElementById('chat-add-repository-select');
+    const repositoryId = select?.value;
+    if (!repositoryId) return;
+    sendJSON('POST', `/api/chat/sessions/${sessionId}/repositories`, { repository_id: Number(repositoryId) })
       .then(() => { closeChatSettings(); refresh(`/chat/${sessionId}/fragment`, '#app'); })
       .catch((err) => toast(err.message || String(err), 'error'));
     return;
   }
 
-  // Remove project chip inside dialog.
-  const detachBtn = event.target.closest('[data-detach-project]');
+  // Remove repository chip inside dialog.
+  const detachBtn = event.target.closest('[data-detach-repository]');
   if (detachBtn) {
     event.preventDefault();
     const sessionId = detachBtn.dataset.sessionId;
-    const projectId = detachBtn.dataset.projectId;
-    sendJSON('DELETE', `/api/chat/sessions/${sessionId}/projects/${projectId}`)
+    const repositoryId = detachBtn.dataset.repositoryId;
+    sendJSON('DELETE', `/api/chat/sessions/${sessionId}/repositories/${repositoryId}`)
       .then(() => { closeChatSettings(); refresh(`/chat/${sessionId}/fragment`, '#app'); })
       .catch((err) => toast(err.message || String(err), 'error'));
     return;

@@ -10,6 +10,7 @@ import (
 
 	"github.com/tonis2/foundry/internal/cerberus"
 	"github.com/tonis2/foundry/internal/db"
+	"github.com/tonis2/foundry/internal/repository"
 )
 
 func TestCreateSessionUsesStableCerberusNameThroughService(t *testing.T) {
@@ -43,9 +44,11 @@ func TestCreateSessionRejectsMissingProfileThroughService(t *testing.T) {
 func TestSendMessageBuildsProjectMountsThroughService(t *testing.T) {
 	store := newFakeStore()
 	store.sessions[7] = db.ChatSession{ID: 7, CerberusSession: "foundry-chat-7", Status: "active"}
-	store.projects[7] = []db.Project{
-		{ID: 10, Name: "Core Repo", RepoPath: "/repos/core"},
-		{ID: 11, Name: "Side Project!", RepoPath: "/repos/side"},
+	corePath := "/repos/core"
+	sidePath := "/repos/side"
+	store.projects[7] = []repository.Repository{
+		{ID: 10, Name: "Core Repo", LocalPath: &corePath},
+		{ID: 11, Name: "Side Project!", LocalPath: &sidePath},
 	}
 	cerb := &fakeCerberus{turnOut: cerberus.TurnOutput{Status: "ok", UUID: "uuid-1"}}
 	svc := newService(store, cerb, "http://callback", nil)
@@ -106,18 +109,18 @@ func TestSendMessageReplaysHistoryForSuspendedSessionThroughService(t *testing.T
 	}
 }
 
-func TestAttachProjectResetsExistingCerberusSessionThroughService(t *testing.T) {
+func TestAttachRepositoryResetsExistingCerberusSessionThroughService(t *testing.T) {
 	store := newFakeStore()
 	store.sessions[12] = db.ChatSession{ID: 12, CerberusSession: "foundry-chat-12", CerberusUUID: "uuid-old", Status: "active"}
 	cerb := &fakeCerberus{}
 	svc := newService(store, cerb, "", nil)
 
-	if err := svc.AttachProject(context.Background(), 12, 34); err != nil {
+	if err := svc.AttachRepository(context.Background(), 12, 34); err != nil {
 		t.Fatal(err)
 	}
 
 	if !store.attached[[2]int64{12, 34}] {
-		t.Fatalf("project was not attached")
+		t.Fatalf("repository was not attached")
 	}
 	if got := store.mustSession(t, 12).CerberusUUID; got != "" {
 		t.Fatalf("cerberus uuid = %q, want cleared", got)
@@ -127,19 +130,45 @@ func TestAttachProjectResetsExistingCerberusSessionThroughService(t *testing.T) 
 	}
 }
 
-func TestAttachProjectRejectsStreamingSessionThroughService(t *testing.T) {
+func TestAttachRepositoryRejectsStreamingSessionThroughService(t *testing.T) {
 	store := newFakeStore()
 	store.sessions[12] = db.ChatSession{ID: 12, CerberusSession: "foundry-chat-12", Status: "streaming"}
 	svc := newService(store, &fakeCerberus{}, "", nil)
 
-	err := svc.AttachProject(context.Background(), 12, 34)
+	err := svc.AttachRepository(context.Background(), 12, 34)
 	if !errors.Is(err, ErrSessionBusy) {
-		t.Fatalf("AttachProject error = %v, want ErrSessionBusy", err)
+		t.Fatalf("AttachRepository error = %v, want ErrSessionBusy", err)
 	}
 	if store.attached[[2]int64{12, 34}] {
-		t.Fatalf("streaming session should not attach project")
+		t.Fatalf("streaming session should not attach repository")
 	}
 }
+
+func TestSendMessageSkipsRemoteOnlyRepositoryMountThroughService(t *testing.T) {
+	store := newFakeStore()
+	store.sessions[13] = db.ChatSession{ID: 13, CerberusSession: "foundry-chat-13", Status: "active"}
+	corePath := "/repos/core"
+	store.projects[13] = []repository.Repository{
+		{ID: 20, Name: "Remote Only", RemoteURL: strPtr("https://example.com/remote-only.git")},
+		{ID: 21, Name: "Local Repo", LocalPath: &corePath},
+	}
+	cerb := &fakeCerberus{turnOut: cerberus.TurnOutput{Status: "ok", UUID: "uuid-3"}}
+	svc := newService(store, cerb, "", nil)
+
+	if err := svc.SendMessage(context.Background(), 13, "hello"); err != nil {
+		t.Fatal(err)
+	}
+	input := cerb.waitTurn(t)
+
+	wantMounts := []cerberus.Mount{
+		{Host: "/repos/core", Container: "/workspace", ReadOnly: true},
+	}
+	if !reflect.DeepEqual(input.ExtraMounts, wantMounts) {
+		t.Fatalf("mounts = %#v, want %#v", input.ExtraMounts, wantMounts)
+	}
+}
+
+func strPtr(s string) *string { return &s }
 
 type fakeCerberus struct {
 	mu      sync.Mutex
@@ -191,7 +220,7 @@ type fakeStore struct {
 	nextMsg  int64
 	sessions map[int64]db.ChatSession
 	messages map[int64][]db.ChatMessage
-	projects map[int64][]db.Project
+	projects map[int64][]repository.Repository
 	profiles map[string]db.Profile
 	attached map[[2]int64]bool
 	events   map[string][]db.CerberusEvent
@@ -203,7 +232,7 @@ func newFakeStore() *fakeStore {
 		nextMsg:  1,
 		sessions: map[int64]db.ChatSession{},
 		messages: map[int64][]db.ChatMessage{},
-		projects: map[int64][]db.Project{},
+		projects: map[int64][]repository.Repository{},
 		profiles: map[string]db.Profile{},
 		attached: map[[2]int64]bool{},
 		events:   map[string][]db.CerberusEvent{},
@@ -325,24 +354,24 @@ func (f *fakeStore) ListChatMessages(_ context.Context, sessionID int64) ([]db.C
 	return append([]db.ChatMessage(nil), f.messages[sessionID]...), nil
 }
 
-func (f *fakeStore) AttachProjectToSession(_ context.Context, sessionID, projectID int64) error {
+func (f *fakeStore) AttachRepositoryToSession(_ context.Context, sessionID, repositoryID int64) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.attached[[2]int64{sessionID, projectID}] = true
+	f.attached[[2]int64{sessionID, repositoryID}] = true
 	return nil
 }
 
-func (f *fakeStore) DetachProjectFromSession(_ context.Context, sessionID, projectID int64) error {
+func (f *fakeStore) DetachRepositoryFromSession(_ context.Context, sessionID, repositoryID int64) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	delete(f.attached, [2]int64{sessionID, projectID})
+	delete(f.attached, [2]int64{sessionID, repositoryID})
 	return nil
 }
 
-func (f *fakeStore) ListSessionProjects(_ context.Context, sessionID int64) ([]db.Project, error) {
+func (f *fakeStore) ListSessionRepositories(_ context.Context, sessionID int64) ([]repository.Repository, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]db.Project(nil), f.projects[sessionID]...), nil
+	return append([]repository.Repository(nil), f.projects[sessionID]...), nil
 }
 
 func (f *fakeStore) GetProfileByName(_ context.Context, name string) (db.Profile, error) {

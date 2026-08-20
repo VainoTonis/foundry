@@ -7,6 +7,7 @@ import (
 	"github.com/tonis2/foundry/internal/authoring"
 	"github.com/tonis2/foundry/internal/cerberus"
 	"github.com/tonis2/foundry/internal/db"
+	"github.com/tonis2/foundry/internal/repository"
 )
 
 type ChatService interface {
@@ -18,9 +19,9 @@ type ChatService interface {
 	SuspendSession(context.Context, int64) error
 	UpdateSessionProfile(context.Context, int64, string) error
 	DeleteSession(context.Context, int64) error
-	AttachProject(context.Context, int64, int64) error
-	DetachProject(context.Context, int64, int64) error
-	ListSessionProjects(context.Context, int64) ([]db.Project, error)
+	AttachRepository(context.Context, int64, int64) error
+	DetachRepository(context.Context, int64, int64) error
+	ListSessionRepositories(context.Context, int64) ([]repository.Repository, error)
 }
 
 type Config struct {
