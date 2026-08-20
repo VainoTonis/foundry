@@ -15,14 +15,14 @@ type UpdateProjectParams struct {
 func CreateProject(ctx context.Context, pool *pgxpool.Pool, name, repoPath string) (Project, error) {
 	var p Project
 	err := pool.QueryRow(ctx,
-		`INSERT INTO projects (name, repo_path) VALUES ($1, $2) RETURNING id, name, repo_path, created_at`,
+		`INSERT INTO projects (name, repo_path) VALUES ($1, $2) RETURNING id, name, COALESCE(repo_path, ''), created_at`,
 		name, repoPath,
 	).Scan(&p.ID, &p.Name, &p.RepoPath, &p.CreatedAt)
 	return p, err
 }
 
 func ListProjects(ctx context.Context, pool *pgxpool.Pool) ([]Project, error) {
-	rows, err := pool.Query(ctx, `SELECT id, name, repo_path, created_at FROM projects ORDER BY id`)
+	rows, err := pool.Query(ctx, `SELECT id, name, COALESCE(repo_path, ''), created_at FROM projects ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -41,7 +41,7 @@ func ListProjects(ctx context.Context, pool *pgxpool.Pool) ([]Project, error) {
 func GetProject(ctx context.Context, pool *pgxpool.Pool, id int64) (Project, error) {
 	var p Project
 	err := pool.QueryRow(ctx,
-		`SELECT id, name, repo_path, created_at FROM projects WHERE id = $1`, id,
+		`SELECT id, name, COALESCE(repo_path, ''), created_at FROM projects WHERE id = $1`, id,
 	).Scan(&p.ID, &p.Name, &p.RepoPath, &p.CreatedAt)
 	if err == pgx.ErrNoRows {
 		return p, ErrNotFound
@@ -68,7 +68,7 @@ func UpdateProject(ctx context.Context, pool *pgxpool.Pool, id int64, p UpdatePr
 	}
 	args = append(args, id)
 	q := `UPDATE projects SET ` + joinComma(set) + ` WHERE id = $` + itoa(n) +
-		` RETURNING id, name, repo_path, created_at`
+		` RETURNING id, name, COALESCE(repo_path, ''), created_at`
 	var out Project
 	err := pool.QueryRow(ctx, q, args...).Scan(&out.ID, &out.Name, &out.RepoPath, &out.CreatedAt)
 	if err == pgx.ErrNoRows {
