@@ -176,6 +176,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/api/cerberus/sessions", s.handleCerberusSessions)
 	s.mux.HandleFunc("/api/cerberus/sessions/", s.handleCerberusSession)
 	s.mux.HandleFunc("/api/cerberus/events", s.handleCerberusCallback)
+	s.mux.HandleFunc("/api/telemetry/events", s.handleTelemetryEvents)
 	s.mux.HandleFunc("/api/spec-drafts", s.jsonAPI.HandleSpecDrafts)
 	s.mux.HandleFunc("/api/spec-drafts/", s.handleSpecDraft)
 	s.mux.HandleFunc("/api/chat/sessions", s.jsonAPI.HandleChatSessions)

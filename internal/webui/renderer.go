@@ -10,14 +10,15 @@ var templateFS embed.FS
 
 var templates = template.Must(template.New("ui").Funcs(template.FuncMap{
 	// Formatting functions
-	"date":            templateDate,
-	"datetime":        templateDateTime,
-	"ptime":           templatePTime,
-	"money":           templateMoney,
-	"strptr":          templateStrPtr,
-	"json":            templateJSON,
-	"markdown":        templateMarkdown,
-	"cleanSessionURL": templateCleanSessionURL,
+	"date":             templateDate,
+	"datetime":         templateDateTime,
+	"ptime":            templatePTime,
+	"money":            templateMoney,
+	"strptr":           templateStrPtr,
+	"json":             templateJSON,
+	"markdown":         templateMarkdown,
+	"cleanSessionURL":  templateCleanSessionURL,
+	"formatCapturedAt": formatCapturedAt,
 
 	// Phase-related functions
 	"phaseProgress":    phaseProgress,

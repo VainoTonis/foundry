@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tonis2/foundry/internal/db"
+	"github.com/tonis2/foundry/internal/telemetry"
 )
 
 const cerberusTextFlushBytes = 3 * 1024
@@ -48,7 +51,19 @@ func (s *Server) handleCompactCerberusEvent(ctx context.Context, raw []byte) err
 		payload, _ := json.Marshal(map[string]string{"content": content})
 		return s.storeAndPublishCerberusEvent(ctx, evt.Session, evt.Type, payload)
 
+	case "session_start":
+		s.ingestCerberusTelemetry(ctx, raw, evt)
+		return nil
+
+	case "tool_result":
+		s.ingestCerberusTelemetry(ctx, raw, evt)
+		return nil
+
 	case "message_end", "turn_complete":
+		if evt.Type == "message_end" {
+			s.ingestCerberusTelemetry(ctx, raw, evt)
+			s.applyManagedMessageEndCost(ctx, raw, evt)
+		}
 		if err := s.flushCerberusText(ctx, evt.Session); err != nil {
 			return fmt.Errorf("store event: %w", err)
 		}
@@ -73,6 +88,7 @@ func (s *Server) handleCompactCerberusEvent(ctx context.Context, raw []byte) err
 		return nil
 
 	case "tool_use":
+		s.ingestCerberusTelemetry(ctx, raw, evt)
 		payload, ok := compactToolUsePayload(raw)
 		if !ok {
 			return nil
@@ -86,7 +102,7 @@ func (s *Server) handleCompactCerberusEvent(ctx context.Context, raw []byte) err
 		return nil
 
 	default:
-		// Drop high-volume/noisy event types such as raw, tool_result, and most log events.
+		// Drop high-volume/noisy event types such as raw and most log events.
 		return nil
 	}
 }
@@ -265,4 +281,233 @@ func anyValue(m map[string]any, keys ...string) any {
 		}
 	}
 	return nil
+}
+
+type cerberusUsageFields struct {
+	InputTokens      int64   `json:"input_tokens"`
+	OutputTokens     int64   `json:"output_tokens"`
+	CacheReadTokens  int64   `json:"cache_read_tokens"`
+	CacheWriteTokens int64   `json:"cache_write_tokens"`
+	CostUSD          float64 `json:"cost_usd"`
+}
+
+type compactCerberusFields struct {
+	SessionID  string               `json:"session_id,omitempty"`
+	Ts         string               `json:"ts,omitempty"`
+	ToolName   string               `json:"tool_name,omitempty"`
+	ToolInput  json.RawMessage      `json:"tool_input,omitempty"`
+	ToolCallID string               `json:"tool_call_id,omitempty"`
+	Content    json.RawMessage      `json:"content,omitempty"`
+	IsError    *bool                `json:"is_error,omitempty"`
+	DurationMs *int64               `json:"duration_ms,omitempty"`
+	Usage      *cerberusUsageFields `json:"usage,omitempty"`
+}
+
+func mergeCerberusFields(top, nested compactCerberusFields) compactCerberusFields {
+	if top.SessionID == "" {
+		top.SessionID = nested.SessionID
+	}
+	if top.Ts == "" {
+		top.Ts = nested.Ts
+	}
+	if top.ToolName == "" {
+		top.ToolName = nested.ToolName
+	}
+	if len(top.ToolInput) == 0 {
+		top.ToolInput = nested.ToolInput
+	}
+	if top.ToolCallID == "" {
+		top.ToolCallID = nested.ToolCallID
+	}
+	if len(top.Content) == 0 {
+		top.Content = nested.Content
+	}
+	if top.IsError == nil {
+		top.IsError = nested.IsError
+	}
+	if top.DurationMs == nil {
+		top.DurationMs = nested.DurationMs
+	}
+	if top.Usage == nil {
+		top.Usage = nested.Usage
+	}
+	return top
+}
+
+func extractCerberusFields(raw []byte) compactCerberusFields {
+	var top compactCerberusFields
+	_ = json.Unmarshal(raw, &top)
+
+	var envelope struct {
+		Payload json.RawMessage `json:"payload"`
+	}
+	if json.Unmarshal(raw, &envelope) == nil && len(envelope.Payload) > 0 {
+		var nested compactCerberusFields
+		if json.Unmarshal(envelope.Payload, &nested) == nil {
+			top = mergeCerberusFields(top, nested)
+		}
+	}
+	return top
+}
+
+func cerberusRawToString(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	return string(raw)
+}
+
+func optionalCerberusString(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+func parseCerberusTimestamp(ts string) time.Time {
+	if ts == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339, ts)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
+func buildCerberusTelemetryEvent(eventType, session string, fields compactCerberusFields) (telemetry.Event, bool) {
+	ts := parseCerberusTimestamp(fields.Ts)
+
+	switch eventType {
+	case "session_start":
+		if fields.SessionID == "" {
+			return telemetry.Event{}, false
+		}
+		return telemetry.Event{
+			Type: telemetry.EventSessionStart,
+			Session: telemetry.Session{
+				Session:         session,
+				SourceSessionID: fields.SessionID,
+				Origin:          "cerberus",
+				Kind:            telemetry.SessionKindUnknown,
+			},
+			Timestamp: ts,
+		}, true
+
+	case "tool_use":
+		if fields.ToolName == "" {
+			return telemetry.Event{}, false
+		}
+		return telemetry.Event{
+			Type:    telemetry.EventToolUse,
+			Session: telemetry.Session{Session: session},
+			Tool: telemetry.Tool{
+				ToolCallID: optionalCerberusString(fields.ToolCallID),
+				ToolName:   fields.ToolName,
+				Input:      cerberusRawToString(fields.ToolInput),
+			},
+			Timestamp: ts,
+		}, true
+
+	case "tool_result":
+		if fields.ToolName == "" {
+			return telemetry.Event{}, false
+		}
+		return telemetry.Event{
+			Type:    telemetry.EventToolResult,
+			Session: telemetry.Session{Session: session},
+			Tool: telemetry.Tool{
+				ToolCallID: optionalCerberusString(fields.ToolCallID),
+				ToolName:   fields.ToolName,
+				Result:     cerberusRawToString(fields.Content),
+				IsError:    fields.IsError,
+				DurationMs: fields.DurationMs,
+			},
+			Timestamp: ts,
+		}, true
+
+	case "message_end":
+		usage := fields.Usage
+		if usage == nil {
+			usage = &cerberusUsageFields{}
+		}
+		return telemetry.Event{
+			Type:    telemetry.EventMessageEnd,
+			Session: telemetry.Session{Session: session},
+			Usage: telemetry.Usage{
+				InputTokens:      usage.InputTokens,
+				OutputTokens:     usage.OutputTokens,
+				CacheReadTokens:  usage.CacheReadTokens,
+				CacheWriteTokens: usage.CacheWriteTokens,
+				CostUSD:          usage.CostUSD,
+			},
+			Timestamp: ts,
+		}, true
+	}
+
+	return telemetry.Event{}, false
+}
+
+func (s *Server) resolveManagedCerberusAttribution(ctx context.Context, session string) (telemetry.Attribution, bool) {
+	ph, err := db.GetPhaseByCerberusSession(ctx, s.pool, session)
+	if err != nil {
+		return telemetry.Attribution{}, false
+	}
+	_, _, repo, err := s.workflowRepository(ctx, ph.WorkflowID)
+	if err != nil {
+		return telemetry.Attribution{}, false
+	}
+	phaseID := ph.ID
+	repoID := repo.ID
+	return telemetry.Attribution{RepositoryID: &repoID, PhaseID: &phaseID}, true
+}
+
+func managedMessageEndCostDecision(phaseID int64, phaseErr error, costUSD float64) (int64, float64, bool) {
+	if phaseErr != nil {
+		return 0, 0, false
+	}
+	if costUSD == 0 {
+		return 0, 0, false
+	}
+	return phaseID, costUSD, true
+}
+
+func (s *Server) applyManagedMessageEndCost(ctx context.Context, raw []byte, evt compactCerberusEvent) {
+	fields := extractCerberusFields(raw)
+	costUSD := 0.0
+	if fields.Usage != nil {
+		costUSD = fields.Usage.CostUSD
+	}
+	ph, err := db.GetPhaseByCerberusSession(ctx, s.pool, evt.Session)
+	phaseID, deltaUSD, ok := managedMessageEndCostDecision(ph.ID, err, costUSD)
+	if !ok {
+		return
+	}
+	if err := db.AddPhaseCost(ctx, s.pool, phaseID, deltaUSD); err != nil {
+		log.Printf("apply phase cost: %v", err)
+	}
+}
+
+func (s *Server) ingestCerberusTelemetry(ctx context.Context, raw []byte, evt compactCerberusEvent) {
+	s.ingestCerberusTelemetryWith(ctx, raw, evt, telemetry.Ingest)
+}
+
+func (s *Server) ingestCerberusTelemetryWith(ctx context.Context, raw []byte, evt compactCerberusEvent, ingest func(context.Context, *pgxpool.Pool, telemetry.Event) error) {
+	fields := extractCerberusFields(raw)
+	tev, ok := buildCerberusTelemetryEvent(evt.Type, evt.Session, fields)
+	if !ok {
+		return
+	}
+	if tev.Type == telemetry.EventSessionStart {
+		if attribution, ok := s.resolveManagedCerberusAttribution(ctx, evt.Session); ok {
+			tev.Attribution = attribution
+		}
+	}
+	if err := ingest(ctx, s.pool, tev); err != nil {
+		log.Printf("cerberus telemetry ingest: %v", err)
+	}
 }

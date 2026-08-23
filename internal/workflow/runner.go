@@ -137,7 +137,7 @@ func (r *Runner) run(ctx context.Context, workflowID int64) error {
 
 		if wf.MaxCostUSD != nil {
 			total, err := db.WorkflowTotalCost(ctx, r.pool, workflowID)
-			if err == nil && total >= *wf.MaxCostUSD {
+			if err == nil && maxCostExceeded(total, wf.MaxCostUSD) {
 				log.Printf("workflow %d budget exhausted (%.4f >= %.4f), pausing", workflowID, total, *wf.MaxCostUSD)
 				r.finishWorkflow(workflowID, "paused")
 				return nil
@@ -179,6 +179,10 @@ func (r *Runner) run(ctx context.Context, workflowID int64) error {
 			return nil
 		}
 	}
+}
+
+func maxCostExceeded(total float64, maxCostUSD *float64) bool {
+	return maxCostUSD != nil && total >= *maxCostUSD
 }
 
 func pendingParallelBatch(phases []db.Phase, group int) []db.Phase {

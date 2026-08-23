@@ -230,6 +230,74 @@ type Feedback struct {
 	ScopeStatus       string               `json:"scope_status"`
 }
 
+type AgentSession struct {
+	ID               int64      `json:"id"`
+	Session          string     `json:"session"`
+	SourceSessionID  string     `json:"source_session_id"`
+	Kind             string     `json:"kind"`
+	Origin           string     `json:"origin"`
+	RepositoryID     *int64     `json:"repository_id,omitempty"`
+	PhaseID          *int64     `json:"phase_id,omitempty"`
+	RepoPath         *string    `json:"repo_path,omitempty"`
+	Model            *string    `json:"model,omitempty"`
+	ParentSession    *string    `json:"parent_session,omitempty"`
+	StartedAt        time.Time  `json:"started_at"`
+	EndedAt          *time.Time `json:"ended_at,omitempty"`
+	InputTokens      int64      `json:"input_tokens"`
+	OutputTokens     int64      `json:"output_tokens"`
+	CacheReadTokens  int64      `json:"cache_read_tokens"`
+	CacheWriteTokens int64      `json:"cache_write_tokens"`
+	CostUSD          float64    `json:"cost_usd"`
+	ToolCallCount    int64      `json:"tool_call_count"`
+	TurnCount        int64      `json:"turn_count"`
+	NextSeq          int64      `json:"next_seq"`
+}
+
+type AgentTurn struct {
+	ID               int64     `json:"id"`
+	AgentSessionID   int64     `json:"agent_session_id"`
+	Seq              int64     `json:"seq"`
+	InputTokens      int64     `json:"input_tokens"`
+	OutputTokens     int64     `json:"output_tokens"`
+	CacheReadTokens  int64     `json:"cache_read_tokens"`
+	CacheWriteTokens int64     `json:"cache_write_tokens"`
+	CostUSD          float64   `json:"cost_usd"`
+	Ts               time.Time `json:"ts"`
+}
+
+type AgentToolCall struct {
+	ID                      int64      `json:"id"`
+	AgentSessionID          int64      `json:"agent_session_id"`
+	Seq                     int64      `json:"seq"`
+	ResultSeq               *int64     `json:"result_seq,omitempty"`
+	ToolCallID              *string    `json:"tool_call_id,omitempty"`
+	ToolName                string     `json:"tool_name"`
+	ToolInput               *string    `json:"tool_input,omitempty"`
+	ToolInputTruncated      bool       `json:"tool_input_truncated"`
+	ToolInputSHA256         *string    `json:"tool_input_sha256,omitempty"`
+	ToolInputOriginalBytes  *int64     `json:"tool_input_original_bytes,omitempty"`
+	ToolResult              *string    `json:"tool_result,omitempty"`
+	ToolResultTruncated     bool       `json:"tool_result_truncated"`
+	ToolResultSHA256        *string    `json:"tool_result_sha256,omitempty"`
+	ToolResultOriginalBytes *int64     `json:"tool_result_original_bytes,omitempty"`
+	IsError                 *bool      `json:"is_error,omitempty"`
+	DurationMs              *int64     `json:"duration_ms,omitempty"`
+	CreatedAt               time.Time  `json:"created_at"`
+	FinishedAt              *time.Time `json:"finished_at,omitempty"`
+}
+
+type AgentMessage struct {
+	ID                   int64     `json:"id"`
+	AgentSessionID       int64     `json:"agent_session_id"`
+	Seq                  int64     `json:"seq"`
+	Role                 string    `json:"role"`
+	Content              *string   `json:"content,omitempty"`
+	ContentTruncated     bool      `json:"content_truncated"`
+	ContentSHA256        *string   `json:"content_sha256,omitempty"`
+	ContentOriginalBytes *int64    `json:"content_original_bytes,omitempty"`
+	CreatedAt            time.Time `json:"created_at"`
+}
+
 type KnowledgeFeedback struct {
 	ID         int64     `json:"id"`
 	Kind       string    `json:"kind"`

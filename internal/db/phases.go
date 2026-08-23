@@ -163,6 +163,20 @@ func UpdatePhase(ctx context.Context, pool *pgxpool.Pool, id int64, p UpdatePhas
 	return ph, err
 }
 
+func AddPhaseCost(ctx context.Context, pool *pgxpool.Pool, id int64, deltaUSD float64) error {
+	tag, err := pool.Exec(ctx,
+		`UPDATE phases SET cost_usd = COALESCE(cost_usd, 0) + $1 WHERE id = $2`,
+		deltaUSD, id,
+	)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func NextPendingPhase(ctx context.Context, pool *pgxpool.Pool, workflowID int64) (Phase, error) {
 	var ph Phase
 	err := pool.QueryRow(ctx,
