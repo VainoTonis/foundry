@@ -189,6 +189,64 @@ func TestSessionsDetailTemplate_RendersEscapedTelemetryEvidence(t *testing.T) {
 	}
 }
 
+// TestSessionsDetailTemplate_RendersNarrative covers that the session
+// detail page surfaces the narrative projection (first user request,
+// latest assistant outcome, last completed activity, aggregates, and
+// conversational groups) derived from the session's curated telemetry
+// rows, and that a session with no user message renders the honest
+// fallback rather than a fabricated request.
+func TestSessionsDetailTemplate_RendersNarrative(t *testing.T) {
+	started := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
+	sess := sessionOverviewView{
+		KnownCerberusSession: db.KnownCerberusSession{
+			Session:       "sess-narrative-detail",
+			Type:          "telemetry",
+			FoundryStatus: "done",
+			LastUpdatedAt: started,
+		},
+		HasTelemetry: true,
+	}
+	messages := []db.AgentMessage{
+		{AgentSessionID: 1, Seq: 1, Role: "user", Content: strp("please summarize the repo"), CreatedAt: started},
+		{AgentSessionID: 1, Seq: 2, Role: "assistant", Content: strp("the repo has three packages"), CreatedAt: started.Add(time.Second)},
+	}
+	tv := buildTelemetrySessionView(db.AgentSession{ID: 1, Session: sess.Session, StartedAt: started}, nil, nil, messages)
+
+	var buf bytes.Buffer
+	if err := templates.ExecuteTemplate(&buf, "sessions.detail", struct {
+		Session   sessionOverviewView
+		Telemetry *telemetrySessionView
+	}{sess, &tv}); err != nil {
+		t.Fatalf("ExecuteTemplate() error = %v", err)
+	}
+	out := buf.String()
+
+	for _, want := range []string{
+		"please summarize the repo",
+		"the repo has three packages",
+		"Exchange 1",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected %q in rendered narrative, got:\n%s", want, out)
+		}
+	}
+
+	// A session with no user message must render the honest fallback,
+	// not a fabricated request.
+	noUserTV := buildTelemetrySessionView(db.AgentSession{ID: 2, Session: "sess-no-user", StartedAt: started}, nil, nil, []db.AgentMessage{
+		{AgentSessionID: 2, Seq: 1, Role: "assistant", Content: strp("an assistant-only note"), CreatedAt: started},
+	})
+	var fallbackBuf bytes.Buffer
+	if err := templates.ExecuteTemplate(&fallbackBuf, "sessions.detail", struct {
+		Session   sessionOverviewView
+		Telemetry *telemetrySessionView
+	}{sess, &noUserTV}); err != nil {
+		t.Fatalf("ExecuteTemplate() error = %v", err)
+	}
+	if !strings.Contains(fallbackBuf.String(), "(no user request recorded for this session)") {
+		t.Fatalf("expected honest fallback for a session with no user message, got:\n%s", fallbackBuf.String())
+	}
+}
 
 // list/detail fragment routes resolve through the mux without requiring
 // a database connection.

@@ -40,8 +40,24 @@
     <div class="evidence-head"><div><h3>Live activity</h3><p class="hint">No live Cerberus session stream is available: this session has no matching workflow phase, spec draft, or external record, so there is nothing to tail or clean up here. What follows is its recorded telemetry only.</p></div></div>
   </section>{{end}}
   <section class="evidence-panel telemetry-panel">
-    <div class="evidence-head"><div><h3>Recorded telemetry</h3><p class="hint">Captured turns, tool calls, and messages for this session's agent record{{if .Telemetry}}, produced by {{.Telemetry.Session.Origin}}{{if .Telemetry.Session.Kind}}/{{.Telemetry.Session.Kind}}{{end}}{{end}}.</p></div></div>
-    {{if .Telemetry}}<p class="telemetry-fidelity-notice hint">Curated telemetry: payloads shown here are captured, sequence-ordered summaries of the underlying agent stream, from Pi or any other telemetry-reporting producer. Truncated entries retain a SHA-256 hash and original byte count of the untruncated payload for evidentiary comparison, but are not a byte-for-byte replay of the raw session.</p><p class="hint">Duration: {{.Telemetry.Duration}} · Turns: {{.Telemetry.TurnCount}} · Tool calls: {{.Telemetry.ToolCallCount}} · Messages: {{.Telemetry.MessageCount}} · Errors: {{.Telemetry.ErrorCount}} · Truncated: {{.Telemetry.TruncatedCount}}</p><p class="hint">Tokens in/out: {{.Telemetry.Session.InputTokens}}/{{.Telemetry.Session.OutputTokens}} · Cache read/write: {{.Telemetry.Session.CacheReadTokens}}/{{.Telemetry.Session.CacheWriteTokens}} · Cost: ${{printf "%.4f" .Telemetry.Session.CostUSD}}</p>{{template "telemetry.events" .Telemetry.Events}}{{else}}<div class="empty">No agent telemetry recorded for this session.</div>{{end}}
+    <div class="evidence-head"><div><h3>Recorded telemetry</h3><p class="hint">Captured model calls, tool calls, and messages for this session's agent record{{if .Telemetry}}, produced by {{.Telemetry.Session.Origin}}{{if .Telemetry.Session.Kind}}/{{.Telemetry.Session.Kind}}{{end}}{{end}}.</p></div></div>
+    {{if .Telemetry}}
+    <div class="telemetry-overview">
+      <h4>Overview</h4>
+      <p class="hint"><strong>Goal:</strong> {{if .Telemetry.Narrative.HasUserRequest}}{{.Telemetry.Narrative.FirstUserRequest}}{{else}}(no user request recorded for this session){{end}}</p>
+      <p class="hint"><strong>Latest outcome:</strong> {{if .Telemetry.Narrative.HasAssistantOutcome}}{{.Telemetry.Narrative.LatestAssistantOutcome}}{{else}}(no assistant outcome recorded for this session){{end}}</p>
+      <p class="hint">Model calls: {{.Telemetry.Narrative.ModelCallCount}} · Cost: ${{printf "%.4f" .Telemetry.Narrative.CostUSD}} · Errors: {{.Telemetry.Narrative.ErrorCount}}</p>
+      <p class="hint"><strong>Last completed activity:</strong> {{if .Telemetry.Narrative.HasActivity}}{{.Telemetry.Narrative.LastActivityLabel}} ({{formatCapturedAt .Telemetry.Narrative.LastActivityAt}}){{else}}(no activity recorded for this session){{end}}</p>
+      {{if .Telemetry.Narrative.Groups}}<div class="telemetry-exchanges">{{range .Telemetry.Narrative.Groups}}<div class="telemetry-exchange"><p class="hint"><strong>{{.Label}}</strong> · {{formatCapturedAt .StartedAt}}</p>{{if .HasUserPreview}}<p class="hint">User: {{.UserPreview}}</p>{{end}}{{if .HasAssistantPreview}}<p class="hint">Assistant: {{.AssistantPreview}}</p>{{end}}{{template "telemetry.toolSummaries" .Events}}</div>{{end}}</div>{{else}}<p class="hint">No conversational exchanges recorded for this session.</p>{{end}}
+    </div>
+    <details class="telemetry-raw">
+      <summary>Raw evidence</summary>
+      <p class="telemetry-fidelity-notice hint">Curated telemetry: payloads shown here are captured, sequence-ordered summaries of the underlying agent stream, from Pi or any other telemetry-reporting producer. Truncated entries retain a SHA-256 hash and original byte count of the untruncated payload for evidentiary comparison, but are not a byte-for-byte replay of the raw session.</p>
+      <p class="hint">Duration: {{.Telemetry.Duration}} · Model calls: {{.Telemetry.TurnCount}} · Tool calls: {{.Telemetry.ToolCallCount}} · Messages: {{.Telemetry.MessageCount}} · Errors: {{.Telemetry.ErrorCount}} · Truncated: {{.Telemetry.TruncatedCount}}</p>
+      <p class="hint">Tokens in/out: {{.Telemetry.Session.InputTokens}}/{{.Telemetry.Session.OutputTokens}} · Cache read/write: {{.Telemetry.Session.CacheReadTokens}}/{{.Telemetry.Session.CacheWriteTokens}} · Cost: ${{printf "%.4f" .Telemetry.Session.CostUSD}}</p>
+      {{if .Telemetry.Narrative.Groups}}<div class="telemetry-groups">{{range .Telemetry.Narrative.Groups}}<details class="telemetry-group"><summary>{{.Label}} · {{formatCapturedAt .StartedAt}}</summary>{{template "telemetry.events" .Events}}</details>{{end}}</div>{{else}}{{template "telemetry.events" .Telemetry.Events}}{{end}}
+    </details>
+    {{else}}<div class="empty">No agent telemetry recorded for this session.</div>{{end}}
   </section>
 </div>
 {{end}}

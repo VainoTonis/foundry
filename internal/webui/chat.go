@@ -100,12 +100,12 @@ func (h *Handler) handleUIChatDetailFragment(w http.ResponseWriter, r *http.Requ
 	_, runtimeProfile := h.runtimeProfiles()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := templates.ExecuteTemplate(w, "chat.detail", struct {
-		Session           db.ChatSession
-		Messages          []db.ChatMessage
-		Profiles          []db.Profile
-		Sessions          []db.ChatSession
-		ActiveProfileName string
-		RuntimeProfile    string
+		Session               db.ChatSession
+		Messages              []db.ChatMessage
+		Profiles              []db.Profile
+		Sessions              []db.ChatSession
+		ActiveProfileName     string
+		RuntimeProfile        string
 		AttachedRepositories  []repository.Repository
 		AvailableRepositories []repository.Repository
 	}{sess, msgs, profiles, sessions, activeProfileName(sess.ProfileName, runtimeProfile), runtimeProfile, attachedRepos, availableRepos}); err != nil {

@@ -300,6 +300,9 @@ button:disabled, .btn:disabled, [aria-busy="true"] { opacity: .62; cursor: not-a
 .telemetry-event-meta { display: flex; flex-wrap: wrap; gap: .5rem 1rem; margin-top: .4rem; font-family: var(--mono); font-size: .74rem; color: var(--muted); }
 .telemetry-error { border-color: var(--red); box-shadow: inset 3px 0 0 var(--red); }
 .telemetry-kind-turn { border-color: var(--blue); }
+.telemetry-tool-status { font-weight: 800; }
+.telemetry-tool-success { color: var(--green, #1a7f37); }
+.telemetry-tool-error { color: var(--red); }
 
 /* --- detail sections --- */
 .section { margin-bottom: 1.5rem; }
