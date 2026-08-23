@@ -531,6 +531,43 @@ func TestListAgentSessionsByPhase_Postgres(t *testing.T) {
 	}
 }
 
+func TestListAgentSessions_Postgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+
+	a := createTestAgentSession(t, pool, EnsureAgentSessionParams{
+		Session:         "agent-telemetry-global-list-a",
+		SourceSessionID: "agent-telemetry-global-list-a-source",
+		Origin:          "cli",
+	})
+	b := createTestAgentSession(t, pool, EnsureAgentSessionParams{
+		Session:         "agent-telemetry-global-list-b",
+		SourceSessionID: "agent-telemetry-global-list-b-source",
+		Origin:          "cli",
+	})
+
+	got, err := ListAgentSessions(ctx, pool)
+	if err != nil {
+		t.Fatalf("ListAgentSessions() error = %v", err)
+	}
+	if len(got) == 0 {
+		t.Fatalf("ListAgentSessions() = empty, want at least the two sessions just created")
+	}
+
+	var sawA, sawB bool
+	for _, s := range got {
+		switch s.ID {
+		case a.ID:
+			sawA = true
+		case b.ID:
+			sawB = true
+		}
+	}
+	if !sawA || !sawB {
+		t.Fatalf("ListAgentSessions() did not include both created sessions (sawA=%v sawB=%v): %+v", sawA, sawB, got)
+	}
+}
+
 func TestListAgentTurnsToolCallsMessagesBySession_Postgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()

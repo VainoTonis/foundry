@@ -367,6 +367,31 @@ func ListAgentSessionsByPhase(ctx context.Context, pool *pgxpool.Pool, phaseID i
 	return out, rows.Err()
 }
 
+// ListAgentSessions returns all agent sessions across the system, ordered
+// deterministically by start time and then id. It returns an empty slice
+// (not an error) when there are no agent sessions. Used to power a
+// session-centric telemetry view that isn't scoped to a single phase.
+func ListAgentSessions(ctx context.Context, pool *pgxpool.Pool) ([]AgentSession, error) {
+	rows, err := pool.Query(ctx,
+		`SELECT `+agentSessionSelectColumns+`
+		 FROM agent_sessions
+		 ORDER BY started_at, id`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []AgentSession{}
+	for rows.Next() {
+		s, err := scanAgentSession(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 // ListAgentTurnsBySession returns all turns for an agent session, ordered
 // deterministically by seq. It returns an empty slice (not an error) when
 // the session has no turns.

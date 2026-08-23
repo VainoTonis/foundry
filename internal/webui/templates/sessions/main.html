@@ -1,8 +1,8 @@
 {{define "sessions.list"}}
 <div class="console-page" data-page="sessions">
-  <header class="console-page-header"><div><p class="console-label">Agent activity</p><h1>Sessions</h1><p>All Foundry-known Cerberus sessions: workflow phases, drafts, chats, and external runs. Open one to tail its live activity.</p></div></header>
+  <header class="console-page-header"><div><p class="console-label">Agent activity</p><h1>Sessions</h1><p>All captured agent and Cerberus sessions: workflow phases, drafts, chats, external runs, and Pi telemetry-only producers. Open one to tail its live activity.</p></div></header>
   <section class="settings-section"><div class="section-title-row"><h3>Sessions</h3><span class="chip chip-pending">cleanup audit</span></div>{{if .SessionError}}<div class="empty empty-error">{{.SessionError}}</div>{{end}}
-  {{if .Sessions}}<div class="worklist">{{range .Sessions}}<article class="work-row"><div class="work-main"><a class="work-title" href="/sessions/{{.Session}}" hx-get="/sessions/{{.Session}}/fragment" hx-target="#app" hx-push-url="/sessions/{{.Session}}">{{.Session}}</a><div class="work-meta">{{.Type}}{{if .RepositoryName}} · {{.RepositoryName}}{{end}}{{if .SpecTitle}} · spec: {{.SpecTitle}}{{end}}{{if .PhaseName}} · phase: {{.PhaseName}}{{end}}{{if .DraftTitle}} · draft: {{.DraftTitle}}{{end}} · updated {{datetime .LastUpdatedAt}}</div><div class="work-meta">Cerberus: {{if .CerberusStatus}}{{.CerberusStatus}}{{else}}unknown{{end}}{{if .CerberusError}} · {{.CerberusError}}{{end}}{{if .UnsafeReason}} · {{.UnsafeReason}}{{end}}</div></div><div class="work-signals"><span class="chip chip-{{.FoundryStatus}}">{{.FoundryStatus}}</span>{{if .SafeToClean}}<span class="chip chip-done">safe cleanup</span>{{else}}<span class="chip chip-running">active / protected</span>{{end}}</div><div class="work-next"><button class="btn" data-json-post="{{cleanSessionURL .Session}}" data-refresh="/sessions/fragment" data-target="#app" {{if not .SafeToClean}}disabled title="{{.UnsafeReason}}"{{end}}>Clean session</button></div></article>{{end}}</div>{{else}}<div class="empty empty-action">No Foundry-known Cerberus sessions. Active work will appear here when workflows, drafts, or chats use Cerberus.</div>{{end}}</section>
+  {{if .Sessions}}<div class="worklist">{{range .Sessions}}<article class="work-row{{if not .HasAttribution}} work-row-telemetry{{end}}"><div class="work-main"><a class="work-title" href="/sessions/{{.Session}}" hx-get="/sessions/{{.Session}}/fragment" hx-target="#app" hx-push-url="/sessions/{{.Session}}">{{.Session}}</a><div class="work-meta">{{.Type}}{{if .RepositoryName}} · {{.RepositoryName}}{{end}}{{if .SpecTitle}} · spec: {{.SpecTitle}}{{end}}{{if .PhaseName}} · phase: {{.PhaseName}}{{end}}{{if .DraftTitle}} · draft: {{.DraftTitle}}{{end}}{{if not .HasAttribution}} · telemetry only{{end}} · updated {{datetime .LastUpdatedAt}}</div><div class="work-meta">{{if .HasAttribution}}Cerberus: {{if .CerberusStatus}}{{.CerberusStatus}}{{else}}unknown{{end}}{{if .CerberusError}} · {{.CerberusError}}{{end}}{{if .UnsafeReason}} · {{.UnsafeReason}}{{end}}{{else}}Producer: {{.AgentSession.Origin}}{{if .AgentSession.Kind}}/{{.AgentSession.Kind}}{{end}} · no live Cerberus stream or cleanup for telemetry-only sessions{{end}}</div></div><div class="work-signals"><span class="chip chip-{{.FoundryStatus}}">{{.FoundryStatus}}</span>{{if .SafeToClean}}<span class="chip chip-done">safe cleanup</span>{{else}}<span class="chip chip-running">active / protected</span>{{end}}</div><div class="work-next">{{if .HasAttribution}}<button class="btn" data-json-post="{{cleanSessionURL .Session}}" data-refresh="/sessions/fragment" data-target="#app" {{if not .SafeToClean}}disabled title="{{.UnsafeReason}}"{{end}}>Clean session</button>{{end}}</div></article>{{end}}</div>{{else}}<div class="empty empty-action">No sessions captured yet. Active work will appear here when workflows, drafts, or chats run, or when a telemetry-reporting producer reports activity.</div>{{end}}</section>
 </div>
 {{end}}
 
@@ -15,24 +15,33 @@
       <h1>{{.Session.Session}}</h1>
       <div class="card-meta">{{.Session.Type}}{{if .Session.RepositoryName}} · {{.Session.RepositoryName}}{{end}}{{if .Session.SpecTitle}} · spec: {{.Session.SpecTitle}}{{end}}{{if .Session.PhaseName}} · phase: {{.Session.PhaseName}}{{end}}{{if .Session.DraftTitle}} · draft: {{.Session.DraftTitle}}{{end}} · updated {{datetime .Session.LastUpdatedAt}}</div>
     </div>
-    <div class="card-actions"><button class="btn btn-danger" data-json-post="{{cleanSessionURL .Session.Session}}" data-redirect="/sessions" {{if not .Session.SafeToClean}}disabled title="{{.Session.UnsafeReason}}"{{end}}>Clean session</button></div>
+    <div class="card-actions">{{if .Session.HasAttribution}}<button class="btn btn-danger" data-json-post="{{cleanSessionURL .Session.Session}}" data-redirect="/sessions" {{if not .Session.SafeToClean}}disabled title="{{.Session.UnsafeReason}}"{{end}}>Clean session</button>{{end}}</div>
   </header>
   <section class="settings-section">
     <dl class="fact-list">
       <div><dt>Foundry status</dt><dd><span class="chip chip-{{.Session.FoundryStatus}}">{{.Session.FoundryStatus}}</span></dd></div>
-      <div><dt>Cerberus status</dt><dd>{{if .Session.CerberusStatus}}{{.Session.CerberusStatus}}{{else}}unknown{{end}}{{if .Session.CerberusError}} · {{.Session.CerberusError}}{{end}}</dd></div>
+      {{if .Session.HasAttribution}}<div><dt>Cerberus status</dt><dd>{{if .Session.CerberusStatus}}{{.Session.CerberusStatus}}{{else}}unknown{{end}}{{if .Session.CerberusError}} · {{.Session.CerberusError}}{{end}}</dd></div>
       {{if .Session.RepositoryLocalPath}}<div><dt>Local path</dt><dd>{{.Session.RepositoryLocalPath}}</dd></div>{{end}}
       {{if .Session.UnsafeReason}}<div><dt>Cleanup</dt><dd>{{.Session.UnsafeReason}}</dd></div>{{end}}
+      {{else}}<div><dt>Producer</dt><dd>{{if .Session.HasTelemetry}}{{.Session.AgentSession.Origin}}{{if .Session.AgentSession.Kind}}/{{.Session.AgentSession.Kind}}{{end}}{{else}}unknown{{end}}</dd></div>
+      <div><dt>Attribution</dt><dd>{{.Session.UnsafeReason}}</dd></div>
+      {{end}}
     </dl>
   </section>
-  <section class="evidence-panel">
+  {{if .Session.HasAttribution}}<section class="evidence-panel">
     <div class="evidence-head">
-      <div><h3>Live activity</h3><p class="hint">Tails <code>text</code> and <code>tool_use</code> events from the session stream as they arrive.</p></div>
+      <div><h3>Live activity</h3><p class="hint">Tails <code>text</code> and <code>tool_use</code> events from the Cerberus session stream as they arrive.</p></div>
       <div class="card-meta">Stream: <strong data-session-connection>Connecting…</strong></div>
     </div>
     <div id="session-stream" class="chat-messages" data-session-log>
       <div class="chat-empty"><strong>Waiting for activity.</strong><span>New text and tool_use events will appear here live.</span></div>
     </div>
+  </section>{{else}}<section class="evidence-panel">
+    <div class="evidence-head"><div><h3>Live activity</h3><p class="hint">No live Cerberus session stream is available: this session has no matching workflow phase, spec draft, or external record, so there is nothing to tail or clean up here. What follows is its recorded telemetry only.</p></div></div>
+  </section>{{end}}
+  <section class="evidence-panel telemetry-panel">
+    <div class="evidence-head"><div><h3>Recorded telemetry</h3><p class="hint">Captured turns, tool calls, and messages for this session's agent record{{if .Telemetry}}, produced by {{.Telemetry.Session.Origin}}{{if .Telemetry.Session.Kind}}/{{.Telemetry.Session.Kind}}{{end}}{{end}}.</p></div></div>
+    {{if .Telemetry}}<p class="telemetry-fidelity-notice hint">Curated telemetry: payloads shown here are captured, sequence-ordered summaries of the underlying agent stream, from Pi or any other telemetry-reporting producer. Truncated entries retain a SHA-256 hash and original byte count of the untruncated payload for evidentiary comparison, but are not a byte-for-byte replay of the raw session.</p><p class="hint">Duration: {{.Telemetry.Duration}} · Turns: {{.Telemetry.TurnCount}} · Tool calls: {{.Telemetry.ToolCallCount}} · Messages: {{.Telemetry.MessageCount}} · Errors: {{.Telemetry.ErrorCount}} · Truncated: {{.Telemetry.TruncatedCount}}</p><p class="hint">Tokens in/out: {{.Telemetry.Session.InputTokens}}/{{.Telemetry.Session.OutputTokens}} · Cache read/write: {{.Telemetry.Session.CacheReadTokens}}/{{.Telemetry.Session.CacheWriteTokens}} · Cost: ${{printf "%.4f" .Telemetry.Session.CostUSD}}</p>{{template "telemetry.events" .Telemetry.Events}}{{else}}<div class="empty">No agent telemetry recorded for this session.</div>{{end}}
   </section>
 </div>
 {{end}}

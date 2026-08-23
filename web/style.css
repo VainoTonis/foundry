@@ -107,6 +107,7 @@ button:disabled, .btn:disabled, [aria-busy="true"] { opacity: .62; cursor: not-a
 .chip-failed, .chip-fail, .chip-error, .chip-blocked, .chip-rejected { color: var(--red); }
 .chip-poc { color: #6b21a8; }
 .chip-polish { color: var(--blue); }
+.chip-telemetry { color: var(--muted); }
 
 /* --- cards / slabs --- */
 .card {
@@ -131,6 +132,7 @@ button:disabled, .btn:disabled, [aria-busy="true"] { opacity: .62; cursor: not-a
 .work-row-failed, .work-row-blocked { border-left: .7rem solid var(--red); }
 .work-row-awaiting_review, .work-row-review, .work-row-paused { border-left: .7rem solid var(--yellow); }
 .work-row-done, .work-row-accepted { border-left: .7rem solid var(--green); }
+.work-row-telemetry { border-left: .7rem dashed var(--muted); }
 .work-main { min-width: 0; }
 .work-title, .project-title { color: var(--ink); font-weight: 950; text-decoration: none; font-size: 1rem; overflow-wrap: anywhere; }
 .work-title:hover, .project-title:hover { text-decoration: underline; }
