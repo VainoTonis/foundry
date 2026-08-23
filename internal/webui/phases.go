@@ -18,6 +18,8 @@ func (s *Handler) handleUIPhase(w http.ResponseWriter, r *http.Request) {
 		s.handleUIPhaseLogsFragment(w, r, id)
 	case "diff/fragment":
 		s.handleUIPhaseDiffFragment(w, r, id)
+	case "telemetry/fragment":
+		s.handleUIPhaseTelemetryFragment(w, r, id)
 	default:
 		http.NotFound(w, r)
 	}
@@ -44,6 +46,55 @@ func (s *Handler) handleUIPhaseLogsFragment(w http.ResponseWriter, r *http.Reque
 		Logs      []db.PhaseLog
 		LastLogID int64
 	}{ph, logs, lastLogID}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (s *Handler) handleUIPhaseTelemetryFragment(w http.ResponseWriter, r *http.Request, id int64) {
+	ph, err := db.GetPhase(r.Context(), s.pool, id)
+	if errors.Is(err, db.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	sessions, err := db.ListAgentSessionsByPhase(r.Context(), s.pool, id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	turnsBySession := make(map[int64][]db.AgentTurn, len(sessions))
+	toolCallsBySession := make(map[int64][]db.AgentToolCall, len(sessions))
+	messagesBySession := make(map[int64][]db.AgentMessage, len(sessions))
+	for _, sess := range sessions {
+		turns, err := db.ListAgentTurnsBySession(r.Context(), s.pool, sess.ID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		toolCalls, err := db.ListAgentToolCallsBySession(r.Context(), s.pool, sess.ID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		messages, err := db.ListAgentMessagesBySession(r.Context(), s.pool, sess.ID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		turnsBySession[sess.ID] = turns
+		toolCallsBySession[sess.ID] = toolCalls
+		messagesBySession[sess.ID] = messages
+	}
+
+	view := buildPhaseTelemetryView(ph, sessions, turnsBySession, toolCallsBySession, messagesBySession)
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := templates.ExecuteTemplate(w, "phases.telemetry", view); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
