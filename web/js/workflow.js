@@ -60,7 +60,7 @@ function setWorkWindowPhase(root, phaseId, tab) {
     button.dataset.jsonPost = `/api/phases/${phaseId}/${action}`;
   });
   body.dataset.phaseDetailPanel = String(phaseId);
-  const kind = nextTab === 'logs' ? 'logs' : 'diff';
+  const kind = nextTab === 'logs' ? 'logs' : nextTab === 'telemetry' ? 'telemetry' : 'diff';
   if (window.htmx) htmx.ajax('GET', `/phases/${phaseId}/${kind}/fragment`, { target: '#workflow-work-body', swap: 'innerHTML' });
   else location.href = `/phases/${phaseId}/${kind}/fragment`;
 }

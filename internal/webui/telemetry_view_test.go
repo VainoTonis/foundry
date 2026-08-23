@@ -72,15 +72,18 @@ func TestBuildPhaseTelemetryViewPopulated(t *testing.T) {
 	}
 	toolCalls := []db.AgentToolCall{
 		{
-			AgentSessionID:      1,
-			Seq:                 1,
-			ToolName:            "bash",
-			ToolInput:           strp("<script>rm -rf /</script>"),
-			ToolResult:          strp("done"),
-			ToolResultTruncated: true,
-			IsError:             boolp(true),
-			DurationMs:          i64p(42),
-			CreatedAt:           started.Add(1 * time.Second),
+			AgentSessionID:          1,
+			Seq:                     1,
+			ToolCallID:              strp("call-123"),
+			ToolName:                "bash",
+			ToolInput:               strp("<script>rm -rf /</script>"),
+			ToolResult:              strp("done"),
+			ToolResultTruncated:     true,
+			ToolResultSHA256:        strp("deadbeef"),
+			ToolResultOriginalBytes: i64p(4096),
+			IsError:                 boolp(true),
+			DurationMs:              i64p(42),
+			CreatedAt:               started.Add(1 * time.Second),
 		},
 	}
 	messages := []db.AgentMessage{
@@ -144,6 +147,11 @@ func TestBuildPhaseTelemetryViewPopulated(t *testing.T) {
 		"· error",
 		"· 42ms",
 		"&lt;script&gt;",
+		"Captured: 2024-01-01 00:00:01",
+		"Tool call ID: call-123",
+		"Result SHA-256: deadbeef",
+		"4096 original bytes",
+		"Curated telemetry",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected %q in rendered output, got:\n%s", want, out)

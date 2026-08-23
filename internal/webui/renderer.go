@@ -18,6 +18,7 @@ var templates = template.Must(template.New("ui").Funcs(template.FuncMap{
 	"json":            templateJSON,
 	"markdown":        templateMarkdown,
 	"cleanSessionURL": templateCleanSessionURL,
+	"formatCapturedAt": formatCapturedAt,
 
 	// Phase-related functions
 	"phaseProgress":    phaseProgress,

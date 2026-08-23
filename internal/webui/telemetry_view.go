@@ -32,6 +32,27 @@ type telemetryEventView struct {
 	IsError       bool
 	DurationLabel string
 	At            time.Time
+
+	// ToolCallID identifies the originating tool_call event when the
+	// upstream agent surfaced one (e.g. Cerberus tool invocations).
+	ToolCallID string
+
+	// Original-byte/hash truncation metadata, populated when available.
+	// Tool calls carry independent input/result provenance; messages
+	// only ever populate the "Result" pair (their single content body).
+	InputSHA256         string
+	InputOriginalBytes  int64
+	ResultSHA256        string
+	ResultOriginalBytes int64
+}
+
+// formatCapturedAt renders an event's capture timestamp for display, or a
+// placeholder when it was never recorded (zero time).
+func formatCapturedAt(t time.Time) string {
+	if t.IsZero() {
+		return "—"
+	}
+	return t.Format("2006-01-02 15:04:05")
 }
 
 // telemetrySessionView is the per-session view: identifying metadata,
@@ -77,6 +98,25 @@ func strOrPlaceholder(s *string) string {
 		return "(empty)"
 	}
 	return *s
+}
+
+// strOrEmpty returns the dereferenced string, or "" when the pointer is
+// nil. Used for metadata fields (tool call ID, hashes) that should be
+// hidden entirely by the template rather than rendered as a placeholder.
+func strOrEmpty(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+// int64PtrOrZero dereferences an optional int64, returning 0 when nil
+// (e.g. original-byte counts that were never recorded).
+func int64PtrOrZero(n *int64) int64 {
+	if n == nil {
+		return 0
+	}
+	return *n
 }
 
 // formatDurationMs renders an optional millisecond duration for display,
@@ -129,10 +169,15 @@ func buildTelemetrySessionView(sess db.AgentSession, turns []db.AgentTurn, toolC
 				"input: %s\nresult: %s",
 				strOrPlaceholder(c.ToolInput), strOrPlaceholder(c.ToolResult),
 			),
-			Truncated:     truncated,
-			IsError:       isError,
-			DurationLabel: formatDurationMs(c.DurationMs),
-			At:            c.CreatedAt,
+			Truncated:           truncated,
+			IsError:             isError,
+			DurationLabel:       formatDurationMs(c.DurationMs),
+			At:                  c.CreatedAt,
+			ToolCallID:          strOrEmpty(c.ToolCallID),
+			InputSHA256:         strOrEmpty(c.ToolInputSHA256),
+			InputOriginalBytes:  int64PtrOrZero(c.ToolInputOriginalBytes),
+			ResultSHA256:        strOrEmpty(c.ToolResultSHA256),
+			ResultOriginalBytes: int64PtrOrZero(c.ToolResultOriginalBytes),
 		})
 		if isError {
 			view.ErrorCount++
@@ -144,12 +189,14 @@ func buildTelemetrySessionView(sess db.AgentSession, turns []db.AgentTurn, toolC
 
 	for _, m := range messages {
 		events = append(events, telemetryEventView{
-			Seq:       m.Seq,
-			Kind:      "message",
-			Title:     fmt.Sprintf("Message: %s", m.Role),
-			Payload:   strOrPlaceholder(m.Content),
-			Truncated: m.ContentTruncated,
-			At:        m.CreatedAt,
+			Seq:                 m.Seq,
+			Kind:                "message",
+			Title:               fmt.Sprintf("Message: %s", m.Role),
+			Payload:             strOrPlaceholder(m.Content),
+			Truncated:           m.ContentTruncated,
+			At:                  m.CreatedAt,
+			ResultSHA256:        strOrEmpty(m.ContentSHA256),
+			ResultOriginalBytes: int64PtrOrZero(m.ContentOriginalBytes),
 		})
 		if m.ContentTruncated {
 			view.TruncatedCount++

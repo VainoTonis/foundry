@@ -288,6 +288,17 @@ button:disabled, .btn:disabled, [aria-busy="true"] { opacity: .62; cursor: not-a
 .diff-del { color: var(--red); }
 .diff-hunk { color: var(--blue); }
 
+/* --- telemetry evidence --- */
+.telemetry-fidelity-notice { border: 2px dashed var(--border); background: var(--paper-2); padding: .6rem .75rem; margin: .75rem 0; max-width: 80ch; }
+.telemetry-session { border: 3px solid var(--border); background: var(--paper); box-shadow: 3px 3px 0 var(--border); padding: .85rem 1rem; margin-top: 1rem; }
+.telemetry-session h4 { font-size: .85rem; text-transform: uppercase; letter-spacing: .05em; margin-bottom: .35rem; }
+.telemetry-event { border: 2px solid var(--border); background: var(--paper-2); margin-top: .5rem; padding: .4rem .6rem; }
+.telemetry-event summary { cursor: pointer; font-weight: 800; overflow-wrap: anywhere; }
+.telemetry-event pre { white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: .78rem; background: var(--evidence); color: var(--evidence-text); border: 2px solid var(--border); padding: .5rem; margin-top: .5rem; max-height: 40vh; overflow: auto; }
+.telemetry-event-meta { display: flex; flex-wrap: wrap; gap: .5rem 1rem; margin-top: .4rem; font-family: var(--mono); font-size: .74rem; color: var(--muted); }
+.telemetry-error { border-color: var(--red); box-shadow: inset 3px 0 0 var(--red); }
+.telemetry-kind-turn { border-color: var(--blue); }
+
 /* --- detail sections --- */
 .section { margin-bottom: 1.5rem; }
 .section h3 { font-size: .85rem; color: var(--muted); margin-bottom: .5rem; letter-spacing: .05em; text-transform: uppercase; }
@@ -422,6 +433,11 @@ button:disabled, .btn:disabled, [aria-busy="true"] { opacity: .62; cursor: not-a
   .workflow-work-body { padding: .65rem; min-height: 300px; }
   .doc-box, .diff-box, .diff-surface, .log-box, .log-table { font-size: .75rem; max-width: 100%; }
   .log-row, .diff-row { min-width: 680px; }
+  .telemetry-session, .telemetry-event { padding: .5rem .6rem; }
+  .telemetry-event-meta { flex-direction: column; gap: .2rem; }
+  .telemetry-fidelity-notice { max-width: 100%; font-size: .8rem; }
+  .work-tabs { width: 100%; }
+  .work-tab { flex: 1 1 auto; text-align: center; }
   .log-row { grid-template-columns: 9rem 5.5rem minmax(18rem, 1fr) 7rem; }
 }
 
