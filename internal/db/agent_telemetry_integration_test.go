@@ -428,7 +428,7 @@ func TestAgentSessionUsageAndClose_Postgres(t *testing.T) {
 		t.Fatalf("AddAgentSessionUsage() on unknown id error = %v, want %v", err, ErrNotFound)
 	}
 
-	closed, err := CloseAgentSession(ctx, pool, session.ID)
+	closed, err := CloseAgentSession(ctx, pool, session.ID, nil)
 	if err != nil {
 		t.Fatalf("CloseAgentSession() error = %v", err)
 	}
@@ -437,7 +437,7 @@ func TestAgentSessionUsageAndClose_Postgres(t *testing.T) {
 	}
 	firstEndedAt := *closed.EndedAt
 
-	closedAgain, err := CloseAgentSession(ctx, pool, session.ID)
+	closedAgain, err := CloseAgentSession(ctx, pool, session.ID, nil)
 	if err != nil {
 		t.Fatalf("CloseAgentSession() second call error = %v", err)
 	}
@@ -445,7 +445,7 @@ func TestAgentSessionUsageAndClose_Postgres(t *testing.T) {
 		t.Fatalf("CloseAgentSession() second call EndedAt = %v, want unchanged %v", closedAgain.EndedAt, firstEndedAt)
 	}
 
-	if _, err := CloseAgentSession(ctx, pool, int64(1)<<40); !errors.Is(err, ErrNotFound) {
+	if _, err := CloseAgentSession(ctx, pool, int64(1)<<40, nil); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("CloseAgentSession() on unknown id error = %v, want %v", err, ErrNotFound)
 	}
 }

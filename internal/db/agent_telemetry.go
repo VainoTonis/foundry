@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -43,6 +44,7 @@ type EnsureAgentSessionParams struct {
 	RepoPath        *string
 	Model           *string
 	ParentSession   *string
+	StartedAt       *time.Time
 }
 
 func EnsureAgentSession(ctx context.Context, pool *pgxpool.Pool, p EnsureAgentSessionParams) (AgentSession, error) {
@@ -63,8 +65,8 @@ func EnsureAgentSession(ctx context.Context, pool *pgxpool.Pool, p EnsureAgentSe
 	row := pool.QueryRow(ctx,
 		`INSERT INTO agent_sessions (
 			session, source_session_id, kind, origin,
-			repository_id, phase_id, repo_path, model, parent_session
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			repository_id, phase_id, repo_path, model, parent_session, started_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, now()))
 		ON CONFLICT (session) DO UPDATE SET
 			kind = CASE WHEN agent_sessions.kind = 'unknown' THEN EXCLUDED.kind ELSE agent_sessions.kind END,
 			repository_id = COALESCE(agent_sessions.repository_id, EXCLUDED.repository_id),
@@ -74,7 +76,7 @@ func EnsureAgentSession(ctx context.Context, pool *pgxpool.Pool, p EnsureAgentSe
 			parent_session = COALESCE(agent_sessions.parent_session, EXCLUDED.parent_session)
 		RETURNING `+agentSessionSelectColumns,
 		p.Session, p.SourceSessionID, kind, p.Origin,
-		p.RepositoryID, p.PhaseID, p.RepoPath, p.Model, p.ParentSession,
+		p.RepositoryID, p.PhaseID, p.RepoPath, p.Model, p.ParentSession, p.StartedAt,
 	)
 	return scanAgentSession(row)
 }
@@ -122,15 +124,16 @@ type InsertAgentTurnParams struct {
 	CacheReadTokens  int64
 	CacheWriteTokens int64
 	CostUSD          float64
+	Ts               *time.Time
 }
 
 func InsertAgentTurn(ctx context.Context, pool *pgxpool.Pool, p InsertAgentTurnParams) (AgentTurn, error) {
 	row := pool.QueryRow(ctx,
 		`INSERT INTO agent_turns (
-			agent_session_id, seq, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd
-		) VALUES ($1, $2, $3, $4, $5, $6, $7)
+			agent_session_id, seq, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, ts
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, now()))
 		RETURNING `+agentTurnSelectColumns,
-		p.AgentSessionID, p.Seq, p.InputTokens, p.OutputTokens, p.CacheReadTokens, p.CacheWriteTokens, p.CostUSD,
+		p.AgentSessionID, p.Seq, p.InputTokens, p.OutputTokens, p.CacheReadTokens, p.CacheWriteTokens, p.CostUSD, p.Ts,
 	)
 	t, err := scanAgentTurn(row)
 	if isForeignKeyViolation(err) {
@@ -169,6 +172,7 @@ type InsertAgentToolCallParams struct {
 	ToolInputTruncated     bool
 	ToolInputSHA256        *string
 	ToolInputOriginalBytes *int64
+	CreatedAt              *time.Time
 }
 
 func InsertAgentToolCall(ctx context.Context, pool *pgxpool.Pool, p InsertAgentToolCallParams) (AgentToolCall, error) {
@@ -178,11 +182,11 @@ func InsertAgentToolCall(ctx context.Context, pool *pgxpool.Pool, p InsertAgentT
 	row := pool.QueryRow(ctx,
 		`INSERT INTO agent_tool_calls (
 			agent_session_id, seq, tool_call_id, tool_name,
-			tool_input, tool_input_truncated, tool_input_sha256, tool_input_original_bytes
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			tool_input, tool_input_truncated, tool_input_sha256, tool_input_original_bytes, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9, now()))
 		RETURNING `+agentToolCallSelectColumns,
 		p.AgentSessionID, p.Seq, p.ToolCallID, p.ToolName,
-		p.ToolInput, p.ToolInputTruncated, p.ToolInputSHA256, p.ToolInputOriginalBytes,
+		p.ToolInput, p.ToolInputTruncated, p.ToolInputSHA256, p.ToolInputOriginalBytes, p.CreatedAt,
 	)
 	c, err := scanAgentToolCall(row)
 	if isForeignKeyViolation(err) {
@@ -202,6 +206,7 @@ type AttachAgentToolResultParams struct {
 	ResultOriginalBytes *int64
 	IsError             *bool
 	DurationMs          *int64
+	FinishedAt          *time.Time
 }
 
 func AttachAgentToolResult(ctx context.Context, pool *pgxpool.Pool, p AttachAgentToolResultParams) (AgentToolCall, error) {
@@ -217,15 +222,15 @@ func AttachAgentToolResult(ctx context.Context, pool *pgxpool.Pool, p AttachAgen
 		tool_result_original_bytes = $5,
 		is_error = $6,
 		duration_ms = $7,
-		finished_at = now()`
+		finished_at = COALESCE($8, now())`
 
 	if p.ToolCallID != nil && *p.ToolCallID != "" {
 		row := pool.QueryRow(ctx,
 			`UPDATE agent_tool_calls SET`+setClause+`
-			 WHERE agent_session_id = $8 AND tool_call_id = $9 AND finished_at IS NULL
+			 WHERE agent_session_id = $9 AND tool_call_id = $10 AND finished_at IS NULL
 			 RETURNING `+agentToolCallSelectColumns,
 			p.ResultSeq, p.Result, p.ResultTruncated, p.ResultSHA256, p.ResultOriginalBytes,
-			p.IsError, p.DurationMs,
+			p.IsError, p.DurationMs, p.FinishedAt,
 			p.AgentSessionID, *p.ToolCallID,
 		)
 		return scanAgentToolCall(row)
@@ -235,14 +240,14 @@ func AttachAgentToolResult(ctx context.Context, pool *pgxpool.Pool, p AttachAgen
 		`UPDATE agent_tool_calls SET`+setClause+`
 		 WHERE id = (
 			SELECT id FROM agent_tool_calls
-			WHERE agent_session_id = $8 AND tool_name = $9 AND finished_at IS NULL
+			WHERE agent_session_id = $9 AND tool_name = $10 AND finished_at IS NULL
 			ORDER BY seq DESC
 			LIMIT 1
 			FOR UPDATE SKIP LOCKED
 		 )
 		 RETURNING `+agentToolCallSelectColumns,
 		p.ResultSeq, p.Result, p.ResultTruncated, p.ResultSHA256, p.ResultOriginalBytes,
-		p.IsError, p.DurationMs,
+		p.IsError, p.DurationMs, p.FinishedAt,
 		p.AgentSessionID, p.ToolName,
 	)
 	return scanAgentToolCall(row)
@@ -271,6 +276,7 @@ type InsertAgentMessageParams struct {
 	ContentTruncated     bool
 	ContentSHA256        *string
 	ContentOriginalBytes *int64
+	CreatedAt            *time.Time
 }
 
 func InsertAgentMessage(ctx context.Context, pool *pgxpool.Pool, p InsertAgentMessageParams) (AgentMessage, error) {
@@ -279,10 +285,10 @@ func InsertAgentMessage(ctx context.Context, pool *pgxpool.Pool, p InsertAgentMe
 	}
 	row := pool.QueryRow(ctx,
 		`INSERT INTO agent_messages (
-			agent_session_id, seq, role, content, content_truncated, content_sha256, content_original_bytes
-		) VALUES ($1, $2, $3, $4, $5, $6, $7)
+			agent_session_id, seq, role, content, content_truncated, content_sha256, content_original_bytes, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, now()))
 		RETURNING `+agentMessageSelectColumns,
-		p.AgentSessionID, p.Seq, p.Role, p.Content, p.ContentTruncated, p.ContentSHA256, p.ContentOriginalBytes,
+		p.AgentSessionID, p.Seq, p.Role, p.Content, p.ContentTruncated, p.ContentSHA256, p.ContentOriginalBytes, p.CreatedAt,
 	)
 	m, err := scanAgentMessage(row)
 	if isForeignKeyViolation(err) {
@@ -320,12 +326,12 @@ func AddAgentSessionUsage(ctx context.Context, pool *pgxpool.Pool, agentSessionI
 	return scanAgentSession(row)
 }
 
-func CloseAgentSession(ctx context.Context, pool *pgxpool.Pool, agentSessionID int64) (AgentSession, error) {
+func CloseAgentSession(ctx context.Context, pool *pgxpool.Pool, agentSessionID int64, endedAt *time.Time) (AgentSession, error) {
 	row := pool.QueryRow(ctx,
-		`UPDATE agent_sessions SET ended_at = COALESCE(ended_at, now())
+		`UPDATE agent_sessions SET ended_at = COALESCE(agent_sessions.ended_at, $2, now())
 		 WHERE id = $1
 		 RETURNING `+agentSessionSelectColumns,
-		agentSessionID,
+		agentSessionID, endedAt,
 	)
 	return scanAgentSession(row)
 }
