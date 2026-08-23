@@ -340,3 +340,107 @@ func isForeignKeyViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23503"
 }
+
+// ListAgentSessionsByPhase returns all agent sessions attached to a phase,
+// ordered deterministically by start time and then id. It returns an empty
+// slice (not an error) when the phase has no sessions.
+func ListAgentSessionsByPhase(ctx context.Context, pool *pgxpool.Pool, phaseID int64) ([]AgentSession, error) {
+	rows, err := pool.Query(ctx,
+		`SELECT `+agentSessionSelectColumns+`
+		 FROM agent_sessions
+		 WHERE phase_id = $1
+		 ORDER BY started_at, id`,
+		phaseID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []AgentSession{}
+	for rows.Next() {
+		s, err := scanAgentSession(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// ListAgentTurnsBySession returns all turns for an agent session, ordered
+// deterministically by seq. It returns an empty slice (not an error) when
+// the session has no turns.
+func ListAgentTurnsBySession(ctx context.Context, pool *pgxpool.Pool, agentSessionID int64) ([]AgentTurn, error) {
+	rows, err := pool.Query(ctx,
+		`SELECT `+agentTurnSelectColumns+`
+		 FROM agent_turns
+		 WHERE agent_session_id = $1
+		 ORDER BY seq`,
+		agentSessionID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []AgentTurn{}
+	for rows.Next() {
+		t, err := scanAgentTurn(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// ListAgentToolCallsBySession returns all tool calls for an agent session,
+// ordered deterministically by seq. It returns an empty slice (not an
+// error) when the session has no tool calls.
+func ListAgentToolCallsBySession(ctx context.Context, pool *pgxpool.Pool, agentSessionID int64) ([]AgentToolCall, error) {
+	rows, err := pool.Query(ctx,
+		`SELECT `+agentToolCallSelectColumns+`
+		 FROM agent_tool_calls
+		 WHERE agent_session_id = $1
+		 ORDER BY seq`,
+		agentSessionID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []AgentToolCall{}
+	for rows.Next() {
+		c, err := scanAgentToolCall(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// ListAgentMessagesBySession returns all messages for an agent session,
+// ordered deterministically by seq. It returns an empty slice (not an
+// error) when the session has no messages.
+func ListAgentMessagesBySession(ctx context.Context, pool *pgxpool.Pool, agentSessionID int64) ([]AgentMessage, error) {
+	rows, err := pool.Query(ctx,
+		`SELECT `+agentMessageSelectColumns+`
+		 FROM agent_messages
+		 WHERE agent_session_id = $1
+		 ORDER BY seq`,
+		agentSessionID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []AgentMessage{}
+	for rows.Next() {
+		m, err := scanAgentMessage(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}

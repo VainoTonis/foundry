@@ -449,3 +449,244 @@ func TestAgentSessionUsageAndClose_Postgres(t *testing.T) {
 		t.Fatalf("CloseAgentSession() on unknown id error = %v, want %v", err, ErrNotFound)
 	}
 }
+
+// createTestPhaseForTelemetry creates a repo/spec/workflow/phase chain for
+// use by phase-scoped telemetry read tests, cleaning up the repository and
+// spec (which cascade to the workflow and phase) on test completion.
+func createTestPhaseForTelemetry(t *testing.T, pool *pgxpool.Pool, suffix string) Phase {
+	t.Helper()
+	ctx := context.Background()
+
+	repo := createTestPlanRepo(t, pool, suffix)
+
+	spec, err := CreateSpec(ctx, pool, repo.ID, "spec for "+suffix, "content", []byte(`[]`))
+	if err != nil {
+		t.Fatalf("CreateSpec() error = %v", err)
+	}
+	t.Cleanup(func() { _ = DeleteSpec(context.Background(), pool, spec.ID) })
+
+	wf, err := CreateWorkflow(ctx, pool, spec.ID, "poc", nil)
+	if err != nil {
+		t.Fatalf("CreateWorkflow() error = %v", err)
+	}
+	t.Cleanup(func() { _ = DeleteWorkflow(context.Background(), pool, wf.ID) })
+
+	phase, err := CreatePhase(ctx, pool, wf.ID, 0, "phase-"+suffix, "goal-"+suffix, 60)
+	if err != nil {
+		t.Fatalf("CreatePhase() error = %v", err)
+	}
+	return phase
+}
+
+func TestListAgentSessionsByPhase_Postgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+
+	phase := createTestPhaseForTelemetry(t, pool, "telemetry-sessions")
+
+	// An empty phase (no sessions yet) must return an empty, non-nil slice
+	// rather than an error.
+	empty, err := ListAgentSessionsByPhase(ctx, pool, phase.ID)
+	if err != nil {
+		t.Fatalf("ListAgentSessionsByPhase() on empty phase error = %v", err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("ListAgentSessionsByPhase() on empty phase = %v, want empty", empty)
+	}
+
+	phaseID := phase.ID
+	sessA := createTestAgentSession(t, pool, EnsureAgentSessionParams{
+		Session:         "agent-telemetry-phase-sessions-a",
+		SourceSessionID: "agent-telemetry-phase-sessions-a-source",
+		Origin:          "cli",
+		PhaseID:         &phaseID,
+	})
+	sessB := createTestAgentSession(t, pool, EnsureAgentSessionParams{
+		Session:         "agent-telemetry-phase-sessions-b",
+		SourceSessionID: "agent-telemetry-phase-sessions-b-source",
+		Origin:          "cli",
+		PhaseID:         &phaseID,
+	})
+	// A session belonging to a different (unset) phase must not be included.
+	_ = createTestAgentSession(t, pool, EnsureAgentSessionParams{
+		Session:         "agent-telemetry-phase-sessions-other",
+		SourceSessionID: "agent-telemetry-phase-sessions-other-source",
+		Origin:          "cli",
+	})
+
+	got, err := ListAgentSessionsByPhase(ctx, pool, phase.ID)
+	if err != nil {
+		t.Fatalf("ListAgentSessionsByPhase() error = %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("ListAgentSessionsByPhase() returned %d sessions, want 2: %+v", len(got), got)
+	}
+	if got[0].ID != sessA.ID || got[1].ID != sessB.ID {
+		t.Fatalf("ListAgentSessionsByPhase() order = [%d, %d], want [%d, %d] (started_at, id)", got[0].ID, got[1].ID, sessA.ID, sessB.ID)
+	}
+	for _, s := range got {
+		if s.PhaseID == nil || *s.PhaseID != phase.ID {
+			t.Fatalf("session %d PhaseID = %v, want %d", s.ID, s.PhaseID, phase.ID)
+		}
+	}
+}
+
+func TestListAgentTurnsToolCallsMessagesBySession_Postgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+
+	session := createTestAgentSession(t, pool, EnsureAgentSessionParams{
+		Session:         "agent-telemetry-phase-detail",
+		SourceSessionID: "agent-telemetry-phase-detail-source",
+		Origin:          "cli",
+	})
+
+	nextSeq := func() int64 {
+		seq, err := AllocateAgentSessionSeq(ctx, pool, session.ID)
+		if err != nil {
+			t.Fatalf("AllocateAgentSessionSeq() error = %v", err)
+		}
+		return seq
+	}
+
+	// Before any writes, all three list functions must return empty, non-nil
+	// slices rather than errors.
+	if turns, err := ListAgentTurnsBySession(ctx, pool, session.ID); err != nil || len(turns) != 0 {
+		t.Fatalf("ListAgentTurnsBySession() on empty session = (%v, %v), want (empty, nil)", turns, err)
+	}
+	if calls, err := ListAgentToolCallsBySession(ctx, pool, session.ID); err != nil || len(calls) != 0 {
+		t.Fatalf("ListAgentToolCallsBySession() on empty session = (%v, %v), want (empty, nil)", calls, err)
+	}
+	if msgs, err := ListAgentMessagesBySession(ctx, pool, session.ID); err != nil || len(msgs) != 0 {
+		t.Fatalf("ListAgentMessagesBySession() on empty session = (%v, %v), want (empty, nil)", msgs, err)
+	}
+
+	turn1, err := InsertAgentTurn(ctx, pool, InsertAgentTurnParams{AgentSessionID: session.ID, Seq: nextSeq()})
+	if err != nil {
+		t.Fatalf("InsertAgentTurn() error = %v", err)
+	}
+	turn2, err := InsertAgentTurn(ctx, pool, InsertAgentTurnParams{AgentSessionID: session.ID, Seq: nextSeq()})
+	if err != nil {
+		t.Fatalf("InsertAgentTurn() error = %v", err)
+	}
+
+	// Tool call with all nullable metadata left unset (no tool_call_id, no
+	// tool_input, and never attached with a result).
+	bareCall, err := InsertAgentToolCall(ctx, pool, InsertAgentToolCallParams{
+		AgentSessionID: session.ID,
+		Seq:            nextSeq(),
+		ToolName:       "bash",
+	})
+	if err != nil {
+		t.Fatalf("InsertAgentToolCall() error = %v", err)
+	}
+
+	// Tool call with metadata populated and a result attached.
+	callID := "call-phase-detail"
+	input := `{"cmd":"ls"}`
+	fullCall, err := InsertAgentToolCall(ctx, pool, InsertAgentToolCallParams{
+		AgentSessionID: session.ID,
+		Seq:            nextSeq(),
+		ToolCallID:     &callID,
+		ToolName:       "bash",
+		ToolInput:      &input,
+	})
+	if err != nil {
+		t.Fatalf("InsertAgentToolCall() error = %v", err)
+	}
+	result := "ok"
+	if _, err := AttachAgentToolResult(ctx, pool, AttachAgentToolResultParams{
+		AgentSessionID: session.ID,
+		ToolCallID:     &callID,
+		ToolName:       "bash",
+		ResultSeq:      nextSeq(),
+		Result:         &result,
+	}); err != nil {
+		t.Fatalf("AttachAgentToolResult() error = %v", err)
+	}
+
+	// Message with nullable content left unset.
+	bareMsg, err := InsertAgentMessage(ctx, pool, InsertAgentMessageParams{
+		AgentSessionID: session.ID,
+		Seq:            nextSeq(),
+		Role:           "system",
+	})
+	if err != nil {
+		t.Fatalf("InsertAgentMessage() error = %v", err)
+	}
+	content := "hello"
+	fullMsg, err := InsertAgentMessage(ctx, pool, InsertAgentMessageParams{
+		AgentSessionID: session.ID,
+		Seq:            nextSeq(),
+		Role:           "assistant",
+		Content:        &content,
+	})
+	if err != nil {
+		t.Fatalf("InsertAgentMessage() error = %v", err)
+	}
+
+	turns, err := ListAgentTurnsBySession(ctx, pool, session.ID)
+	if err != nil {
+		t.Fatalf("ListAgentTurnsBySession() error = %v", err)
+	}
+	if len(turns) != 2 || turns[0].ID != turn1.ID || turns[1].ID != turn2.ID {
+		t.Fatalf("ListAgentTurnsBySession() = %+v, want [%d, %d] in seq order", turns, turn1.ID, turn2.ID)
+	}
+
+	calls, err := ListAgentToolCallsBySession(ctx, pool, session.ID)
+	if err != nil {
+		t.Fatalf("ListAgentToolCallsBySession() error = %v", err)
+	}
+	if len(calls) != 2 || calls[0].ID != bareCall.ID || calls[1].ID != fullCall.ID {
+		t.Fatalf("ListAgentToolCallsBySession() = %+v, want [%d, %d] in seq order", calls, bareCall.ID, fullCall.ID)
+	}
+	if calls[0].ToolCallID != nil || calls[0].ToolInput != nil || calls[0].ToolResult != nil || calls[0].FinishedAt != nil {
+		t.Fatalf("calls[0] (bare) = %+v, want all nullable metadata unset", calls[0])
+	}
+	if calls[1].ToolCallID == nil || *calls[1].ToolCallID != callID {
+		t.Fatalf("calls[1].ToolCallID = %v, want %q", calls[1].ToolCallID, callID)
+	}
+	if calls[1].ToolResult == nil || *calls[1].ToolResult != result {
+		t.Fatalf("calls[1].ToolResult = %v, want %q", calls[1].ToolResult, result)
+	}
+	if calls[1].FinishedAt == nil {
+		t.Fatal("calls[1].FinishedAt = nil, want set")
+	}
+
+	msgs, err := ListAgentMessagesBySession(ctx, pool, session.ID)
+	if err != nil {
+		t.Fatalf("ListAgentMessagesBySession() error = %v", err)
+	}
+	if len(msgs) != 2 || msgs[0].ID != bareMsg.ID || msgs[1].ID != fullMsg.ID {
+		t.Fatalf("ListAgentMessagesBySession() = %+v, want [%d, %d] in seq order", msgs, bareMsg.ID, fullMsg.ID)
+	}
+	if msgs[0].Content != nil {
+		t.Fatalf("msgs[0].Content = %v, want nil", msgs[0].Content)
+	}
+	if msgs[1].Content == nil || *msgs[1].Content != content {
+		t.Fatalf("msgs[1].Content = %v, want %q", msgs[1].Content, content)
+	}
+
+	// Turns, tool calls, and messages belonging to a different session must
+	// not leak into this session's results.
+	other := createTestAgentSession(t, pool, EnsureAgentSessionParams{
+		Session:         "agent-telemetry-phase-detail-other",
+		SourceSessionID: "agent-telemetry-phase-detail-other-source",
+		Origin:          "cli",
+	})
+	otherSeq, err := AllocateAgentSessionSeq(ctx, pool, other.ID)
+	if err != nil {
+		t.Fatalf("AllocateAgentSessionSeq() error = %v", err)
+	}
+	if _, err := InsertAgentTurn(ctx, pool, InsertAgentTurnParams{AgentSessionID: other.ID, Seq: otherSeq}); err != nil {
+		t.Fatalf("InsertAgentTurn() error = %v", err)
+	}
+
+	turns, err = ListAgentTurnsBySession(ctx, pool, session.ID)
+	if err != nil {
+		t.Fatalf("ListAgentTurnsBySession() error = %v", err)
+	}
+	if len(turns) != 2 {
+		t.Fatalf("ListAgentTurnsBySession() leaked cross-session rows: got %d, want 2", len(turns))
+	}
+}
