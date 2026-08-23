@@ -90,6 +90,7 @@ loop:
 		case <-tickerC(logTicker):
 			r.collectLogs(ctx, cerb, wf.ID, phase.ID, sessionName, &lastLogLine)
 		case cerberusErr := <-cerberusDone:
+			r.closeManagedSession(sessionName)
 			if callbackURL == "" {
 				r.collectLogs(ctx, cerb, wf.ID, phase.ID, sessionName, &lastLogLine)
 			}
@@ -253,6 +254,40 @@ func (r *Runner) collectLogs(ctx context.Context, cerb interface {
 		*lastLine = line
 		r.publishLog(workflowID, phaseID, line)
 	}
+}
+
+func (r *Runner) closeManagedSession(session string) {
+	if r.pool == nil || session == "" {
+		return
+	}
+	bestEffortCloseSession(context.Background(), r.lookupAgentSession, r.closeAgentSession, session, time.Now())
+}
+
+func (r *Runner) lookupAgentSession(ctx context.Context, session string) (int64, error) {
+	sess, err := db.GetAgentSessionBySession(ctx, r.pool, session)
+	return sess.ID, err
+}
+
+func (r *Runner) closeAgentSession(ctx context.Context, agentSessionID int64, endedAt *time.Time) error {
+	_, err := db.CloseAgentSession(ctx, r.pool, agentSessionID, endedAt)
+	return err
+}
+
+func bestEffortCloseSession(
+	ctx context.Context,
+	lookup func(context.Context, string) (int64, error),
+	closeSession func(context.Context, int64, *time.Time) error,
+	session string,
+	endedAt time.Time,
+) {
+	if lookup == nil || closeSession == nil || session == "" {
+		return
+	}
+	agentSessionID, err := lookup(ctx, session)
+	if err != nil {
+		return
+	}
+	_ = closeSession(ctx, agentSessionID, &endedAt)
 }
 
 func tickerC(t *time.Ticker) <-chan time.Time {

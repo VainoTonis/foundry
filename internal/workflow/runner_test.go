@@ -57,6 +57,29 @@ func contains(xs []string, want string) bool {
 	return false
 }
 
+func TestMaxCostExceeded(t *testing.T) {
+	cases := []struct {
+		name       string
+		total      float64
+		maxCostUSD *float64
+		want       bool
+	}{
+		{name: "no budget configured never pauses", total: 1000, maxCostUSD: nil, want: false},
+		{name: "total below budget does not pause", total: 1, maxCostUSD: floatPtr(2), want: false},
+		{name: "total equal to budget pauses", total: 2, maxCostUSD: floatPtr(2), want: true},
+		{name: "total above budget pauses", total: 3, maxCostUSD: floatPtr(2), want: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := maxCostExceeded(tc.total, tc.maxCostUSD); got != tc.want {
+				t.Fatalf("maxCostExceeded(%v, %v) = %v, want %v", tc.total, tc.maxCostUSD, got, tc.want)
+			}
+		})
+	}
+}
+
+func floatPtr(f float64) *float64 { return &f }
+
 func TestRunPhaseFailsFastForRemoteOnlyRepository(t *testing.T) {
 	remote := "https://github.com/foo/bar.git"
 	repo := repository.Repository{Name: "remote-only", RemoteURL: &remote}
