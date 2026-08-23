@@ -269,6 +269,36 @@ func TestCompactToolUsePayload_UpdateSpecFollowsCompactPayload(t *testing.T) {
 	}
 }
 
+func TestManagedMessageEndCostDecision_Zero(t *testing.T) {
+	phaseID, deltaUSD, ok := managedMessageEndCostDecision(42, nil, 0)
+	if ok {
+		t.Fatalf("managedMessageEndCostDecision() ok = true, want false for zero cost")
+	}
+	if phaseID != 0 || deltaUSD != 0 {
+		t.Fatalf("managedMessageEndCostDecision() = (%d, %v), want (0, 0)", phaseID, deltaUSD)
+	}
+}
+
+func TestManagedMessageEndCostDecision_Nonzero(t *testing.T) {
+	phaseID, deltaUSD, ok := managedMessageEndCostDecision(42, nil, 0.03)
+	if !ok {
+		t.Fatal("managedMessageEndCostDecision() ok = false, want true for nonzero cost")
+	}
+	if phaseID != 42 || deltaUSD != 0.03 {
+		t.Fatalf("managedMessageEndCostDecision() = (%d, %v), want (42, 0.03)", phaseID, deltaUSD)
+	}
+}
+
+func TestManagedMessageEndCostDecision_PhaseError(t *testing.T) {
+	phaseID, deltaUSD, ok := managedMessageEndCostDecision(42, errors.New("not found"), 0.03)
+	if ok {
+		t.Fatal("managedMessageEndCostDecision() ok = true, want false when phase lookup errored")
+	}
+	if phaseID != 0 || deltaUSD != 0 {
+		t.Fatalf("managedMessageEndCostDecision() = (%d, %v), want (0, 0)", phaseID, deltaUSD)
+	}
+}
+
 func TestCompactToolUsePayload_NonUpdateSpecDoesNotFollowCompactPayload(t *testing.T) {
 	raw := []byte(`{"type":"tool_use","session":"sess-1","tool_name":"bash","tool_input":"ls"}`)
 

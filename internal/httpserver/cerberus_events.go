@@ -62,6 +62,7 @@ func (s *Server) handleCompactCerberusEvent(ctx context.Context, raw []byte) err
 	case "message_end", "turn_complete":
 		if evt.Type == "message_end" {
 			s.ingestCerberusTelemetry(ctx, raw, evt)
+			s.applyManagedMessageEndCost(ctx, raw, evt)
 		}
 		if err := s.flushCerberusText(ctx, evt.Session); err != nil {
 			return fmt.Errorf("store event: %w", err)
@@ -463,6 +464,32 @@ func (s *Server) resolveManagedCerberusAttribution(ctx context.Context, session 
 	phaseID := ph.ID
 	repoID := repo.ID
 	return telemetry.Attribution{RepositoryID: &repoID, PhaseID: &phaseID}, true
+}
+
+func managedMessageEndCostDecision(phaseID int64, phaseErr error, costUSD float64) (int64, float64, bool) {
+	if phaseErr != nil {
+		return 0, 0, false
+	}
+	if costUSD == 0 {
+		return 0, 0, false
+	}
+	return phaseID, costUSD, true
+}
+
+func (s *Server) applyManagedMessageEndCost(ctx context.Context, raw []byte, evt compactCerberusEvent) {
+	fields := extractCerberusFields(raw)
+	costUSD := 0.0
+	if fields.Usage != nil {
+		costUSD = fields.Usage.CostUSD
+	}
+	ph, err := db.GetPhaseByCerberusSession(ctx, s.pool, evt.Session)
+	phaseID, deltaUSD, ok := managedMessageEndCostDecision(ph.ID, err, costUSD)
+	if !ok {
+		return
+	}
+	if err := db.AddPhaseCost(ctx, s.pool, phaseID, deltaUSD); err != nil {
+		log.Printf("apply phase cost: %v", err)
+	}
 }
 
 func (s *Server) ingestCerberusTelemetry(ctx context.Context, raw []byte, evt compactCerberusEvent) {
