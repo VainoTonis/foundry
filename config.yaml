@@ -3,6 +3,9 @@ cerberus_bin: "cerberus"
 cerberus_image: ""
 cerberus_model: ""
 server_port: 8080
+# Development only: permits unauthenticated telemetry from loopback clients.
+# Set telemetry_bearer_token (or FOUNDRY_TELEMETRY_BEARER_TOKEN) for remote producers.
+telemetry_allow_unauthenticated: true
 ui_verbosity: "normal"
 max_concurrent_workflows: 1
 default_workflow_budget_usd: 0.5

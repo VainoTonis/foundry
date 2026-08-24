@@ -39,9 +39,13 @@ type telemetryEventView struct {
 	// upstream agent surfaced one (e.g. Cerberus tool invocations).
 	ToolCallID string
 
-	// Role carries the message role ("user", "assistant", ...) for
-	// Kind == "message" events; it is empty for turns and tool calls.
-	Role string
+	// Message provenance. InputSource and IsFinal are producer assertions;
+	// unknown values are deliberately not promoted to narrative facts.
+	Role        string
+	InputSource string
+	IsFinal     bool
+	Redacted    bool
+	Omitted     bool
 
 	// Original-byte/hash truncation metadata, populated when available.
 	// Tool calls carry independent input/result provenance; messages
@@ -161,6 +165,13 @@ type telemetryNarrativeView struct {
 	LatestAssistantOutcome string
 	HasAssistantOutcome    bool
 
+	// Provenance/partial flags distinguish absent evidence from evidence
+	// whose producer metadata is unknown or whose body is incomplete.
+	GoalProvenanceUnknown    bool
+	OutcomeProvenanceUnknown bool
+	GoalPartial              bool
+	OutcomePartial           bool
+
 	// LastActivityLabel/LastActivityAt describe the last event in the
 	// merged timeline, regardless of kind (turn, tool call, or
 	// message) — the most recent thing this session is known to have
@@ -238,9 +249,18 @@ func buildTelemetryNarrativeView(events []telemetryEventView, turnCount, toolCal
 		if ev.Kind != "message" || ev.Role != "user" {
 			continue
 		}
-		if isSubstantiveEventPayload(ev.Payload) {
+		if ev.InputSource == "unknown" || ev.InputSource == "" {
+			nv.GoalProvenanceUnknown = true
+		}
+		// Harness and extension prompts are not interactive human goals.
+		// Historical rows with no source metadata remain unknown.
+		if ev.InputSource == "interactive" && !isSubstantiveEventPayload(ev.Payload) && (ev.Truncated || ev.Redacted || ev.Omitted) {
+			nv.GoalPartial = true
+		}
+		if ev.InputSource == "interactive" && isSubstantiveEventPayload(ev.Payload) {
 			nv.FirstUserRequest = boundNarrativePreview(ev.Payload)
 			nv.HasUserRequest = true
+			nv.GoalPartial = ev.Truncated || ev.Redacted || ev.Omitted || nv.FirstUserRequest != strings.TrimSpace(ev.Payload)
 			break
 		}
 	}
@@ -250,9 +270,17 @@ func buildTelemetryNarrativeView(events []telemetryEventView, turnCount, toolCal
 		if ev.Kind != "message" || ev.Role != "assistant" {
 			continue
 		}
+		if !ev.IsFinal {
+			nv.OutcomeProvenanceUnknown = true
+			continue
+		}
+		if !isSubstantiveEventPayload(ev.Payload) && (ev.Truncated || ev.Redacted || ev.Omitted) {
+			nv.OutcomePartial = true
+		}
 		if isSubstantiveEventPayload(ev.Payload) {
 			nv.LatestAssistantOutcome = boundNarrativePreview(ev.Payload)
 			nv.HasAssistantOutcome = true
+			nv.OutcomePartial = ev.Truncated || ev.Redacted || ev.Omitted || nv.LatestAssistantOutcome != strings.TrimSpace(ev.Payload)
 			break
 		}
 	}
@@ -291,7 +319,7 @@ func buildTelemetryNarrativeView(events []telemetryEventView, turnCount, toolCal
 func buildTelemetryConversationGroups(events []telemetryEventView) []telemetryConversationGroup {
 	var groups []telemetryConversationGroup
 	for _, ev := range events {
-		startsGroup := ev.Kind == "message" && ev.Role == "user"
+		startsGroup := ev.Kind == "message" && ev.Role == "user" && ev.InputSource == "interactive"
 		if len(groups) == 0 || startsGroup {
 			groups = append(groups, telemetryConversationGroup{StartedAt: ev.At})
 		}
@@ -302,7 +330,7 @@ func buildTelemetryConversationGroups(events []telemetryEventView) []telemetryCo
 		groups[i].Label = fmt.Sprintf("Exchange %d", i+1)
 
 		for _, ev := range groups[i].Events {
-			if ev.Kind == "message" && ev.Role == "user" && isSubstantiveEventPayload(ev.Payload) {
+			if ev.Kind == "message" && ev.Role == "user" && ev.InputSource == "interactive" && isSubstantiveEventPayload(ev.Payload) {
 				groups[i].UserPreview = boundNarrativePreview(ev.Payload)
 				groups[i].HasUserPreview = true
 				break
@@ -310,7 +338,7 @@ func buildTelemetryConversationGroups(events []telemetryEventView) []telemetryCo
 		}
 		for j := len(groups[i].Events) - 1; j >= 0; j-- {
 			ev := groups[i].Events[j]
-			if ev.Kind == "message" && ev.Role == "assistant" && isSubstantiveEventPayload(ev.Payload) {
+			if ev.Kind == "message" && ev.Role == "assistant" && ev.IsFinal && isSubstantiveEventPayload(ev.Payload) {
 				groups[i].AssistantPreview = boundNarrativePreview(ev.Payload)
 				groups[i].HasAssistantPreview = true
 				break
@@ -422,6 +450,8 @@ func buildTelemetrySessionView(sess db.AgentSession, turns []db.AgentTurn, toolC
 			),
 			Truncated:           truncated,
 			IsError:             isError,
+			Redacted:            c.ToolInputRedacted || c.ToolResultRedacted,
+			Omitted:             c.ToolInputOmitted || c.ToolResultOmitted,
 			DurationLabel:       formatDurationMs(c.DurationMs),
 			At:                  toolCallEventTime(c),
 			ToolCallID:          strOrEmpty(c.ToolCallID),
@@ -451,6 +481,9 @@ func buildTelemetrySessionView(sess db.AgentSession, turns []db.AgentTurn, toolC
 			Truncated:           m.ContentTruncated,
 			At:                  m.CreatedAt,
 			Role:                m.Role,
+			InputSource:         m.InputSource,
+			IsFinal:             m.IsFinal,
+			Redacted:            m.ContentRedacted,
 			ResultSHA256:        strOrEmpty(m.ContentSHA256),
 			ResultOriginalBytes: int64PtrOrZero(m.ContentOriginalBytes),
 		})

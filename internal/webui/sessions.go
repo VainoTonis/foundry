@@ -2,9 +2,11 @@ package webui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,6 +38,48 @@ type sessionOverviewView struct {
 	HasAttribution bool            `json:"has_attribution"`
 	HasTelemetry   bool            `json:"has_telemetry"`
 	AgentSession   db.AgentSession `json:"agent_session,omitempty"`
+	Lifecycle      string          `json:"lifecycle"`
+	LifecycleNote  string          `json:"lifecycle_note,omitempty"`
+	RepositoryFact string          `json:"repository_fact,omitempty"`
+	ModelFact      string          `json:"model_fact,omitempty"`
+}
+
+const sessionStaleAfter = 15 * time.Minute
+
+func agentLifecycle(a db.AgentSession, now time.Time) (string, string) {
+	if a.LifecycleState == "closed" || a.EndedAt != nil {
+		return "closed", "producer reported session end"
+	}
+	last := a.LastEventAt
+	if last.IsZero() {
+		last = a.StartedAt
+	}
+	if !last.IsZero() && now.Sub(last) > sessionStaleAfter {
+		if a.LifecycleState == "unknown" {
+			return "stale", "inferred from old activity; lifecycle provenance is unknown"
+		}
+		return "stale", "no recent telemetry"
+	}
+	if a.LifecycleState == "active" {
+		return "active", "producer reported active"
+	}
+	return "active", "inferred from recent activity; lifecycle provenance is unknown"
+}
+
+func applyAgentFacts(v *sessionOverviewView, a db.AgentSession) {
+	v.Lifecycle, v.LifecycleNote = agentLifecycle(a, time.Now())
+	if a.RepoPath != nil && strings.TrimSpace(*a.RepoPath) != "" {
+		v.RepositoryFact = *a.RepoPath
+	} else if v.RepositoryName != "" {
+		v.RepositoryFact = v.RepositoryName + " (workflow attribution only; telemetry repository unknown)"
+	} else {
+		v.RepositoryFact = "unknown"
+	}
+	if a.Model != nil && strings.TrimSpace(*a.Model) != "" {
+		v.ModelFact = *a.Model
+	} else {
+		v.ModelFact = "unknown"
+	}
 }
 
 // telemetryOnlyStatus derives a display status for a telemetry-only
@@ -51,6 +95,9 @@ func telemetryOnlyStatus(a db.AgentSession) string {
 // an agent_sessions row for display/sort purposes: EndedAt when the
 // session has finished, otherwise StartedAt.
 func telemetryOnlyLastUpdatedAt(a db.AgentSession) time.Time {
+	if !a.LastEventAt.IsZero() {
+		return a.LastEventAt
+	}
 	if a.EndedAt != nil {
 		return *a.EndedAt
 	}
@@ -90,6 +137,11 @@ func mergeSessionOverviews(known []cerberusSessionView, agents []db.AgentSession
 		if a, ok := agentBySession[k.Session]; ok {
 			v.HasTelemetry = true
 			v.AgentSession = a
+			applyAgentFacts(&v, a)
+		} else if k.SafeToClean {
+			v.Lifecycle, v.LifecycleNote = "closed", "inferred from terminal Foundry record; producer telemetry unavailable"
+		} else {
+			v.Lifecycle, v.LifecycleNote = "active", "inferred from Foundry record; producer telemetry unavailable"
 		}
 		views = append(views, v)
 	}
@@ -99,7 +151,7 @@ func mergeSessionOverviews(known []cerberusSessionView, agents []db.AgentSession
 			continue
 		}
 		seen[a.Session] = true
-		views = append(views, sessionOverviewView{
+		v := sessionOverviewView{
 			KnownCerberusSession: db.KnownCerberusSession{
 				Session:       a.Session,
 				Type:          "telemetry",
@@ -110,10 +162,15 @@ func mergeSessionOverviews(known []cerberusSessionView, agents []db.AgentSession
 			HasAttribution: false,
 			HasTelemetry:   true,
 			AgentSession:   a,
-		})
+		}
+		applyAgentFacts(&v, a)
+		views = append(views, v)
 	}
 
 	sort.SliceStable(views, func(i, j int) bool {
+		if views[i].LastUpdatedAt.Equal(views[j].LastUpdatedAt) {
+			return views[i].Session > views[j].Session
+		}
 		return views[i].LastUpdatedAt.After(views[j].LastUpdatedAt)
 	})
 
@@ -129,16 +186,48 @@ func (s *Handler) handleUISessionsPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Handler) handleUISessionsFragment(w http.ResponseWriter, r *http.Request) {
-	sessions, sessionErr := s.sessionOverviews(r.Context(), true)
+	q := r.URL.Query()
+	requestedLifecycle := q.Get("lifecycle")
+	params := db.AgentSessionPageParams{
+		Limit: 51, Lifecycle: requestedLifecycle,
+		// Select the common (last_updated_at,session) ordering even on the
+		// first page. The value is ignored until BeforeAt is present.
+		BeforeSession: "\U0010ffff",
+	}
+	if id, err := strconv.ParseInt(q.Get("repository_id"), 10, 64); err == nil && id > 0 {
+		params.RepositoryID = &id
+	}
+	if at, err := time.Parse(time.RFC3339Nano, q.Get("before")); err == nil {
+		params.BeforeAt = &at
+		if session := q.Get("before_session"); session != "" {
+			params.BeforeSession = session
+		}
+	}
+	sessions, sessionErr := s.sessionOverviews(r.Context(), false, params)
 	sessionErrMsg := ""
 	if sessionErr != nil {
 		sessionErrMsg = sessionErr.Error()
+	}
+	hasMore := len(sessions) > 50
+	if hasMore {
+		sessions = sessions[:50]
+	}
+	var nextAt, nextSession string
+	if hasMore && len(sessions) > 0 {
+		last := sessions[len(sessions)-1]
+		nextAt = last.LastUpdatedAt.Format(time.RFC3339Nano)
+		nextSession = last.Session
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := templates.ExecuteTemplate(w, "sessions.list", struct {
 		Sessions     []sessionOverviewView
 		SessionError string
-	}{sessions, sessionErrMsg}); err != nil {
+		Lifecycle    string
+		RepositoryID string
+		HasMore      bool
+		NextAt       string
+		NextSession  string
+	}{sessions, sessionErrMsg, requestedLifecycle, q.Get("repository_id"), hasMore, nextAt, nextSession}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -157,20 +246,13 @@ func (s *Handler) handleUISession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Handler) handleUISessionFragment(w http.ResponseWriter, r *http.Request, name string) {
-	sessions, err := s.sessionOverviews(r.Context(), true)
+	found, err := s.sessionOverviewByName(r.Context(), name)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	var found *sessionOverviewView
-	for i := range sessions {
-		if sessions[i].Session == name {
-			found = &sessions[i]
-			break
+		if errors.Is(err, db.ErrNotFound) {
+			http.NotFound(w, r)
+			return
 		}
-	}
-	if found == nil {
-		http.NotFound(w, r)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -193,6 +275,19 @@ func (s *Handler) handleUISessionFragment(w http.ResponseWriter, r *http.Request
 		}
 		sv := buildTelemetrySessionView(found.AgentSession, turns, toolCalls, messages)
 		telemetry = &sv
+		models := make([]string, 0, len(turns)+1)
+		if found.AgentSession.Model != nil && *found.AgentSession.Model != "" {
+			models = append(models, *found.AgentSession.Model)
+		}
+		for _, turn := range turns {
+			if turn.Model == "" || turn.Model == "unknown" || (len(models) > 0 && models[len(models)-1] == turn.Model) {
+				continue
+			}
+			models = append(models, turn.Model)
+		}
+		if len(models) > 0 {
+			found.ModelFact = strings.Join(models, " → ")
+		}
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -256,14 +351,71 @@ func (s *Handler) knownCerberusSessionViews(ctx context.Context, withStatus bool
 // any agent_sessions rows without lifecycle attribution as telemetry-only
 // entries. A failure loading either source fails the whole call, since a
 // partial merge could misreport a session's attribution.
-func (s *Handler) sessionOverviews(ctx context.Context, withStatus bool) ([]sessionOverviewView, error) {
-	known, err := s.knownCerberusSessionViews(ctx, withStatus)
+func (s *Handler) sessionOverviewByName(ctx context.Context, name string) (*sessionOverviewView, error) {
+	known, err := s.knownCerberusSessionViews(ctx, false)
 	if err != nil {
 		return nil, err
 	}
-	agents, err := db.ListAgentSessions(ctx, s.pool)
+	matchingKnown := make([]cerberusSessionView, 0, 1)
+	for _, k := range known {
+		if k.Session == name {
+			matchingKnown = append(matchingKnown, k)
+			break
+		}
+	}
+	agents := []db.AgentSession{}
+	if a, getErr := db.GetAgentSessionBySession(ctx, s.pool, name); getErr == nil {
+		agents = append(agents, a)
+	} else if !errors.Is(getErr, db.ErrNotFound) {
+		return nil, getErr
+	}
+	views := mergeSessionOverviews(matchingKnown, agents)
+	if len(views) == 0 {
+		return nil, db.ErrNotFound
+	}
+	return &views[0], nil
+}
+
+func (s *Handler) sessionOverviews(ctx context.Context, withStatus bool, params db.AgentSessionPageParams) ([]sessionOverviewView, error) {
+	knownRows, err := db.ListKnownCerberusSessionsPage(ctx, s.pool, db.KnownCerberusSessionPageParams{
+		Limit: params.Limit, BeforeAt: params.BeforeAt, BeforeSession: params.BeforeSession,
+		Lifecycle: params.Lifecycle, RepositoryID: params.RepositoryID,
+	})
 	if err != nil {
 		return nil, err
 	}
+	known := make([]cerberusSessionView, 0, len(knownRows))
+	for _, k := range knownRows {
+		v := cerberusSessionView{KnownCerberusSession: k}
+		if withStatus && s.cerb != nil {
+			var statusErr error
+			if repoPath := strings.TrimSpace(k.RepositoryLocalPath); repoPath != "" {
+				v.CerberusStatus, statusErr = s.cerb.WithRepo(repoPath).Status(ctx, k.Session)
+			} else {
+				v.CerberusStatus, statusErr = s.cerb.Status(ctx, k.Session)
+			}
+			if statusErr != nil {
+				v.CerberusError = statusErr.Error()
+			}
+		}
+		known = append(known, v)
+	}
+	// Persisted attribution owns identities present in both sources. Excluding
+	// those identities from the telemetry page prevents them reappearing on a
+	// later page when the two sources have different activity timestamps.
+	params.ExcludeAttributed = true
+	agents, err := db.ListAgentSessionsPage(ctx, s.pool, params)
+	if err != nil {
+		return nil, err
+	}
+	knownNames := make([]string, 0, len(known))
+	for _, k := range known {
+		knownNames = append(knownNames, k.Session)
+	}
+	attached, err := db.ListAgentSessionsBySessionNames(ctx, s.pool, knownNames)
+	if err != nil {
+		return nil, err
+	}
+	agents = append(agents, attached...)
 	return mergeSessionOverviews(known, agents), nil
 }

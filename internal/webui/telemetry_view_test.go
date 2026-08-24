@@ -88,7 +88,7 @@ func TestBuildPhaseTelemetryViewPopulated(t *testing.T) {
 		},
 	}
 	messages := []db.AgentMessage{
-		{AgentSessionID: 1, Seq: 3, Role: "assistant", Content: strp("all good"), CreatedAt: started.Add(3 * time.Second)},
+		{AgentSessionID: 1, Seq: 3, Role: "assistant", IsFinal: true, Content: strp("all good"), CreatedAt: started.Add(3 * time.Second)},
 	}
 
 	ph := db.Phase{ID: 9, Name: "review"}
@@ -181,9 +181,9 @@ func TestBuildTelemetryNarrativeView_FirstRequestAndLatestOutcome(t *testing.T) 
 		{AgentSessionID: 1, Seq: 3, ToolName: "bash", ToolInput: strp("ls"), ToolResult: strp("a.txt"), CreatedAt: started.Add(3 * time.Second)},
 	}
 	messages := []db.AgentMessage{
-		{AgentSessionID: 1, Seq: 1, Role: "user", Content: strp("please list files"), CreatedAt: started.Add(1 * time.Second)},
-		{AgentSessionID: 1, Seq: 4, Role: "assistant", Content: strp("here is an early answer"), CreatedAt: started.Add(4 * time.Second)},
-		{AgentSessionID: 1, Seq: 5, Role: "assistant", Content: strp("final answer: a.txt"), CreatedAt: started.Add(5 * time.Second)},
+		{AgentSessionID: 1, Seq: 1, Role: "user", InputSource: "interactive", Content: strp("please list files"), CreatedAt: started.Add(1 * time.Second)},
+		{AgentSessionID: 1, Seq: 4, Role: "assistant", IsFinal: true, Content: strp("here is an early answer"), CreatedAt: started.Add(4 * time.Second)},
+		{AgentSessionID: 1, Seq: 5, Role: "assistant", IsFinal: true, Content: strp("final answer: a.txt"), CreatedAt: started.Add(5 * time.Second)},
 	}
 
 	sv := buildTelemetrySessionView(sess, turns, toolCalls, messages)
@@ -243,8 +243,8 @@ func TestBuildTelemetryNarrativeView_PlaceholderMessagesAreNotSubstantive(t *tes
 	sess := db.AgentSession{ID: 3, Session: "sess-placeholder", StartedAt: started}
 
 	messages := []db.AgentMessage{
-		{AgentSessionID: 3, Seq: 1, Role: "user", Content: nil, CreatedAt: started},
-		{AgentSessionID: 3, Seq: 2, Role: "assistant", Content: strp(""), CreatedAt: started.Add(time.Second)},
+		{AgentSessionID: 3, Seq: 1, Role: "user", InputSource: "interactive", Content: nil, CreatedAt: started},
+		{AgentSessionID: 3, Seq: 2, Role: "assistant", IsFinal: true, Content: strp(""), CreatedAt: started.Add(time.Second)},
 	}
 
 	sv := buildTelemetrySessionView(sess, nil, nil, messages)
@@ -289,10 +289,10 @@ func TestBuildTelemetryConversationGroups(t *testing.T) {
 	sess := db.AgentSession{ID: 5, Session: "sess-groups", StartedAt: started}
 
 	messages := []db.AgentMessage{
-		{AgentSessionID: 5, Seq: 1, Role: "user", Content: strp("first request"), CreatedAt: started},
-		{AgentSessionID: 5, Seq: 3, Role: "assistant", Content: strp("first answer"), CreatedAt: started.Add(3 * time.Second)},
-		{AgentSessionID: 5, Seq: 4, Role: "user", Content: strp("second request"), CreatedAt: started.Add(4 * time.Second)},
-		{AgentSessionID: 5, Seq: 5, Role: "assistant", Content: strp("second answer"), CreatedAt: started.Add(5 * time.Second)},
+		{AgentSessionID: 5, Seq: 1, Role: "user", InputSource: "interactive", Content: strp("first request"), CreatedAt: started},
+		{AgentSessionID: 5, Seq: 3, Role: "assistant", IsFinal: true, Content: strp("first answer"), CreatedAt: started.Add(3 * time.Second)},
+		{AgentSessionID: 5, Seq: 4, Role: "user", InputSource: "interactive", Content: strp("second request"), CreatedAt: started.Add(4 * time.Second)},
+		{AgentSessionID: 5, Seq: 5, Role: "assistant", IsFinal: true, Content: strp("second answer"), CreatedAt: started.Add(5 * time.Second)},
 	}
 	toolCalls := []db.AgentToolCall{
 		{AgentSessionID: 5, Seq: 2, ToolName: "bash", ToolResult: strp("ok"), CreatedAt: started.Add(2 * time.Second)},
@@ -330,7 +330,7 @@ func TestBuildTelemetryConversationGroups_NoUserMessagesCollapseToOneGroup(t *te
 		{AgentSessionID: 6, Seq: 1, Ts: started},
 	}
 	messages := []db.AgentMessage{
-		{AgentSessionID: 6, Seq: 2, Role: "assistant", Content: strp("only an assistant note"), CreatedAt: started.Add(time.Second)},
+		{AgentSessionID: 6, Seq: 2, Role: "assistant", IsFinal: true, Content: strp("only an assistant note"), CreatedAt: started.Add(time.Second)},
 	}
 
 	sv := buildTelemetrySessionView(sess, turns, nil, messages)
@@ -347,6 +347,50 @@ func TestBuildTelemetryConversationGroups_NoUserMessagesCollapseToOneGroup(t *te
 // TestHandleUIPhaseTelemetryFragmentRouteRegistered covers that the
 // telemetry fragment path resolves through the existing /phases/ route
 // without requiring a database connection.
+func TestBuildTelemetryNarrativeView_RequiresSemanticProvenance(t *testing.T) {
+	at := time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC)
+	messages := []db.AgentMessage{
+		{Seq: 1, Role: "user", InputSource: "harness", Content: strp("Synthetic Cerberus phase prompt"), CreatedAt: at},
+		{Seq: 2, Role: "user", InputSource: "extension", Content: strp("Extension-injected context"), CreatedAt: at.Add(time.Second)},
+		{Seq: 3, Role: "user", InputSource: "unknown", Content: strp("historical prompt"), CreatedAt: at.Add(2 * time.Second)},
+		{Seq: 4, Role: "user", InputSource: "interactive", Content: strp("human goal"), CreatedAt: at.Add(3 * time.Second)},
+		// Aborted/error text is evidence but not a delivered outcome.
+		{Seq: 7, Role: "assistant", IsFinal: false, Content: strp("partial before abort"), CreatedAt: at.Add(6 * time.Second)},
+		{Seq: 9, Role: "assistant", IsFinal: true, Content: strp("terminal result"), CreatedAt: at.Add(8 * time.Second)},
+		{Seq: 10, Role: "assistant", Content: strp("later internal note"), CreatedAt: at.Add(9 * time.Second)},
+	}
+	turns := []db.AgentTurn{
+		{Seq: 5, TurnIndex: i64p(11), StopReason: "toolUse", Ts: at.Add(4 * time.Second)},
+		{Seq: 6, TurnIndex: i64p(12), StopReason: "aborted", Ts: at.Add(5 * time.Second)},
+		{Seq: 8, TurnIndex: i64p(13), StopReason: "error", Ts: at.Add(7 * time.Second)},
+	}
+	sv := buildTelemetrySessionView(db.AgentSession{StartedAt: at}, turns, nil, messages)
+	n := sv.Narrative
+	if n.FirstUserRequest != "human goal" || n.LatestAssistantOutcome != "terminal result" {
+		t.Fatalf("semantic narrative/finality = %+v", n)
+	}
+	if !n.GoalProvenanceUnknown || !n.OutcomeProvenanceUnknown {
+		t.Fatalf("unknown historical provenance was not exposed: %+v", n)
+	}
+	if n.ModelCallCount != 3 || len(n.Groups) != 2 || n.Groups[1].UserPreview != "human goal" || n.Groups[1].AssistantPreview != "terminal result" {
+		t.Fatalf("semantic correlation/grouping = %+v", n)
+	}
+	if sv.Events[0].InputSource != "harness" || sv.Events[1].InputSource != "extension" || sv.Events[3].InputSource != "interactive" {
+		t.Fatalf("input provenance was not preserved in narrative events: %+v", sv.Events)
+	}
+}
+
+func TestBuildTelemetryNarrativeView_PrivacyPartial(t *testing.T) {
+	at := time.Now()
+	n := buildTelemetrySessionView(db.AgentSession{StartedAt: at}, nil, nil, []db.AgentMessage{
+		{Seq: 1, Role: "user", InputSource: "interactive", ContentRedacted: true, CreatedAt: at},
+		{Seq: 2, Role: "assistant", IsFinal: true, ContentTruncated: true, CreatedAt: at},
+	}).Narrative
+	if n.HasUserRequest || n.HasAssistantOutcome || !n.GoalPartial || !n.OutcomePartial {
+		t.Fatalf("privacy-filtered narrative = %+v, want unavailable partial facts", n)
+	}
+}
+
 func TestHandleUIPhaseTelemetryFragmentRouteRegistered(t *testing.T) {
 	mux, _ := newTestMux(t)
 	if pattern := registeredPattern(mux, "GET", "/phases/1/telemetry/fragment"); pattern == "" {
@@ -516,7 +560,7 @@ func TestSessionDetailTemplate_OverviewNeverRendersLargePayload(t *testing.T) {
 
 	hugeResult := strings.Repeat("R", 100*1024+91)
 	messages := []db.AgentMessage{
-		{AgentSessionID: 1, Seq: 1, Role: "user", Content: strp("please read the giant file"), CreatedAt: started},
+		{AgentSessionID: 1, Seq: 1, Role: "user", InputSource: "interactive", Content: strp("please read the giant file"), CreatedAt: started},
 	}
 	toolCalls := []db.AgentToolCall{
 		{
@@ -611,8 +655,8 @@ func TestBuildTelemetryNarrativeView_BoundsLargeGoalAndOutcome(t *testing.T) {
 	hugeUser := strings.Repeat("u", 100*1024+11)
 	hugeAssistant := strings.Repeat("a", 100*1024+22)
 	messages := []db.AgentMessage{
-		{AgentSessionID: 1, Seq: 1, Role: "user", Content: strp(hugeUser), CreatedAt: started},
-		{AgentSessionID: 1, Seq: 2, Role: "assistant", Content: strp(hugeAssistant), CreatedAt: started.Add(time.Second)},
+		{AgentSessionID: 1, Seq: 1, Role: "user", InputSource: "interactive", Content: strp(hugeUser), CreatedAt: started},
+		{AgentSessionID: 1, Seq: 2, Role: "assistant", IsFinal: true, Content: strp(hugeAssistant), CreatedAt: started.Add(time.Second)},
 	}
 
 	sv := buildTelemetrySessionView(sess, nil, nil, messages)
@@ -665,8 +709,8 @@ func TestBuildTelemetryConversationGroups_BoundsLargeExchangePreviews(t *testing
 	hugeUser := strings.Repeat("q", 100*1024+7)
 	hugeAssistant := strings.Repeat("r", 100*1024+9)
 	messages := []db.AgentMessage{
-		{AgentSessionID: 1, Seq: 1, Role: "user", Content: strp(hugeUser), CreatedAt: started},
-		{AgentSessionID: 1, Seq: 2, Role: "assistant", Content: strp(hugeAssistant), CreatedAt: started.Add(time.Second)},
+		{AgentSessionID: 1, Seq: 1, Role: "user", InputSource: "interactive", Content: strp(hugeUser), CreatedAt: started},
+		{AgentSessionID: 1, Seq: 2, Role: "assistant", IsFinal: true, Content: strp(hugeAssistant), CreatedAt: started.Add(time.Second)},
 	}
 
 	sv := buildTelemetrySessionView(sess, nil, nil, messages)
@@ -704,7 +748,7 @@ func TestBuildTelemetryNarrativeView_OutOfOrderToolCompletionWinsLastActivity(t 
 	messages := []db.AgentMessage{
 		// Seq 2: a later-sequenced message that nonetheless completes
 		// well before the slow tool call above finishes.
-		{AgentSessionID: 1, Seq: 2, Role: "assistant", Content: strp("quick reply"), CreatedAt: started.Add(time.Second)},
+		{AgentSessionID: 1, Seq: 2, Role: "assistant", IsFinal: true, Content: strp("quick reply"), CreatedAt: started.Add(time.Second)},
 	}
 
 	sv := buildTelemetrySessionView(sess, nil, toolCalls, messages)

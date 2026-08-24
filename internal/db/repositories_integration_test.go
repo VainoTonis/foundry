@@ -344,6 +344,61 @@ func TestDraftSave_Postgres(t *testing.T) {
 	})
 }
 
+func TestListKnownCerberusSessionsPage_TiedSources_Postgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	at := time.Date(2095, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	for _, name := range []string{"known-page-tie-z", "known-page-tie-x"} {
+		draft, err := CreateSpecDraft(ctx, pool, nil, name)
+		if err != nil {
+			t.Fatalf("CreateSpecDraft(%q): %v", name, err)
+		}
+		t.Cleanup(func() { _ = DeleteSpecDraft(context.Background(), pool, draft.ID) })
+		if _, err := pool.Exec(ctx, `UPDATE spec_drafts SET cerberus_session = $1, updated_at = $2 WHERE id = $3`, name, at, draft.ID); err != nil {
+			t.Fatalf("update draft session %q: %v", name, err)
+		}
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO external_cerberus_sessions (session, status, first_seen_at, last_seen_at) VALUES ($1, 'active', $2, $2)`, "known-page-tie-y", at); err != nil {
+		t.Fatalf("insert external session: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM external_cerberus_sessions WHERE session = $1`, "known-page-tie-y")
+	})
+
+	first, err := ListKnownCerberusSessionsPage(ctx, pool, KnownCerberusSessionPageParams{Limit: 2})
+	if err != nil {
+		t.Fatalf("ListKnownCerberusSessionsPage(first): %v", err)
+	}
+	if len(first) != 2 || first[0].Session != "known-page-tie-z" || first[1].Session != "known-page-tie-y" {
+		t.Fatalf("first tied page = %+v, want z then y", first)
+	}
+	cursorAt, cursorSession := first[1].LastUpdatedAt, first[1].Session
+	second, err := ListKnownCerberusSessionsPage(ctx, pool, KnownCerberusSessionPageParams{
+		Limit: 2, BeforeAt: &cursorAt, BeforeSession: cursorSession,
+	})
+	if err != nil {
+		t.Fatalf("ListKnownCerberusSessionsPage(second): %v", err)
+	}
+	if len(second) == 0 || second[0].Session != "known-page-tie-x" {
+		t.Fatalf("second tied page = %+v, want x first", second)
+	}
+	seen := map[string]bool{}
+	for _, rows := range [][]KnownCerberusSession{first, second} {
+		for _, row := range rows {
+			if seen[row.Session] {
+				t.Fatalf("session %q duplicated across pages", row.Session)
+			}
+			seen[row.Session] = true
+		}
+	}
+	for _, name := range []string{"known-page-tie-x", "known-page-tie-y", "known-page-tie-z"} {
+		if !seen[name] {
+			t.Fatalf("session %q omitted across tied pages", name)
+		}
+	}
+}
+
 // TestCerberusSessionLookup_Postgres exercises ListKnownCerberusSessions
 // against real PostgreSQL for both a workflow-phase-backed session (owned,
 // via specs.repository_id, by a local-only Repository) and a spec-draft-backed

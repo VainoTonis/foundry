@@ -115,6 +115,52 @@ func TestMergeSessionOverviews_DuplicateIdentity(t *testing.T) {
 	}
 }
 
+func TestMergeSessionOverviews_StableCursorAcrossSourceTie(t *testing.T) {
+	at := time.Date(2024, 9, 1, 12, 0, 0, 0, time.UTC)
+	known := []cerberusSessionView{
+		{KnownCerberusSession: db.KnownCerberusSession{Session: "tie-c", LastUpdatedAt: at}},
+		{KnownCerberusSession: db.KnownCerberusSession{Session: "tie-a", LastUpdatedAt: at}},
+	}
+	agents := []db.AgentSession{
+		{ID: 3, Session: "tie-b", LastEventAt: at, StartedAt: at},
+		// The overlap models an attribution row and telemetry row meeting at
+		// a source boundary. It must remain one identity.
+		{ID: 4, Session: "tie-a", LastEventAt: at, StartedAt: at},
+	}
+
+	first := mergeSessionOverviews(known, agents)
+	if len(first) != 3 {
+		t.Fatalf("merged tie page has %d rows, want 3 deduplicated rows: %+v", len(first), first)
+	}
+	for i, want := range []string{"tie-c", "tie-b", "tie-a"} {
+		if first[i].Session != want {
+			t.Fatalf("stable tie order[%d] = %q, want %q", i, first[i].Session, want)
+		}
+	}
+
+	// A page of two uses (timestamp,session) = (at,"tie-b"). Applying that
+	// same source-neutral cursor leaves tie-a in both inputs, and the merge
+	// emits it exactly once on page two.
+	second := mergeSessionOverviews(known[1:], agents[1:])
+	if len(second) != 1 || second[0].Session != "tie-a" {
+		t.Fatalf("second tie page = %+v, want only tie-a", second)
+	}
+	seen := map[string]bool{}
+	for _, page := range [][]sessionOverviewView{first[:2], second} {
+		for _, row := range page {
+			if seen[row.Session] {
+				t.Fatalf("session %q duplicated across tied source pages", row.Session)
+			}
+			seen[row.Session] = true
+		}
+	}
+	for _, want := range []string{"tie-a", "tie-b", "tie-c"} {
+		if !seen[want] {
+			t.Fatalf("session %q omitted across tied source pages", want)
+		}
+	}
+}
+
 // TestMergeSessionOverviews_Empty covers that merging with no known
 // sessions and no agent sessions produces an empty, non-nil slice.
 func TestMergeSessionOverviews_Empty(t *testing.T) {
@@ -207,8 +253,8 @@ func TestSessionsDetailTemplate_RendersNarrative(t *testing.T) {
 		HasTelemetry: true,
 	}
 	messages := []db.AgentMessage{
-		{AgentSessionID: 1, Seq: 1, Role: "user", Content: strp("please summarize the repo"), CreatedAt: started},
-		{AgentSessionID: 1, Seq: 2, Role: "assistant", Content: strp("the repo has three packages"), CreatedAt: started.Add(time.Second)},
+		{AgentSessionID: 1, Seq: 1, Role: "user", InputSource: "interactive", Content: strp("please summarize the repo"), CreatedAt: started},
+		{AgentSessionID: 1, Seq: 2, Role: "assistant", IsFinal: true, Content: strp("the repo has three packages"), CreatedAt: started.Add(time.Second)},
 	}
 	tv := buildTelemetrySessionView(db.AgentSession{ID: 1, Session: sess.Session, StartedAt: started}, nil, nil, messages)
 
@@ -234,7 +280,7 @@ func TestSessionsDetailTemplate_RendersNarrative(t *testing.T) {
 	// A session with no user message must render the honest fallback,
 	// not a fabricated request.
 	noUserTV := buildTelemetrySessionView(db.AgentSession{ID: 2, Session: "sess-no-user", StartedAt: started}, nil, nil, []db.AgentMessage{
-		{AgentSessionID: 2, Seq: 1, Role: "assistant", Content: strp("an assistant-only note"), CreatedAt: started},
+		{AgentSessionID: 2, Seq: 1, Role: "assistant", IsFinal: true, Content: strp("an assistant-only note"), CreatedAt: started},
 	})
 	var fallbackBuf bytes.Buffer
 	if err := templates.ExecuteTemplate(&fallbackBuf, "sessions.detail", struct {
@@ -243,7 +289,7 @@ func TestSessionsDetailTemplate_RendersNarrative(t *testing.T) {
 	}{sess, &noUserTV}); err != nil {
 		t.Fatalf("ExecuteTemplate() error = %v", err)
 	}
-	if !strings.Contains(fallbackBuf.String(), "(no user request recorded for this session)") {
+	if !strings.Contains(fallbackBuf.String(), "(no interactive human input recorded for this session)") {
 		t.Fatalf("expected honest fallback for a session with no user message, got:\n%s", fallbackBuf.String())
 	}
 }
@@ -340,6 +386,28 @@ func TestSessionsDetailTemplate_TelemetryOnlySessionHidesLiveStreamAndCleanup(t 
 	}
 	if !strings.Contains(out, "telemetry-fidelity-notice") || !strings.Contains(out, "SHA-256") {
 		t.Fatalf("expected telemetry-only session to show the curated/truncation fidelity notice, got:\n%s", out)
+	}
+}
+
+func TestSessionsDetailTemplate_ProvenanceAndPrivacyAnnotations(t *testing.T) {
+	at := time.Now()
+	sess := sessionOverviewView{KnownCerberusSession: db.KnownCerberusSession{Session: "semantic"}, HasTelemetry: true}
+	tv := buildTelemetrySessionView(db.AgentSession{Session: "semantic", StartedAt: at}, nil, nil, []db.AgentMessage{
+		{Seq: 1, Role: "user", InputSource: "unknown", Content: strp("historical"), CreatedAt: at},
+		{Seq: 2, Role: "assistant", IsFinal: true, Content: strp("partial result"), ContentTruncated: true, CreatedAt: at},
+	})
+	var buf bytes.Buffer
+	if err := templates.ExecuteTemplate(&buf, "sessions.detail", struct {
+		Session   sessionOverviewView
+		Telemetry *telemetrySessionView
+	}{sess, &tv}); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	for _, want := range []string{"historical user input has no interactive-human provenance", "partial / truncated or privacy-filtered", "Provenance: unknown", "final terminal"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected %q in semantic annotations:\n%s", want, out)
+		}
 	}
 }
 

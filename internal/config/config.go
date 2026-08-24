@@ -11,17 +11,19 @@ import (
 )
 
 type Config struct {
-	DBURL                      string  `yaml:"db_url"`
-	CerberusBin                string  `yaml:"cerberus_bin"`
-	CerberusImage              string  `yaml:"cerberus_image"`
-	CerberusModel              string  `yaml:"cerberus_model"`
-	CerberusProfile            string  `yaml:"cerberus_profile"`
-	ServerPort                 int     `yaml:"server_port"`
-	UIVerbosity                string  `yaml:"ui_verbosity"`
-	MaxConcurrentWorkflows     int     `yaml:"max_concurrent_workflows"`
-	DefaultWorkflowBudgetUSD   float64 `yaml:"default_workflow_budget_usd"`
-	DefaultPhaseTimeoutSeconds int     `yaml:"default_phase_timeout_seconds"`
-	GitRoot                    string  `yaml:"git_root"`
+	DBURL                         string  `yaml:"db_url"`
+	CerberusBin                   string  `yaml:"cerberus_bin"`
+	CerberusImage                 string  `yaml:"cerberus_image"`
+	CerberusModel                 string  `yaml:"cerberus_model"`
+	CerberusProfile               string  `yaml:"cerberus_profile"`
+	ServerPort                    int     `yaml:"server_port"`
+	TelemetryBearerToken          string  `yaml:"telemetry_bearer_token"`
+	TelemetryAllowUnauthenticated bool    `yaml:"telemetry_allow_unauthenticated"`
+	UIVerbosity                   string  `yaml:"ui_verbosity"`
+	MaxConcurrentWorkflows        int     `yaml:"max_concurrent_workflows"`
+	DefaultWorkflowBudgetUSD      float64 `yaml:"default_workflow_budget_usd"`
+	DefaultPhaseTimeoutSeconds    int     `yaml:"default_phase_timeout_seconds"`
+	GitRoot                       string  `yaml:"git_root"`
 }
 
 func Load(path string) (Config, error) {
@@ -35,7 +37,27 @@ func Load(path string) (Config, error) {
 		return Config{}, fmt.Errorf("decode config: %w", err)
 	}
 	setDefaults(&cfg)
+	if err := applyTelemetryEnvironment(&cfg); err != nil {
+		return Config{}, err
+	}
+	if cfg.TelemetryBearerToken == "" && !cfg.TelemetryAllowUnauthenticated {
+		return Config{}, fmt.Errorf("telemetry authentication is not configured: set telemetry_bearer_token (or FOUNDRY_TELEMETRY_BEARER_TOKEN), or explicitly enable loopback-only unauthenticated development mode")
+	}
 	return cfg, nil
+}
+
+func applyTelemetryEnvironment(cfg *Config) error {
+	if token, ok := os.LookupEnv("FOUNDRY_TELEMETRY_BEARER_TOKEN"); ok {
+		cfg.TelemetryBearerToken = token
+	}
+	if value, ok := os.LookupEnv("FOUNDRY_TELEMETRY_ALLOW_UNAUTHENTICATED"); ok {
+		allow, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("parse FOUNDRY_TELEMETRY_ALLOW_UNAUTHENTICATED: invalid boolean")
+		}
+		cfg.TelemetryAllowUnauthenticated = allow
+	}
+	return nil
 }
 
 func RuntimeSettingKeys() map[string]bool {

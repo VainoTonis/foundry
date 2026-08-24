@@ -67,13 +67,18 @@ The CLI communicates with a running Foundry server via HTTP (default `http://loc
 
 ### Plans subcommands
 
+Plan creation and mutations read JSON from stdin. Step positions are zero-based.
+
 ```sh
-foundry plans create [...]     # Create a new plan
-foundry plans get <id>         # Get a plan by ID
-foundry plans list             # List all plans
-foundry plans update <id> [...] # Update a plan
-foundry plans update-step [...] # Update a plan step
+printf '%s\n' '{"repository_ids":[1],"title":"My plan","summary":"Goal, scope, non-goals, decisions, and risks","steps":[{"text":"First step","parallel_group":1}]}' | foundry plans create
+foundry plans get <id>
+foundry plans list
+printf '%s\n' '{"status":"running"}' | foundry plans update <id>
+printf '%s\n' '{"plan_id":<id>,"position":0,"status":"done"}' | foundry plans update-step
+foundry plans run <id>
 ```
+
+Use `foundry repositories list` to resolve repository IDs. `repository_ids` is ordered and non-empty; index 0 identifies the primary repository. `foundry` is the supported automation CLI—do not use the deprecated standalone `foundry-plans` binary.
 
 ### Repositories subcommands
 

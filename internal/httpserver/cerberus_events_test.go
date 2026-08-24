@@ -37,6 +37,28 @@ func TestBuildCerberusTelemetryEvent_SessionStart(t *testing.T) {
 	}
 }
 
+func TestBuildCerberusTelemetryEvent_SessionStartSubagentMetadata(t *testing.T) {
+	raw := []byte(`{"type":"session_start","session":"sess-1","session_id":"src-1","kind":"reviewer","model":"anthropic/claude","repo_path":"/tmp/repo","parent_session":"parent-1"}`)
+	fields := extractCerberusFields(raw)
+
+	ev, ok := buildCerberusTelemetryEvent("session_start", "sess-1", fields)
+	if !ok {
+		t.Fatal("buildCerberusTelemetryEvent() ok = false, want true")
+	}
+	if ev.Session.Kind != telemetry.SessionKind("reviewer") {
+		t.Fatalf("Kind = %q, want reviewer", ev.Session.Kind)
+	}
+	if ev.Attribution.Model == nil || *ev.Attribution.Model != "anthropic/claude" {
+		t.Fatalf("Model = %v, want anthropic/claude", ev.Attribution.Model)
+	}
+	if ev.Attribution.RepoPath == nil || *ev.Attribution.RepoPath != "/tmp/repo" {
+		t.Fatalf("RepoPath = %v, want /tmp/repo", ev.Attribution.RepoPath)
+	}
+	if ev.Attribution.ParentSession == nil || *ev.Attribution.ParentSession != "parent-1" {
+		t.Fatalf("ParentSession = %v, want parent-1", ev.Attribution.ParentSession)
+	}
+}
+
 func TestBuildCerberusTelemetryEvent_SessionStartMissingSessionID(t *testing.T) {
 	raw := []byte(`{"type":"session_start","session":"sess-1","ts":"2024-01-02T03:04:05Z"}`)
 	fields := extractCerberusFields(raw)
@@ -142,6 +164,23 @@ func TestBuildCerberusTelemetryEvent_MessageEndMissingUsage(t *testing.T) {
 	}
 }
 
+func TestBuildCerberusTelemetryEvent_RunComplete(t *testing.T) {
+	raw := []byte(`{"type":"run_complete","session":"sess-1","ts":"2024-01-02T03:04:05Z"}`)
+	fields := extractCerberusFields(raw)
+
+	ev, ok := buildCerberusTelemetryEvent("run_complete", "sess-1", fields)
+	if !ok {
+		t.Fatal("buildCerberusTelemetryEvent() ok = false, want true")
+	}
+	if ev.Type != telemetry.EventSessionEnd {
+		t.Fatalf("Type = %v, want %v", ev.Type, telemetry.EventSessionEnd)
+	}
+	want, _ := time.Parse(time.RFC3339, "2024-01-02T03:04:05Z")
+	if !ev.Timestamp.Equal(want) {
+		t.Fatalf("Timestamp = %v, want %v", ev.Timestamp, want)
+	}
+}
+
 func TestBuildCerberusTelemetryEvent_UnhandledType(t *testing.T) {
 	raw := []byte(`{"type":"raw","session":"sess-1"}`)
 	fields := extractCerberusFields(raw)
@@ -163,6 +202,15 @@ func TestExtractCerberusFields_NestedPayloadCompatibility(t *testing.T) {
 	}
 	if cerberusRawToString(fields.ToolInput) != "ls" {
 		t.Fatalf("ToolInput = %q, want %q", cerberusRawToString(fields.ToolInput), "ls")
+	}
+}
+
+func TestExtractCerberusFields_NestedSessionStartCompatibility(t *testing.T) {
+	raw := []byte(`{"type":"session_start","session":"sess-1","payload":{"session_id":"src-1","kind":"reviewer","model":"model-1","repo_path":"/repo","parent_session":"parent-1"}}`)
+	fields := extractCerberusFields(raw)
+
+	if fields.SessionID != "src-1" || fields.Kind != "reviewer" || fields.Model != "model-1" || fields.RepoPath != "/repo" || fields.ParentSession != "parent-1" {
+		t.Fatalf("fields = %+v, want nested session metadata", fields)
 	}
 }
 
@@ -266,6 +314,23 @@ func TestCompactToolUsePayload_UpdateSpecFollowsCompactPayload(t *testing.T) {
 	}
 	if decoded["tool_input"] != `{"foo":"bar"}` {
 		t.Fatalf("tool_input = %q, want %q", decoded["tool_input"], `{"foo":"bar"}`)
+	}
+}
+
+func TestApplyManagedCerberusAttribution_KeepsManagedRepositoryAndPayloadMetadata(t *testing.T) {
+	payloadRepoPath, managedRepoPath := "/payload/repo", "/managed/repo"
+	model, parent := "model-1", "parent-1"
+	payloadRepoID, managedRepoID, phaseID := int64(1), int64(2), int64(3)
+	got := applyManagedCerberusAttribution(
+		telemetry.Attribution{RepositoryID: &payloadRepoID, RepoPath: &payloadRepoPath, Model: &model, ParentSession: &parent},
+		telemetry.Attribution{RepositoryID: &managedRepoID, PhaseID: &phaseID, RepoPath: &managedRepoPath},
+	)
+
+	if got.RepositoryID != &managedRepoID || got.PhaseID != &phaseID || got.RepoPath != &managedRepoPath {
+		t.Fatalf("managed attribution not authoritative: %+v", got)
+	}
+	if got.Model != &model || got.ParentSession != &parent {
+		t.Fatalf("payload metadata was not preserved: %+v", got)
 	}
 }
 

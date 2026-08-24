@@ -28,6 +28,12 @@ type querier interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
+// Querier is the exported form of querier, for callers outside the db
+// package (e.g. telemetry ingest) that need to run a sequence of db.*
+// helper calls against either a *pgxpool.Pool or an in-progress pgx.Tx so
+// they commit or roll back atomically together.
+type Querier = querier
+
 const planSelectColumns = `p.id, p.title, p.summary, p.content,
 		COALESCE((SELECT w.status FROM plan_workflows pw JOIN workflows w ON w.id = pw.workflow_id WHERE pw.plan_id = p.id ORDER BY w.id DESC LIMIT 1), p.status),
 		p.created_at, p.updated_at`

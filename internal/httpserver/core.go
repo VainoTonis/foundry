@@ -24,26 +24,37 @@ const chatIdleSuspendAfter = 20 * time.Minute
 
 // Server wires HTTP routes and shared edge dependencies.
 type Server struct {
-	pool            *pgxpool.Pool
-	runner          *workflow.Runner
-	cerb            *cerberus.Client
-	chatSvc         *chat.Service
-	jsonAPI         *httpapi.Handler
-	webUI           *webui.Handler
-	mux             *http.ServeMux
-	eventHub        *hub.EventHub
-	defaultBudget   float64
-	settingsMu      sync.RWMutex
-	gitRoot         string
-	cfgPath         string
-	serverPort      int
-	cerberusProfile string
-	cerbEventsMu    sync.Mutex
-	cerbBuffers     map[string]*cerberusTextBuffer
+	pool                          *pgxpool.Pool
+	runner                        *workflow.Runner
+	cerb                          *cerberus.Client
+	chatSvc                       *chat.Service
+	jsonAPI                       *httpapi.Handler
+	webUI                         *webui.Handler
+	mux                           *http.ServeMux
+	eventHub                      *hub.EventHub
+	defaultBudget                 float64
+	settingsMu                    sync.RWMutex
+	gitRoot                       string
+	cfgPath                       string
+	serverPort                    int
+	cerberusProfile               string
+	telemetryToken                string
+	telemetryAllowUnauthenticated bool
+	cerbEventsMu                  sync.Mutex
+	cerbBuffers                   map[string]*cerberusTextBuffer
 }
 
-func NewServer(pool *pgxpool.Pool, runner *workflow.Runner, cerb *cerberus.Client, eventHub *hub.EventHub, defaultBudget float64, gitRoot string, cfgPath string, cerberusProfile string, serverPort int) *Server {
-	s := &Server{pool: pool, runner: runner, cerb: cerb, eventHub: eventHub, defaultBudget: defaultBudget, gitRoot: gitRoot, cfgPath: cfgPath, serverPort: serverPort, cerberusProfile: cerberusProfile, cerbBuffers: make(map[string]*cerberusTextBuffer)}
+type TelemetrySecurity struct {
+	BearerToken          string
+	AllowUnauthenticated bool
+}
+
+func NewServer(pool *pgxpool.Pool, runner *workflow.Runner, cerb *cerberus.Client, eventHub *hub.EventHub, defaultBudget float64, gitRoot string, cfgPath string, cerberusProfile string, serverPort int, telemetrySecurity ...TelemetrySecurity) *Server {
+	security := TelemetrySecurity{}
+	if len(telemetrySecurity) > 0 {
+		security = telemetrySecurity[0]
+	}
+	s := &Server{pool: pool, runner: runner, cerb: cerb, eventHub: eventHub, defaultBudget: defaultBudget, gitRoot: gitRoot, cfgPath: cfgPath, serverPort: serverPort, cerberusProfile: cerberusProfile, telemetryToken: security.BearerToken, telemetryAllowUnauthenticated: security.AllowUnauthenticated, cerbBuffers: make(map[string]*cerberusTextBuffer)}
 	s.chatSvc = chat.NewService(pool, cerb, s.callbackURL(), func() string {
 		_, profile := s.runtimeSettings()
 		return profile
@@ -176,7 +187,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/api/cerberus/sessions", s.handleCerberusSessions)
 	s.mux.HandleFunc("/api/cerberus/sessions/", s.handleCerberusSession)
 	s.mux.HandleFunc("/api/cerberus/events", s.handleCerberusCallback)
-	s.mux.HandleFunc("/api/telemetry/events", s.handleTelemetryEvents)
+	s.mux.HandleFunc("/api/telemetry/events", s.requireTelemetryAuth(s.handleTelemetryEvents))
 	s.mux.HandleFunc("/api/spec-drafts", s.jsonAPI.HandleSpecDrafts)
 	s.mux.HandleFunc("/api/spec-drafts/", s.handleSpecDraft)
 	s.mux.HandleFunc("/api/chat/sessions", s.jsonAPI.HandleChatSessions)

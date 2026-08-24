@@ -7,6 +7,7 @@ import (
 	"sort"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -23,6 +24,77 @@ func createTestAgentSession(t *testing.T, pool *pgxpool.Pool, p EnsureAgentSessi
 		}
 	})
 	return s
+}
+
+func TestSemanticTelemetrySchema_Postgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+
+	type columnExpectation struct {
+		table      string
+		column     string
+		nullable   string
+		hasDefault bool
+	}
+	expected := []columnExpectation{
+		{"agent_sessions", "schema_version", "NO", true},
+		{"agent_sessions", "last_event_at", "NO", true},
+		{"agent_sessions", "close_reason", "NO", true},
+		{"agent_sessions", "lifecycle_state", "NO", true},
+		{"agent_sessions", "start_event_seen", "NO", true},
+		{"agent_sessions", "end_event_seen", "NO", true},
+		{"agent_sessions", "parent_source_session_id", "YES", false},
+		{"agent_turns", "model", "NO", true},
+		{"agent_turns", "provider", "NO", true},
+		{"agent_turns", "thinking_level", "NO", true},
+		{"agent_turns", "stop_reason", "NO", true},
+		{"agent_turns", "turn_index", "YES", false},
+		{"agent_turns", "source_message_id", "YES", false},
+		{"agent_messages", "source_message_id", "YES", false},
+		{"agent_messages", "turn_index", "YES", false},
+		{"agent_messages", "input_source", "NO", true},
+		{"agent_messages", "is_final", "NO", true},
+		{"agent_session_repositories", "agent_session_id", "NO", false},
+		{"agent_session_repositories", "repository_id", "NO", false},
+		{"agent_session_repositories", "attribution_method", "NO", true},
+		{"agent_session_repositories", "attribution_confidence", "YES", false},
+	}
+	for _, want := range expected {
+		var nullable string
+		var defaultValue *string
+		err := pool.QueryRow(ctx, `
+			SELECT is_nullable, column_default
+			FROM information_schema.columns
+			WHERE table_schema = current_schema()
+			  AND table_name = $1 AND column_name = $2`,
+			want.table, want.column,
+		).Scan(&nullable, &defaultValue)
+		if err != nil {
+			t.Fatalf("schema column %s.%s: %v", want.table, want.column, err)
+		}
+		if nullable != want.nullable {
+			t.Errorf("%s.%s nullable = %s, want %s", want.table, want.column, nullable, want.nullable)
+		}
+		if (defaultValue != nil) != want.hasDefault {
+			t.Errorf("%s.%s default = %v, want hasDefault=%t", want.table, want.column, defaultValue, want.hasDefault)
+		}
+	}
+
+	for _, index := range []string{
+		"agent_sessions_recent_idx",
+		"agent_session_repositories_repository_session_idx",
+		"agent_messages_session_source_message_id_key",
+		"agent_turns_session_turn_index_idx",
+		"agent_messages_session_turn_index_idx",
+	} {
+		var exists bool
+		if err := pool.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, index).Scan(&exists); err != nil {
+			t.Fatalf("look up index %s: %v", index, err)
+		}
+		if !exists {
+			t.Errorf("index %s does not exist", index)
+		}
+	}
 }
 
 func TestEnsureAgentSession_Postgres(t *testing.T) {
@@ -94,6 +166,127 @@ func TestEnsureAgentSession_Postgres(t *testing.T) {
 
 	if _, err := GetAgentSessionBySession(ctx, pool, "agent-telemetry-does-not-exist"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("GetAgentSessionBySession() on unknown session error = %v, want %v", err, ErrNotFound)
+	}
+}
+
+// TestEnsureAgentSession_UpgradesPlaceholderAttribution_Postgres verifies
+// that a fallback row created with placeholder attribution (source_session_id
+// equal to the session identifier, origin "unknown") can later be upgraded
+// by a call carrying real attribution, but that real attribution, once set,
+// is never overwritten by a subsequent placeholder value.
+func TestEnsureAgentSession_UpgradesPlaceholderAttribution_Postgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+
+	session := "agent-telemetry-ensure-placeholder-upgrade"
+
+	fallback := createTestAgentSession(t, pool, EnsureAgentSessionParams{
+		Session:         session,
+		SourceSessionID: session,
+		Origin:          "unknown",
+	})
+	if fallback.SourceSessionID != session {
+		t.Fatalf("SourceSessionID = %q, want placeholder %q", fallback.SourceSessionID, session)
+	}
+	if fallback.Origin != "unknown" {
+		t.Fatalf("Origin = %q, want placeholder %q", fallback.Origin, "unknown")
+	}
+
+	upgraded, err := EnsureAgentSession(ctx, pool, EnsureAgentSessionParams{
+		Session:         session,
+		SourceSessionID: session + "-real-source",
+		Origin:          "claude-code",
+	})
+	if err != nil {
+		t.Fatalf("EnsureAgentSession() upgrade error = %v", err)
+	}
+	if upgraded.ID != fallback.ID {
+		t.Fatalf("upgraded.ID = %d, want unchanged %d", upgraded.ID, fallback.ID)
+	}
+	if upgraded.SourceSessionID != session+"-real-source" {
+		t.Fatalf("SourceSessionID = %q, want upgraded to %q", upgraded.SourceSessionID, session+"-real-source")
+	}
+	if upgraded.Origin != "claude-code" {
+		t.Fatalf("Origin = %q, want upgraded to %q", upgraded.Origin, "claude-code")
+	}
+
+	// A later call carrying placeholder-shaped values must not overwrite
+	// the now-real attribution.
+	regressed, err := EnsureAgentSession(ctx, pool, EnsureAgentSessionParams{
+		Session:         session,
+		SourceSessionID: session,
+		Origin:          "unknown",
+	})
+	if err != nil {
+		t.Fatalf("EnsureAgentSession() post-upgrade error = %v", err)
+	}
+	if regressed.SourceSessionID != session+"-real-source" {
+		t.Fatalf("SourceSessionID = %q, want unchanged %q (must not regress to placeholder)", regressed.SourceSessionID, session+"-real-source")
+	}
+	if regressed.Origin != "claude-code" {
+		t.Fatalf("Origin = %q, want unchanged %q (must not regress to placeholder)", regressed.Origin, "claude-code")
+	}
+}
+
+func TestEnsureAgentSession_MultiRepositoryAndResumeLifecycle_Postgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	fixture := fmt.Sprintf("agent-semantic-attribution-%d", time.Now().UnixNano())
+	repoA := createTestPlanRepo(t, pool, fixture+"-a")
+	repoB := createTestPlanRepo(t, pool, fixture+"-b")
+	started := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
+	high, medium := 0.95, 0.75
+
+	session := createTestAgentSession(t, pool, EnsureAgentSessionParams{
+		Session: fixture, SourceSessionID: fixture + "-source", Origin: "pi",
+		RepositoryID: &repoA.ID, AttributionMethod: "explicit", AttributionConfidence: &high,
+		LifecycleState: "active", StartEventSeen: true, EventAt: &started, StartedAt: &started,
+	})
+	if _, err := EnsureAgentSession(ctx, pool, EnsureAgentSessionParams{
+		Session: fixture, SourceSessionID: fixture + "-source", Origin: "pi",
+		RepositoryID: &repoB.ID, AttributionMethod: "tool_path", AttributionConfidence: &medium,
+		LifecycleState: "active", EventAt: &started,
+	}); err != nil {
+		t.Fatalf("attach secondary repository: %v", err)
+	}
+	rows, err := pool.Query(ctx, `SELECT repository_id, attribution_method FROM agent_session_repositories
+		WHERE agent_session_id = $1 ORDER BY repository_id`, session.ID)
+	if err != nil {
+		t.Fatalf("list repository attribution: %v", err)
+	}
+	defer rows.Close()
+	got := map[int64]string{}
+	for rows.Next() {
+		var id int64
+		var method string
+		if err := rows.Scan(&id, &method); err != nil {
+			t.Fatalf("scan repository attribution: %v", err)
+		}
+		got[id] = method
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("repository attribution rows: %v", err)
+	}
+	if got[repoA.ID] != "explicit" || got[repoB.ID] != "tool_path" {
+		t.Fatalf("multi-repository attribution = %+v", got)
+	}
+
+	closedAt := started.Add(time.Minute)
+	closed, err := CloseAgentSession(ctx, pool, session.ID, &closedAt, "reload")
+	if err != nil || closed.LifecycleState != "closed" || !closed.EndEventSeen || closed.CloseReason != "reload" {
+		t.Fatalf("closed lifecycle = %+v, err = %v", closed, err)
+	}
+	resumedAt := closedAt.Add(time.Second)
+	resumed, err := EnsureAgentSession(ctx, pool, EnsureAgentSessionParams{
+		Session: fixture, SourceSessionID: fixture + "-source", Origin: "pi",
+		LifecycleState: "active", StartEventSeen: true, EventAt: &resumedAt,
+	})
+	if err != nil || resumed.LifecycleState != "active" || resumed.EndedAt != nil ||
+		!resumed.EndEventSeen || resumed.CloseReason != "reload" || !resumed.LastEventAt.Equal(resumedAt) {
+		t.Fatalf("resumed lifecycle/provenance = %+v, err = %v", resumed, err)
+	}
+	if resumed.RepositoryID == nil || *resumed.RepositoryID != repoA.ID {
+		t.Fatalf("resume changed primary repository: %+v", resumed)
 	}
 }
 
@@ -568,6 +761,87 @@ func TestListAgentSessions_Postgres(t *testing.T) {
 	}
 }
 
+func TestListAgentSessionsPage_BoundedLifecycleAndCursor_Postgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	fixture := fmt.Sprintf("agent-page-bounded-%d", time.Now().UnixNano())
+	repo := createTestPlanRepo(t, pool, fixture)
+	repoID := repo.ID
+	base := time.Date(2024, 8, 1, 0, 0, 0, 0, time.UTC)
+	active := createTestAgentSession(t, pool, EnsureAgentSessionParams{
+		Session: fixture + "-active", SourceSessionID: fixture + "-active-source", Origin: "test",
+		RepositoryID: &repoID, LifecycleState: "active", EventAt: &base,
+	})
+	later := base.Add(time.Minute)
+	closed := createTestAgentSession(t, pool, EnsureAgentSessionParams{
+		Session: fixture + "-closed", SourceSessionID: fixture + "-closed-source", Origin: "test",
+		RepositoryID: &repoID, LifecycleState: "active", EventAt: &later,
+	})
+	if _, err := CloseAgentSession(ctx, pool, closed.ID, &later); err != nil {
+		t.Fatalf("CloseAgentSession() error = %v", err)
+	}
+
+	got, err := ListAgentSessionsPage(ctx, pool, AgentSessionPageParams{
+		Limit: 1, Lifecycle: "closed", RepositoryID: &repoID,
+	})
+	if err != nil {
+		t.Fatalf("ListAgentSessionsPage() error = %v", err)
+	}
+	if len(got) != 1 || got[0].ID != closed.ID {
+		t.Fatalf("closed page = %+v, want fixture row %d", got, closed.ID)
+	}
+	beforeID := closed.ID
+	got, err = ListAgentSessionsPage(ctx, pool, AgentSessionPageParams{
+		Limit: 10, BeforeAt: &later, BeforeID: &beforeID, RepositoryID: &repoID,
+	})
+	if err != nil {
+		t.Fatalf("ListAgentSessionsPage(cursor) error = %v", err)
+	}
+	if len(got) != 1 || got[0].ID != active.ID {
+		t.Fatalf("cursor page = %+v, want fixture row %d", got, active.ID)
+	}
+	if got[0].LastEventAt.After(later) || (got[0].LastEventAt.Equal(later) && got[0].ID >= beforeID) {
+		t.Fatalf("cursor leaked newer session: %+v", got[0])
+	}
+}
+
+func TestListAgentSessionsPage_LifecycleAppliedBeforeLimit_Postgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	fixture := fmt.Sprintf("agent-page-lifecycle-%d", time.Now().UnixNano())
+	repo := createTestPlanRepo(t, pool, fixture)
+	repoID := repo.ID
+	closedAt := time.Date(2090, 1, 1, 0, 0, 0, 0, time.UTC)
+	closed := createTestAgentSession(t, pool, EnsureAgentSessionParams{
+		Session: fixture + "-old-closed", SourceSessionID: fixture + "-old-closed-source",
+		Origin: "test", RepositoryID: &repoID, LifecycleState: "active", EventAt: &closedAt,
+	})
+	if _, err := CloseAgentSession(ctx, pool, closed.ID, &closedAt); err != nil {
+		t.Fatalf("CloseAgentSession() error = %v", err)
+	}
+
+	// More than one historical UI fetch worth of newer, non-matching rows
+	// must not hide the closed row: lifecycle belongs in SQL before LIMIT.
+	for i := 0; i < 52; i++ {
+		at := closedAt.Add(time.Duration(i+1) * time.Minute)
+		createTestAgentSession(t, pool, EnsureAgentSessionParams{
+			Session:         fmt.Sprintf("%s-new-active-%02d", fixture, i),
+			SourceSessionID: fmt.Sprintf("%s-new-active-%02d-source", fixture, i),
+			Origin:          "test", RepositoryID: &repoID, LifecycleState: "active", EventAt: &at,
+		})
+	}
+
+	got, err := ListAgentSessionsPage(ctx, pool, AgentSessionPageParams{
+		Limit: 1, Lifecycle: "closed", RepositoryID: &repoID,
+	})
+	if err != nil {
+		t.Fatalf("ListAgentSessionsPage() error = %v", err)
+	}
+	if len(got) != 1 || got[0].ID != closed.ID {
+		t.Fatalf("closed page = %+v, want older matching row %d despite 52 newer active rows", got, closed.ID)
+	}
+}
+
 func TestListAgentTurnsToolCallsMessagesBySession_Postgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -598,7 +872,11 @@ func TestListAgentTurnsToolCallsMessagesBySession_Postgres(t *testing.T) {
 		t.Fatalf("ListAgentMessagesBySession() on empty session = (%v, %v), want (empty, nil)", msgs, err)
 	}
 
-	turn1, err := InsertAgentTurn(ctx, pool, InsertAgentTurnParams{AgentSessionID: session.ID, Seq: nextSeq()})
+	turnIndex := int64(12)
+	sourceMessageID := "assistant-correlation-12"
+	turn1, err := InsertAgentTurn(ctx, pool, InsertAgentTurnParams{
+		AgentSessionID: session.ID, Seq: nextSeq(), TurnIndex: &turnIndex, SourceMessageID: &sourceMessageID,
+	})
 	if err != nil {
 		t.Fatalf("InsertAgentTurn() error = %v", err)
 	}
@@ -653,10 +931,12 @@ func TestListAgentTurnsToolCallsMessagesBySession_Postgres(t *testing.T) {
 	}
 	content := "hello"
 	fullMsg, err := InsertAgentMessage(ctx, pool, InsertAgentMessageParams{
-		AgentSessionID: session.ID,
-		Seq:            nextSeq(),
-		Role:           "assistant",
-		Content:        &content,
+		AgentSessionID:  session.ID,
+		Seq:             nextSeq(),
+		Role:            "assistant",
+		SourceMessageID: &sourceMessageID,
+		TurnIndex:       &turnIndex,
+		Content:         &content,
 	})
 	if err != nil {
 		t.Fatalf("InsertAgentMessage() error = %v", err)
@@ -668,6 +948,9 @@ func TestListAgentTurnsToolCallsMessagesBySession_Postgres(t *testing.T) {
 	}
 	if len(turns) != 2 || turns[0].ID != turn1.ID || turns[1].ID != turn2.ID {
 		t.Fatalf("ListAgentTurnsBySession() = %+v, want [%d, %d] in seq order", turns, turn1.ID, turn2.ID)
+	}
+	if turns[0].TurnIndex == nil || *turns[0].TurnIndex != turnIndex || turns[0].SourceMessageID == nil || *turns[0].SourceMessageID != sourceMessageID {
+		t.Fatalf("turn correlation = %+v, want turn %d/message %q", turns[0], turnIndex, sourceMessageID)
 	}
 
 	calls, err := ListAgentToolCallsBySession(ctx, pool, session.ID)
@@ -702,6 +985,9 @@ func TestListAgentTurnsToolCallsMessagesBySession_Postgres(t *testing.T) {
 	}
 	if msgs[1].Content == nil || *msgs[1].Content != content {
 		t.Fatalf("msgs[1].Content = %v, want %q", msgs[1].Content, content)
+	}
+	if msgs[1].TurnIndex == nil || *msgs[1].TurnIndex != turnIndex || msgs[1].SourceMessageID == nil || *msgs[1].SourceMessageID != sourceMessageID {
+		t.Fatalf("message correlation = %+v, want turn %d/message %q", msgs[1], turnIndex, sourceMessageID)
 	}
 
 	// Turns, tool calls, and messages belonging to a different session must

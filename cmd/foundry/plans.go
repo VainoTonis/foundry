@@ -1,416 +1,333 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"strconv"
 
 	"github.com/spf13/cobra"
 	"github.com/tonis2/foundry/internal/apiclient"
 )
 
-var plansCmd = &cobra.Command{
-	Use:   "plans",
-	Short: "Manage plans",
+var plansCmd = &cobra.Command{Use: "plans", Short: "Manage plans"}
+
+type createPlanInput struct {
+	RepositoryIDs []int64           `json:"repository_ids"`
+	Title         string            `json:"title"`
+	Summary       string            `json:"summary"`
+	Content       string            `json:"content"`
+	Steps         []json.RawMessage `json:"steps"`
+}
+
+type createPlanRequest struct {
+	RepositoryIDs []int64 `json:"repository_ids"`
+	Title         string  `json:"title"`
+	Summary       string  `json:"summary"`
+	Content       string  `json:"content"`
+}
+
+type planOutput struct {
+	*apiclient.Plan
+	Steps []apiclient.PlanStep `json:"steps"`
+}
+
+func decodeJSON(r io.Reader, v any) error {
+	dec := json.NewDecoder(r)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("multiple JSON values")
+		}
+		return err
+	}
+	return nil
+}
+
+func parseCreateSteps(raw []json.RawMessage) ([]apiclient.CreateStepInput, error) {
+	steps := make([]apiclient.CreateStepInput, len(raw))
+	for position, value := range raw {
+		var text string
+		if err := json.Unmarshal(value, &text); err == nil {
+			steps[position] = apiclient.CreateStepInput{Position: position, Text: text}
+			continue
+		}
+		var object struct {
+			Text          *string `json:"text"`
+			ParallelGroup *int    `json:"parallel_group"`
+		}
+		if err := decodeJSON(bytes.NewReader(value), &object); err != nil {
+			return nil, fmt.Errorf("step at position %d has invalid format: %w", position, err)
+		}
+		if object.Text == nil {
+			return nil, fmt.Errorf("step at position %d is missing 'text' field", position)
+		}
+		steps[position] = apiclient.CreateStepInput{Position: position, Text: *object.Text, ParallelGroup: object.ParallelGroup}
+	}
+	return steps, nil
+}
+
+func writeJSON(w io.Writer, value any) error {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(value)
+}
+
+func planID(value string) (string, error) {
+	id, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || id <= 0 {
+		return "", fmt.Errorf("invalid plan ID %q: must be a positive integer", value)
+	}
+	return strconv.FormatInt(id, 10), nil
 }
 
 var createCmd = &cobra.Command{
-	Use:   "create",
-	Short: "Create a new plan with steps",
-	Long:  "Create a new plan. Reads JSON from stdin with repository_ids, title, summary, content, and optional steps array.",
+	Use: "create", Short: "Create a new plan with steps",
+	Long: "Create a new plan. Reads JSON from stdin with repository_ids, title, summary, content, and optional steps array.",
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client := apiclient.NewClient(apiURL)
-
-		// Read JSON from stdin
-		data, err := io.ReadAll(os.Stdin)
-		if err != nil {
-			return fmt.Errorf("failed to read stdin: %w", err)
-		}
-
-		// Parse the input JSON - steps can be strings or objects
-		var input struct {
-			RepositoryIDs []int64       `json:"repository_ids"`
-			Title         string        `json:"title"`
-			Summary       string        `json:"summary"`
-			Content       string        `json:"content"`
-			Steps         []interface{} `json:"steps"`
-		}
-
-		if err := json.Unmarshal(data, &input); err != nil {
+		var input createPlanInput
+		if err := decodeJSON(cmd.InOrStdin(), &input); err != nil {
 			return fmt.Errorf("failed to parse JSON: %w", err)
 		}
-
-		repositoryIDs := input.RepositoryIDs
-
-		// Create the plan first
-		planReq := struct {
-			RepositoryIDs []int64 `json:"repository_ids"`
-			Title         string  `json:"title"`
-			Summary       string  `json:"summary"`
-			Content       string  `json:"content"`
-		}{
-			RepositoryIDs: repositoryIDs,
-			Title:         input.Title,
-			Summary:       input.Summary,
-			Content:       input.Content,
+		if len(input.RepositoryIDs) == 0 {
+			return fmt.Errorf("repository_ids is required and must contain at least one repository ID")
 		}
-
+		seenRepositories := make(map[int64]struct{}, len(input.RepositoryIDs))
+		for _, id := range input.RepositoryIDs {
+			if id <= 0 {
+				return fmt.Errorf("repository_ids must contain positive integers")
+			}
+			if _, exists := seenRepositories[id]; exists {
+				return fmt.Errorf("repository_ids must not contain duplicates")
+			}
+			seenRepositories[id] = struct{}{}
+		}
+		steps, err := parseCreateSteps(input.Steps)
+		if err != nil {
+			return err
+		}
+		client := apiclient.NewClient(apiURL)
+		request := createPlanRequest{input.RepositoryIDs, input.Title, input.Summary, input.Content}
 		var plan apiclient.Plan
-		if err := client.Post("/api/plans", planReq, &plan); err != nil {
+		if err := client.Post("/api/plans", request, &plan); err != nil {
 			return fmt.Errorf("failed to create plan: %w", err)
 		}
-
-		// Add steps if provided
-		for position, stepVal := range input.Steps {
-			var stepText string
-			var parallelGroup *int
-
-			// Handle both string and object formats
-			switch v := stepVal.(type) {
-			case string:
-				stepText = v
-			case map[string]interface{}:
-				// Try to get text field
-				if textVal, ok := v["text"]; ok {
-					stepText = fmt.Sprintf("%v", textVal)
-				} else {
-					return fmt.Errorf("step at position %d is missing 'text' field", position)
-				}
-				// Try to get parallel_group field
-				if pgVal, ok := v["parallel_group"]; ok && pgVal != nil {
-					switch pg := pgVal.(type) {
-					case float64:
-						pgInt := int(pg)
-						parallelGroup = &pgInt
-					case int:
-						parallelGroup = &pg
-					}
-				}
-			default:
-				return fmt.Errorf("step at position %d has invalid format", position)
-			}
-
-			stepReq := apiclient.CreateStepInput{
-				Position:      position,
-				Text:          stepText,
-				ParallelGroup: parallelGroup,
-			}
-
+		for _, request := range steps {
 			var step apiclient.PlanStep
-			if err := client.Post(fmt.Sprintf("/api/plans/%d/steps", plan.ID), stepReq, &step); err != nil {
-				return fmt.Errorf("failed to create step at position %d: %w", position, err)
+			if err := client.Post(fmt.Sprintf("/api/plans/%d/steps", plan.ID), request, &step); err != nil {
+				return fmt.Errorf("failed to create step at position %d: %w", request.Position, err)
 			}
 		}
-
-		// Fetch and return the complete plan with its steps
-		var completePlan apiclient.Plan
-		if err := client.Get(fmt.Sprintf("/api/plans/%d", plan.ID), &completePlan); err != nil {
+		var complete apiclient.Plan
+		if err := client.Get(fmt.Sprintf("/api/plans/%d", plan.ID), &complete); err != nil {
 			return fmt.Errorf("failed to fetch plan: %w", err)
 		}
-
-		var steps []apiclient.PlanStep
-		if err := client.Get(fmt.Sprintf("/api/plans/%d/steps", plan.ID), &steps); err != nil {
+		var completeSteps []apiclient.PlanStep
+		if err := client.Get(fmt.Sprintf("/api/plans/%d/steps", plan.ID), &completeSteps); err != nil {
 			return fmt.Errorf("failed to fetch plan steps: %w", err)
 		}
-
-		// Output the plan and steps
-		output := struct {
-			*apiclient.Plan
-			Steps []apiclient.PlanStep `json:"steps"`
-		}{
-			Plan:  &completePlan,
-			Steps: steps,
-		}
-
-		outputJSON, err := json.MarshalIndent(output, "", "  ")
-		if err != nil {
-			return fmt.Errorf("failed to marshal output: %w", err)
-		}
-
-		fmt.Println(string(outputJSON))
-		return nil
+		return writeJSON(cmd.OutOrStdout(), planOutput{Plan: &complete, Steps: completeSteps})
 	},
 }
 
 var getCmd = &cobra.Command{
-	Use:   "get <id>",
-	Short: "Get a plan by ID",
-	Args:  cobra.ExactArgs(1),
+	Use: "get <id>", Short: "Get a plan by ID", Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		id, err := planID(args[0])
+		if err != nil {
+			return err
+		}
 		client := apiclient.NewClient(apiURL)
-		id := args[0]
-
 		var plan apiclient.Plan
-		if err := client.Get(fmt.Sprintf("/api/plans/%s", id), &plan); err != nil {
+		if err := client.Get("/api/plans/"+id, &plan); err != nil {
 			return fmt.Errorf("failed to get plan: %w", err)
 		}
-
 		var steps []apiclient.PlanStep
-		if err := client.Get(fmt.Sprintf("/api/plans/%s/steps", id), &steps); err != nil {
+		if err := client.Get("/api/plans/"+id+"/steps", &steps); err != nil {
 			return fmt.Errorf("failed to get plan steps: %w", err)
 		}
-
-		output := struct {
-			*apiclient.Plan
-			Steps []apiclient.PlanStep `json:"steps"`
-		}{
-			Plan:  &plan,
-			Steps: steps,
-		}
-
-		outputJSON, err := json.MarshalIndent(output, "", "  ")
-		if err != nil {
-			return fmt.Errorf("failed to marshal output: %w", err)
-		}
-
-		fmt.Println(string(outputJSON))
-		return nil
+		return writeJSON(cmd.OutOrStdout(), planOutput{Plan: &plan, Steps: steps})
 	},
 }
 
 var listCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List all plans",
+	Use: "list", Short: "List all plans", Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client := apiclient.NewClient(apiURL)
-
 		var plans []apiclient.Plan
-		if err := client.Get("/api/plans", &plans); err != nil {
+		if err := apiclient.NewClient(apiURL).Get("/api/plans", &plans); err != nil {
 			return fmt.Errorf("failed to list plans: %w", err)
 		}
-
-		outputJSON, err := json.MarshalIndent(plans, "", "  ")
-		if err != nil {
-			return fmt.Errorf("failed to marshal output: %w", err)
-		}
-
-		fmt.Println(string(outputJSON))
-		return nil
+		return writeJSON(cmd.OutOrStdout(), plans)
 	},
+}
+
+type updatePlanInput struct {
+	Status        *string  `json:"status,omitempty"`
+	Title         *string  `json:"title,omitempty"`
+	Summary       *string  `json:"summary,omitempty"`
+	Content       *string  `json:"content,omitempty"`
+	RepositoryIDs *[]int64 `json:"repository_ids,omitempty"`
 }
 
 var updateCmd = &cobra.Command{
-	Use:   "update <id>",
-	Short: "Update a plan",
-	Long:  "Update a plan. Reads JSON from stdin with fields to update (status, title, summary, content).",
-	Args:  cobra.ExactArgs(1),
+	Use: "update <id>", Short: "Update a plan",
+	Long: "Update a plan. Reads JSON from stdin with fields to update (status, title, summary, content, repository_ids).",
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client := apiclient.NewClient(apiURL)
-		id := args[0]
-
-		// Read JSON from stdin
-		data, err := io.ReadAll(os.Stdin)
+		id, err := planID(args[0])
 		if err != nil {
-			return fmt.Errorf("failed to read stdin: %w", err)
+			return err
 		}
-
-		var updateData map[string]interface{}
-		if err := json.Unmarshal(data, &updateData); err != nil {
+		var input updatePlanInput
+		if err := decodeJSON(cmd.InOrStdin(), &input); err != nil {
 			return fmt.Errorf("failed to parse JSON: %w", err)
 		}
-
-		// Build update request with optional fields
-		updateReq := struct {
-			Status        *string  `json:"status,omitempty"`
-			Title         *string  `json:"title,omitempty"`
-			Summary       *string  `json:"summary,omitempty"`
-			Content       *string  `json:"content,omitempty"`
-			RepositoryIDs *[]int64 `json:"repository_ids,omitempty"`
-		}{}
-
-		if status, ok := updateData["status"]; ok && status != nil {
-			s := fmt.Sprintf("%v", status)
-			updateReq.Status = &s
-		}
-		if title, ok := updateData["title"]; ok && title != nil {
-			t := fmt.Sprintf("%v", title)
-			updateReq.Title = &t
-		}
-		if summary, ok := updateData["summary"]; ok && summary != nil {
-			s := fmt.Sprintf("%v", summary)
-			updateReq.Summary = &s
-		}
-		if content, ok := updateData["content"]; ok && content != nil {
-			c := fmt.Sprintf("%v", content)
-			updateReq.Content = &c
-		}
-		if repoIDsVal, ok := updateData["repository_ids"]; ok && repoIDsVal != nil {
-			arr, ok := repoIDsVal.([]interface{})
-			if !ok {
-				return fmt.Errorf("repository_ids must be an array of integers")
+		if input.RepositoryIDs != nil {
+			if len(*input.RepositoryIDs) == 0 {
+				return fmt.Errorf("repository_ids must contain at least one repository ID")
 			}
-			ids := make([]int64, 0, len(arr))
-			for _, v := range arr {
-				n, ok := v.(float64)
-				if !ok {
-					return fmt.Errorf("repository_ids must be an array of integers")
+			seenRepositories := make(map[int64]struct{}, len(*input.RepositoryIDs))
+			for _, repositoryID := range *input.RepositoryIDs {
+				if repositoryID <= 0 {
+					return fmt.Errorf("repository_ids must contain positive integers")
 				}
-				ids = append(ids, int64(n))
+				if _, exists := seenRepositories[repositoryID]; exists {
+					return fmt.Errorf("repository_ids must not contain duplicates")
+				}
+				seenRepositories[repositoryID] = struct{}{}
 			}
-			updateReq.RepositoryIDs = &ids
 		}
-
 		var plan apiclient.Plan
-		if err := client.Patch(fmt.Sprintf("/api/plans/%s", id), updateReq, &plan); err != nil {
+		if err := apiclient.NewClient(apiURL).Patch("/api/plans/"+id, input, &plan); err != nil {
 			return fmt.Errorf("failed to update plan: %w", err)
 		}
-
-		outputJSON, err := json.MarshalIndent(plan, "", "  ")
-		if err != nil {
-			return fmt.Errorf("failed to marshal output: %w", err)
-		}
-
-		fmt.Println(string(outputJSON))
-		return nil
+		return writeJSON(cmd.OutOrStdout(), plan)
 	},
+}
+
+func rawInteger(raw json.RawMessage, name string, positive bool) (int64, error) {
+	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return 0, fmt.Errorf("missing '%s' field", name)
+	}
+	var number json.Number
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	if err := dec.Decode(&number); err != nil {
+		var text string
+		if stringErr := json.Unmarshal(raw, &text); stringErr != nil {
+			return 0, fmt.Errorf("%s must be an integer", name)
+		}
+		number = json.Number(text)
+	}
+	value, err := strconv.ParseInt(number.String(), 10, 64)
+	if err != nil || (positive && value <= 0) || (!positive && value < 0) {
+		qualifier := "a zero-based integer"
+		if positive {
+			qualifier = "a positive integer"
+		}
+		return 0, fmt.Errorf("%s must be %s", name, qualifier)
+	}
+	return value, nil
 }
 
 var updateStepCmd = &cobra.Command{
-	Use:   "update-step",
-	Short: "Update a plan step",
-	Long:  "Update a plan step. Reads JSON from stdin with plan_id, step_id-or-position, and fields to update.",
+	Use: "update-step", Short: "Update a plan step",
+	Long: "Update a plan step. Reads JSON from stdin with plan_id, exactly one of step_id or position, and fields to update.",
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client := apiclient.NewClient(apiURL)
-
-		// Read JSON from stdin
-		data, err := io.ReadAll(os.Stdin)
-		if err != nil {
-			return fmt.Errorf("failed to read stdin: %w", err)
-		}
-
-		var input map[string]interface{}
-		if err := json.Unmarshal(data, &input); err != nil {
+		var input map[string]json.RawMessage
+		if err := decodeJSON(cmd.InOrStdin(), &input); err != nil {
 			return fmt.Errorf("failed to parse JSON: %w", err)
 		}
-
-		// Extract plan_id and step_id
-		planIDVal, ok := input["plan_id"]
-		if !ok {
-			return fmt.Errorf("missing 'plan_id' field")
+		allowed := map[string]bool{"plan_id": true, "step_id": true, "position": true, "status": true, "text": true, "parallel_group": true}
+		for key := range input {
+			if !allowed[key] {
+				return fmt.Errorf("unknown field %q", key)
+			}
 		}
-		planID := fmt.Sprintf("%v", planIDVal)
-
-		// Handle step_id or position
-		stepIDVal, hasStepID := input["step_id"]
-		positionVal, hasPosition := input["position"]
-
-		if !hasStepID && !hasPosition {
-			return fmt.Errorf("missing 'step_id' or 'position' field")
+		pid, err := rawInteger(input["plan_id"], "plan_id", true)
+		if err != nil {
+			return err
 		}
-
-		var stepID string
-		if hasStepID {
-			stepID = fmt.Sprintf("%v", stepIDVal)
-		} else {
-			position, err := numericInt(positionVal)
+		stepRaw, hasStep := input["step_id"]
+		positionRaw, hasPosition := input["position"]
+		if hasStep == hasPosition {
+			return fmt.Errorf("exactly one of 'step_id' or 'position' is required")
+		}
+		client := apiclient.NewClient(apiURL)
+		var stepID int64
+		if hasStep {
+			stepID, err = rawInteger(stepRaw, "step_id", true)
 			if err != nil {
-				return fmt.Errorf("invalid position value: %v (must be a zero-based integer)", positionVal)
+				return err
+			}
+		} else {
+			position, parseErr := rawInteger(positionRaw, "position", false)
+			if parseErr != nil {
+				return parseErr
 			}
 			var steps []apiclient.PlanStep
-			if err := client.Get(fmt.Sprintf("/api/plans/%s/steps", planID), &steps); err != nil {
+			if err := client.Get(fmt.Sprintf("/api/plans/%d/steps", pid), &steps); err != nil {
 				return fmt.Errorf("list plan steps: %w", err)
 			}
-			found := false
 			for _, step := range steps {
-				if step.Position == position {
-					stepID = strconv.FormatInt(step.ID, 10)
-					found = true
+				if int64(step.Position) == position {
+					stepID = step.ID
 					break
 				}
 			}
-			if !found {
+			if stepID == 0 {
 				return fmt.Errorf("no step at zero-based position %d", position)
 			}
 		}
-
-		// Build update request with generic field forwarding
-		updateReq := make(map[string]interface{})
-
-		// Handle all possible update fields
-		for key, value := range input {
-			switch key {
-			case "plan_id", "step_id", "position":
-				// Skip identifiers
-				continue
-			case "status":
-				if value != nil {
-					updateReq["status"] = fmt.Sprintf("%v", value)
+		request := make(map[string]any)
+		for _, key := range []string{"status", "text"} {
+			if raw, ok := input[key]; ok {
+				var value string
+				if err := json.Unmarshal(raw, &value); err != nil {
+					return fmt.Errorf("%s must be a string", key)
 				}
-			case "text":
-				if value != nil {
-					updateReq["text"] = fmt.Sprintf("%v", value)
-				}
-			case "parallel_group":
-				if value != nil {
-					switch v := value.(type) {
-					case float64:
-						updateReq["parallel_group"] = int(v)
-					case int:
-						updateReq["parallel_group"] = v
-					case nil:
-						updateReq["parallel_group"] = nil
-					default:
-						updateReq["parallel_group"] = fmt.Sprintf("%v", value)
-					}
-				}
-			default:
-				// Generic field forwarding - pass through unknown fields
-				updateReq[key] = value
+				request[key] = value
 			}
 		}
-
+		if raw, ok := input["parallel_group"]; ok {
+			value, err := rawInteger(raw, "parallel_group", false)
+			if err != nil {
+				return err
+			}
+			request["parallel_group"] = value
+		}
+		if len(request) == 0 {
+			return fmt.Errorf("at least one step field must be provided")
+		}
 		var step apiclient.PlanStep
-		if err := client.Patch(fmt.Sprintf("/api/plans/%s/steps/%s", planID, stepID), updateReq, &step); err != nil {
+		if err := client.Patch(fmt.Sprintf("/api/plans/%d/steps/%d", pid, stepID), request, &step); err != nil {
 			return fmt.Errorf("failed to update plan step: %w", err)
 		}
-
-		outputJSON, err := json.MarshalIndent(step, "", "  ")
-		if err != nil {
-			return fmt.Errorf("failed to marshal output: %w", err)
-		}
-
-		fmt.Println(string(outputJSON))
-		return nil
+		return writeJSON(cmd.OutOrStdout(), step)
 	},
 }
 
-func numericInt(value interface{}) (int, error) {
-	switch v := value.(type) {
-	case float64:
-		if v != float64(int(v)) {
-			return 0, fmt.Errorf("not an integer")
-		}
-		return int(v), nil
-	case int:
-		return v, nil
-	default:
-		return strconv.Atoi(fmt.Sprintf("%v", value))
-	}
-}
-
 var runCmd = &cobra.Command{
-	Use:   "run <id>",
-	Short: "Run a plan as a Foundry workflow",
-	Args:  cobra.ExactArgs(1),
+	Use: "run <id>", Short: "Run a plan as a Foundry workflow", Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client := apiclient.NewClient(apiURL)
-		var workflow map[string]interface{}
-		if err := client.Post(fmt.Sprintf("/api/plans/%s/run", args[0]), struct{}{}, &workflow); err != nil {
+		id, err := planID(args[0])
+		if err != nil {
+			return err
+		}
+		var workflow map[string]any
+		if err := apiclient.NewClient(apiURL).Post("/api/plans/"+id+"/run", struct{}{}, &workflow); err != nil {
 			return fmt.Errorf("failed to run plan: %w", err)
 		}
-		result, _ := json.MarshalIndent(workflow, "", "  ")
-		fmt.Println(string(result))
-		return nil
+		return writeJSON(cmd.OutOrStdout(), workflow)
 	},
 }
 
 func init() {
-	plansCmd.AddCommand(createCmd)
-	plansCmd.AddCommand(runCmd)
-	plansCmd.AddCommand(getCmd)
-	plansCmd.AddCommand(listCmd)
-	plansCmd.AddCommand(updateCmd)
-	plansCmd.AddCommand(updateStepCmd)
+	plansCmd.AddCommand(createCmd, runCmd, getCmd, listCmd, updateCmd, updateStepCmd)
 }

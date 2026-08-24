@@ -55,7 +55,7 @@ func (s *Server) handleCompactCerberusEvent(ctx context.Context, raw []byte) err
 		s.ingestCerberusTelemetry(ctx, raw, evt)
 		return nil
 
-	case "tool_result":
+	case "tool_result", "run_complete":
 		s.ingestCerberusTelemetry(ctx, raw, evt)
 		return nil
 
@@ -292,15 +292,19 @@ type cerberusUsageFields struct {
 }
 
 type compactCerberusFields struct {
-	SessionID  string               `json:"session_id,omitempty"`
-	Ts         string               `json:"ts,omitempty"`
-	ToolName   string               `json:"tool_name,omitempty"`
-	ToolInput  json.RawMessage      `json:"tool_input,omitempty"`
-	ToolCallID string               `json:"tool_call_id,omitempty"`
-	Content    json.RawMessage      `json:"content,omitempty"`
-	IsError    *bool                `json:"is_error,omitempty"`
-	DurationMs *int64               `json:"duration_ms,omitempty"`
-	Usage      *cerberusUsageFields `json:"usage,omitempty"`
+	SessionID     string               `json:"session_id,omitempty"`
+	Ts            string               `json:"ts,omitempty"`
+	Kind          string               `json:"kind,omitempty"`
+	Model         string               `json:"model,omitempty"`
+	RepoPath      string               `json:"repo_path,omitempty"`
+	ParentSession string               `json:"parent_session,omitempty"`
+	ToolName      string               `json:"tool_name,omitempty"`
+	ToolInput     json.RawMessage      `json:"tool_input,omitempty"`
+	ToolCallID    string               `json:"tool_call_id,omitempty"`
+	Content       json.RawMessage      `json:"content,omitempty"`
+	IsError       *bool                `json:"is_error,omitempty"`
+	DurationMs    *int64               `json:"duration_ms,omitempty"`
+	Usage         *cerberusUsageFields `json:"usage,omitempty"`
 }
 
 func mergeCerberusFields(top, nested compactCerberusFields) compactCerberusFields {
@@ -309,6 +313,18 @@ func mergeCerberusFields(top, nested compactCerberusFields) compactCerberusField
 	}
 	if top.Ts == "" {
 		top.Ts = nested.Ts
+	}
+	if top.Kind == "" {
+		top.Kind = nested.Kind
+	}
+	if top.Model == "" {
+		top.Model = nested.Model
+	}
+	if top.RepoPath == "" {
+		top.RepoPath = nested.RepoPath
+	}
+	if top.ParentSession == "" {
+		top.ParentSession = nested.ParentSession
 	}
 	if top.ToolName == "" {
 		top.ToolName = nested.ToolName
@@ -387,13 +403,22 @@ func buildCerberusTelemetryEvent(eventType, session string, fields compactCerber
 		if fields.SessionID == "" {
 			return telemetry.Event{}, false
 		}
+		kind := telemetry.SessionKind(fields.Kind)
+		if kind == "" {
+			kind = telemetry.SessionKindUnknown
+		}
 		return telemetry.Event{
 			Type: telemetry.EventSessionStart,
 			Session: telemetry.Session{
 				Session:         session,
 				SourceSessionID: fields.SessionID,
 				Origin:          "cerberus",
-				Kind:            telemetry.SessionKindUnknown,
+				Kind:            kind,
+			},
+			Attribution: telemetry.Attribution{
+				RepoPath:      optionalCerberusString(fields.RepoPath),
+				Model:         optionalCerberusString(fields.Model),
+				ParentSession: optionalCerberusString(fields.ParentSession),
 			},
 			Timestamp: ts,
 		}, true
@@ -447,6 +472,13 @@ func buildCerberusTelemetryEvent(eventType, session string, fields compactCerber
 			},
 			Timestamp: ts,
 		}, true
+
+	case "run_complete":
+		return telemetry.Event{
+			Type:      telemetry.EventSessionEnd,
+			Session:   telemetry.Session{Session: session},
+			Timestamp: ts,
+		}, true
 	}
 
 	return telemetry.Event{}, false
@@ -463,7 +495,14 @@ func (s *Server) resolveManagedCerberusAttribution(ctx context.Context, session 
 	}
 	phaseID := ph.ID
 	repoID := repo.ID
-	return telemetry.Attribution{RepositoryID: &repoID, PhaseID: &phaseID}, true
+	return telemetry.Attribution{RepositoryID: &repoID, PhaseID: &phaseID, RepoPath: repo.LocalPath}, true
+}
+
+func applyManagedCerberusAttribution(current, managed telemetry.Attribution) telemetry.Attribution {
+	current.RepositoryID = managed.RepositoryID
+	current.PhaseID = managed.PhaseID
+	current.RepoPath = managed.RepoPath
+	return current
 }
 
 func managedMessageEndCostDecision(phaseID int64, phaseErr error, costUSD float64) (int64, float64, bool) {
@@ -504,10 +543,10 @@ func (s *Server) ingestCerberusTelemetryWith(ctx context.Context, raw []byte, ev
 	}
 	if tev.Type == telemetry.EventSessionStart {
 		if attribution, ok := s.resolveManagedCerberusAttribution(ctx, evt.Session); ok {
-			tev.Attribution = attribution
+			tev.Attribution = applyManagedCerberusAttribution(tev.Attribution, attribution)
 		}
 	}
-	if err := ingest(ctx, s.pool, tev); err != nil {
+	if err := ingest(ctx, s.pool, tev); err != nil && !errors.Is(err, telemetry.ErrDuplicateEvent) {
 		log.Printf("cerberus telemetry ingest: %v", err)
 	}
 }

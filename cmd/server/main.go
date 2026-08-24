@@ -80,7 +80,10 @@ func main() {
 	go authoring.RecoverOrphanDrafts(context.Background(), pool, cerb)
 
 	// HTTP edge server
-	srv := httpserver.NewServer(pool, runner, cerb, eventHub, runtime.DefaultWorkflowBudgetUSD, runtime.GitRoot, cfgPath, runtime.CerberusProfile, cfg.ServerPort)
+	srv := httpserver.NewServer(pool, runner, cerb, eventHub, runtime.DefaultWorkflowBudgetUSD, runtime.GitRoot, cfgPath, runtime.CerberusProfile, cfg.ServerPort, httpserver.TelemetrySecurity{
+		BearerToken:          cfg.TelemetryBearerToken,
+		AllowUnauthenticated: cfg.TelemetryAllowUnauthenticated,
+	})
 
 	// Serve JSON API, server-rendered UI, and static assets.
 	mux := http.NewServeMux()
