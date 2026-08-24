@@ -176,7 +176,35 @@ button:disabled, .btn:disabled, [aria-busy="true"] { opacity: .62; cursor: not-a
 .plan-step-item { border: 3px solid var(--border); background: var(--paper-2); padding: 1rem; }
 .plan-step-header { display: flex; align-items: center; gap: .75rem; margin-bottom: .5rem; }
 .plan-step-position { font-weight: 950; font-size: .9rem; text-transform: uppercase; }
-.plan-step-text { font-family: var(--mono); font-size: .84rem; margin-bottom: .5rem; line-height: 1.5; overflow-wrap: anywhere; }
+.plan-step-text { font-size: .84rem; margin-bottom: .5rem; line-height: 1.5; overflow-wrap: anywhere; }
+.plan-step-text code { font-family: var(--mono); }
+
+.plan-summary-section h1, .plan-summary-section h2, .plan-summary-section h3, .plan-summary-section h4,
+.plan-step-text h1, .plan-step-text h2, .plan-step-text h3, .plan-step-text h4 {
+  font-weight: 950; line-height: 1.2; margin: 1rem 0 .5rem;
+}
+.plan-summary-section h1:first-child, .plan-summary-section h2:first-child, .plan-summary-section h3:first-child, .plan-summary-section h4:first-child,
+.plan-step-text h1:first-child, .plan-step-text h2:first-child, .plan-step-text h3:first-child, .plan-step-text h4:first-child {
+  margin-top: 0;
+}
+.plan-summary-section h1, .plan-step-text h1 { font-size: 1.2rem; }
+.plan-summary-section h2, .plan-step-text h2 { font-size: 1.1rem; }
+.plan-summary-section h3, .plan-step-text h3 { font-size: 1rem; }
+.plan-summary-section h4, .plan-step-text h4 { font-size: .92rem; }
+
+.plan-summary-section p, .plan-step-text p { margin: 0 0 .6rem; line-height: 1.5; }
+.plan-summary-section p:last-child, .plan-step-text p:last-child { margin-bottom: 0; }
+
+.plan-summary-section ul, .plan-summary-section ol,
+.plan-step-text ul, .plan-step-text ol {
+  margin: 0 0 .6rem 1.25rem; padding: 0; line-height: 1.5;
+}
+.plan-summary-section li, .plan-step-text li { margin-bottom: .25rem; }
+
+.plan-summary-section blockquote, .plan-step-text blockquote {
+  margin: 0 0 .6rem; padding: .4rem .75rem; border-left: 3px solid var(--border); color: var(--muted); background: var(--paper);
+}
+.plan-summary-section blockquote p, .plan-step-text blockquote p { margin: 0; }
 .plan-step-meta { font-size: .72rem; color: var(--muted); display: flex; flex-wrap: wrap; gap: 1rem; }
 .plan-step-parallel-group { font-weight: 950; color: var(--ink); }
 

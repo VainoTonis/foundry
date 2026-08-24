@@ -49,6 +49,7 @@ func templateMarkdown(s string) template.HTML {
 	lines := strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n")
 	var b strings.Builder
 	var para []string
+	var quote []string
 	inCode := false
 	listKind := ""
 
@@ -60,6 +61,15 @@ func templateMarkdown(s string) template.HTML {
 		b.WriteString(markdownInline(strings.Join(para, " ")))
 		b.WriteString("</p>")
 		para = nil
+	}
+	flushQuote := func() {
+		if len(quote) == 0 {
+			return
+		}
+		b.WriteString("<blockquote>")
+		b.WriteString(markdownInline(strings.Join(quote, " ")))
+		b.WriteString("</blockquote>")
+		quote = nil
 	}
 	flushList := func() {
 		if listKind == "" {
@@ -103,8 +113,16 @@ func templateMarkdown(s string) template.HTML {
 		if trimmed == "" {
 			flushPara()
 			flushList()
+			flushQuote()
 			continue
 		}
+		if text, ok := markdownQuoteLine(trimmed); ok {
+			flushPara()
+			flushList()
+			quote = append(quote, text)
+			continue
+		}
+		flushQuote()
 		if level, text, ok := markdownHeading(trimmed); ok {
 			flushPara()
 			flushList()
@@ -140,10 +158,21 @@ func templateMarkdown(s string) template.HTML {
 	}
 	flushPara()
 	flushList()
+	flushQuote()
 	if inCode {
 		b.WriteString("</code></pre>")
 	}
 	return template.HTML(b.String())
+}
+
+func markdownQuoteLine(s string) (string, bool) {
+	if strings.HasPrefix(s, "> ") {
+		return strings.TrimSpace(s[2:]), true
+	}
+	if s == ">" {
+		return "", true
+	}
+	return "", false
 }
 
 func markdownUnorderedItem(s string) (string, bool) {
