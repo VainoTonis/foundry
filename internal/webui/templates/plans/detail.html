@@ -5,8 +5,8 @@
     <div><p class="eyebrow">Plan #{{.Plan.ID}}</p><h1>{{.Plan.Title}}</h1><div class="plan-meta">Status: {{.Plan.Status}}</div></div>
     <div class="card-actions"><span class="chip chip-{{.Plan.Status}}">{{.Plan.Status}}</span>{{if .Plan.Repositories}}<button class="btn btn-primary" data-json-post="/api/plans/{{.Plan.ID}}/run" data-body='{}' data-redirect-template="/workflows/{id}">Run in Foundry</button>{{end}}</div>
   </header>
-  {{if .Plan.Summary}}<section class="plan-summary-section"><h2>Summary</h2><p>{{.Plan.Summary}}</p></section>{{end}}
-  {{if .Plan.Content}}<section class="plan-summary-section"><h2>Specification</h2><pre class="spec-content">{{.Plan.Content}}</pre></section>{{end}}
+  {{if .Plan.Summary}}<section class="plan-summary-section"><h2>Summary</h2><div class="plan-summary-body">{{markdown .Plan.Summary}}</div></section>{{end}}
+  {{if .Plan.Content}}<section class="plan-summary-section"><h2>Specification</h2><div class="spec-content">{{markdown .Plan.Content}}</div></section>{{end}}
   <section class="plan-details">
     <dl class="fact-list">
       {{range .Plan.Repositories}}<div><dt>Repository{{if eq .Position 0}} (primary){{end}}</dt><dd>{{.Repository.Name}}<br><small>{{if .Repository.LocalPath}}{{.Repository.LocalPath}}{{else if .Repository.RemoteURL}}{{.Repository.RemoteURL}}{{else}}no local checkout{{end}}</small></dd></div>{{end}}
@@ -52,7 +52,7 @@
         <span class="plan-step-position">Step {{.Position}}</span>
         <span class="chip chip-{{.Status}}">{{.Status}}</span>
       </div>
-      <p class="plan-step-text">{{.Text}}</p>
+      <div class="plan-step-text">{{markdown .Text}}</div>
       <div class="plan-step-meta">
         <span>ID: {{.ID}}</span>
         <span>Created: {{.CreatedAt.Format "2006-01-02 15:04"}}</span>
