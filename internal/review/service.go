@@ -210,7 +210,7 @@ func (s *Service) executeReview(ctx context.Context, prep stewardReviewPrep) (db
 		return s.failReview(ctx, review.ID, fmt.Errorf("cerberus turn: %s", msg))
 	}
 	if strings.TrimSpace(out.Message) == "" {
-		return s.failReview(ctx, review.ID, fmt.Errorf("cerberus turn returned no final assistant message"))
+		return s.failReview(ctx, review.ID, fmt.Errorf("cerberus turn returned no final assistant message (raw response: %s)", boundedRawResponse(out)))
 	}
 
 	raw, err := extractReportJSON(out.Message)
@@ -305,6 +305,36 @@ func (s *Service) failReview(ctx context.Context, id int64, cause error) (db.Pla
 		return db.PlanReview{}, fmt.Errorf("%w (also failed to record failure: %v)", cause, ferr)
 	}
 	return failed, cause
+}
+
+// maxRawResponseDiagnostic bounds how much of a raw cerberus
+// TurnOutput is ever embedded in a failed review's persisted error
+// message, so an unexpectedly large or malformed response can never
+// make the failure diagnostic itself unbounded.
+const maxRawResponseDiagnostic = 2000
+
+// boundedRawResponse renders out as a bounded, JSON diagnostic of the
+// raw cerberus response, for embedding in a review's failure message
+// when the turn otherwise carried no usable final assistant message.
+// It never fails: if out cannot be marshaled (which should not happen
+// for TurnOutput), it falls back to a plain %+v rendering, so a
+// diagnostics-only failure never masks the original one. The result is
+// always truncated to maxRawResponseDiagnostic bytes so a review
+// left in a failed, session-cleaned state is always still actionable
+// without ever retaining the (already cleaned up) cerberus session
+// itself.
+func boundedRawResponse(out cerberus.TurnOutput) string {
+	b, err := json.Marshal(out)
+	s := ""
+	if err != nil {
+		s = fmt.Sprintf("%+v", out)
+	} else {
+		s = string(b)
+	}
+	if len(s) > maxRawResponseDiagnostic {
+		s = s[:maxRawResponseDiagnostic] + "...(truncated)"
+	}
+	return s
 }
 
 // stewardSessionName derives a cerberus session name for one review

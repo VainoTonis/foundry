@@ -349,6 +349,42 @@ func TestRunStewardReview_MalformedReportFailsReviewAndCleansSession(t *testing.
 	}
 }
 
+func TestRunStewardReview_EmptyMessagePreservesRawResponseDiagnostics(t *testing.T) {
+	plan := allLocalPlan(t)
+	store := newFakePlanReviewStore()
+	cerb := &fakeCerberus{turnOut: cerberus.TurnOutput{
+		Status:       "ok",
+		UUID:         "turn-uuid-123",
+		SessionID:    "session-abc",
+		Message:      "",
+		InputTokens:  42,
+		OutputTokens: 7,
+		CostUSD:      0.01,
+	}}
+	svc := newService(store, cerb)
+
+	_, err := svc.RunStewardReview(context.Background(), withContract(t, testRunOptions(plan)))
+	if err == nil {
+		t.Fatalf("RunStewardReview() error = nil, want empty-message error")
+	}
+	for _, want := range []string{"turn-uuid-123", "session-abc", "\"ok\""} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q does not contain raw response diagnostic %q", err.Error(), want)
+		}
+	}
+
+	stored := onlyReview(t, store)
+	if stored.Status != db.PlanReviewStatusFailed {
+		t.Fatalf("stored review status = %q, want failed", stored.Status)
+	}
+	if stored.Error == nil || !strings.Contains(*stored.Error, "turn-uuid-123") {
+		t.Fatalf("stored review error = %v, want it to retain the raw response diagnostic", stored.Error)
+	}
+	if len(cerb.cleanedSessions()) != 1 {
+		t.Fatalf("cleaned sessions = %v, want exactly one cleanup", cerb.cleanedSessions())
+	}
+}
+
 func TestRunStewardReview_TurnErrorFailsReview(t *testing.T) {
 	plan := allLocalPlan(t)
 	store := newFakePlanReviewStore()
