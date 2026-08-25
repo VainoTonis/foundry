@@ -17,8 +17,8 @@ cerberus_profile: ""
 # Steward plan review (Plan 90): engineering contract, model, and timeout
 # for one bounded Steward review turn. review_contract_path is required
 # for reviews to run; review_contract_appendix_path is optional.
-review_contract_path: ""
-review_contract_appendix_path: ""
+review_contract_path: "~/.pi/agent/ENGINEERING_CONTRACT.md"
+review_contract_appendix_path: "docs/engineering-contract.md"
 review_contract_version: "v1"
 review_model: "anthropic/claude-sonnet-5"
 review_timeout_seconds: 900
