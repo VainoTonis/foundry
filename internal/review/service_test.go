@@ -453,13 +453,21 @@ func TestStartStewardReview_ReturnsPromptlyThenCompletesInBackground(t *testing.
 	if err != nil {
 		t.Fatalf("StartStewardReview() error = %v", err)
 	}
-	// StartStewardReview must return before the cerberus turn resolves:
-	// the turn is still blocked on unblock, so the review it returned
-	// can only be running, never a terminal state.
-	if review.Status != db.PlanReviewStatusRunning {
-		t.Fatalf("review.Status = %q, want running (StartStewardReview must return promptly)", review.Status)
+	// StartStewardReview must return before the review even starts
+	// running, let alone before the cerberus turn (still blocked on
+	// unblock) resolves: the review it returned can only be queued.
+	if review.Status != db.PlanReviewStatusQueued {
+		t.Fatalf("review.Status = %q, want queued (StartStewardReview must return promptly, before running)", review.Status)
 	}
 	<-turnStarted
+
+	// By the time the turn has started, the background goroutine must
+	// already have persisted the queued -> running transition, so the
+	// review's lifecycle is fully visible via the store even though
+	// StartStewardReview itself never waited for it.
+	if running := store.get(review.ID); running.Status != db.PlanReviewStatusRunning {
+		t.Fatalf("stored review status once turn started = %q, want running", running.Status)
+	}
 	close(unblock)
 
 	select {
@@ -487,15 +495,22 @@ func TestReconcileInterruptedReviews_FailsOrphanedRunningReviews(t *testing.T) {
 	svc := newService(store, cerb)
 
 	// Simulate a review left running by a process that died mid-turn:
-	// prepareReview alone takes it from queued to running, and nothing
+	// prepareReview alone only queues it, so take it to running
+	// directly through the store, the same transition executeReview
+	// would have made before starting its cerberus turn, and nothing
 	// ever resolves it further.
 	prep, err := svc.prepareReview(context.Background(), withContract(t, testRunOptions(plan)))
 	if err != nil {
 		t.Fatalf("prepareReview() error = %v", err)
 	}
-	if prep.review.Status != db.PlanReviewStatusRunning {
-		t.Fatalf("prep.review.Status = %q, want running", prep.review.Status)
+	running, err := store.StartPlanReview(context.Background(), prep.review.ID)
+	if err != nil {
+		t.Fatalf("StartPlanReview() error = %v", err)
 	}
+	if running.Status != db.PlanReviewStatusRunning {
+		t.Fatalf("running.Status = %q, want running", running.Status)
+	}
+	prep.review = running
 
 	n, err := svc.ReconcileInterruptedReviews(context.Background())
 	if err != nil {

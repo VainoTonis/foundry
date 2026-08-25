@@ -16,9 +16,10 @@ import (
 // ReviewRunner is the narrow Steward review execution surface HandlePlan
 // needs to create and start exactly one bounded review for a plan.
 // *review.Service satisfies this interface. StartStewardReview returns
-// as soon as the review has left queued for running, without waiting
-// for its cerberus turn to resolve, so review creation stays prompt;
-// the review's eventual completed/failed outcome is later visible via
+// the newly created, still-queued review immediately, without waiting
+// for it to even start running or for its cerberus turn to resolve, so
+// review creation stays prompt; the review's eventual running,
+// completed, or failed outcome is later visible via
 // GetPlanReview/ListPlanReviews.
 type ReviewRunner interface {
 	StartStewardReview(ctx context.Context, opts review.RunOptions) (db.PlanReview, error)
@@ -184,12 +185,13 @@ func reportHasUnavailableGrounding(report json.RawMessage) bool {
 }
 
 // createPlanReview starts exactly one new Steward review for planID
-// and returns as soon as it is persisted and running, without waiting
-// for Steward's bounded cerberus turn to resolve. It fails with 503 if
-// no ReviewRunner is configured, 404 if the plan does not exist, and
-// 502 if the review could not even be started (a review that started
-// but later fails its turn is instead persisted as a failed review;
-// see foundry plans reviews/check to observe it).
+// and returns 202 Accepted with it as soon as it is persisted queued,
+// without waiting for it to start running or for Steward's bounded
+// cerberus turn to resolve. It fails with 503 if no ReviewRunner is
+// configured, 404 if the plan does not exist, and 502 if the review
+// could not even be queued (a review that was queued but later fails
+// its turn is instead persisted as a failed review; see foundry plans
+// reviews/check to observe it).
 func (h *Handler) createPlanReview(w http.ResponseWriter, r *http.Request, planID int64) {
 	if h.reviewRunner == nil {
 		jsonErr(w, "plan review is not configured", http.StatusServiceUnavailable)
@@ -229,7 +231,7 @@ func (h *Handler) createPlanReview(w http.ResponseWriter, r *http.Request, planI
 	}
 
 	hash, hashErr := h.currentPlanSnapshotHash(r.Context(), plan)
-	jsonOK(w, newPlanReviewView(result, hash, hashErr), http.StatusCreated)
+	jsonOK(w, newPlanReviewView(result, hash, hashErr), http.StatusAccepted)
 }
 
 // listPlanReviews returns every review of planID, most recent first,

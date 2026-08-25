@@ -111,12 +111,13 @@ type RunOptions struct {
 }
 
 // stewardReviewPrep is the fast, purely local half of one Steward
-// review attempt: the queued-then-started PlanReview row plus the
-// exact bounded turn (prompt, mounts) it still owes cerberus. It never
-// touches cerberus itself, so preparing it is always quick, which is
-// what lets both RunStewardReview and StartStewardReview return
-// promptly up through "running" before the (possibly slow) cerberus
-// turn is attempted.
+// review attempt: the freshly created, still-queued PlanReview row
+// plus the exact bounded turn (prompt, mounts) it still owes
+// cerberus. It never touches cerberus itself, nor transitions the
+// review to running, so preparing it is always quick, which is what
+// lets both RunStewardReview and StartStewardReview return promptly
+// with a queued review before the (possibly slow) cerberus turn is
+// even started.
 type stewardReviewPrep struct {
 	review db.PlanReview
 	opts   RunOptions
@@ -124,11 +125,12 @@ type stewardReviewPrep struct {
 }
 
 // prepareReview builds the deterministic snapshot and contract-bound
-// prompt for opts.Plan and persists the review's queued -> running
-// transition, without ever calling cerberus. It is the synchronous,
-// always-fast half of a Steward review attempt shared by
-// RunStewardReview (which then runs the turn inline) and
-// StartStewardReview (which then runs it in the background).
+// prompt for opts.Plan and persists exactly the review's queued row,
+// without ever calling cerberus or transitioning it to running. It is
+// the synchronous, always-fast half of a Steward review attempt
+// shared by RunStewardReview (which then starts and runs the turn
+// inline) and StartStewardReview (which returns the queued review
+// immediately and then starts and runs the turn in the background).
 func (s *Service) prepareReview(ctx context.Context, opts RunOptions) (stewardReviewPrep, error) {
 	if strings.TrimSpace(opts.Model) == "" {
 		return stewardReviewPrep{}, fmt.Errorf("run steward review: model is required")
@@ -164,11 +166,6 @@ func (s *Service) prepareReview(ctx context.Context, opts RunOptions) (stewardRe
 		return stewardReviewPrep{}, fmt.Errorf("run steward review: create review: %w", err)
 	}
 
-	review, err = s.store.StartPlanReview(ctx, review.ID)
-	if err != nil {
-		return stewardReviewPrep{}, fmt.Errorf("run steward review: start review: %w", err)
-	}
-
 	return stewardReviewPrep{review: review, opts: opts, prompt: promptCtx.Prompt}, nil
 }
 
@@ -179,7 +176,12 @@ func (s *Service) prepareReview(ctx context.Context, opts RunOptions) (stewardRe
 // outcome, and never persists a passing verdict unless Steward
 // actually returned a well-formed report saying so.
 func (s *Service) executeReview(ctx context.Context, prep stewardReviewPrep) (db.PlanReview, error) {
-	review, opts := prep.review, prep.opts
+	opts := prep.opts
+
+	review, err := s.store.StartPlanReview(ctx, prep.review.ID)
+	if err != nil {
+		return db.PlanReview{}, fmt.Errorf("run steward review: start review: %w", err)
+	}
 
 	// From this point the session exists (or may exist) in cerberus, so
 	// it is always cleaned up, whatever the turn or validation outcome.
@@ -240,11 +242,12 @@ func (s *Service) RunStewardReview(ctx context.Context, opts RunOptions) (db.Pla
 	return s.executeReview(ctx, prep)
 }
 
-// StartStewardReview creates and starts exactly one Steward review the
-// same way RunStewardReview does, then hands its bounded cerberus turn
-// to a background goroutine and returns as soon as the review has left
-// queued for running, without waiting for that turn to resolve. This
-// is what lets review creation return promptly.
+// StartStewardReview creates exactly one Steward review row for
+// opts.Plan, in the queued state, and returns it immediately: neither
+// the queued -> running transition nor the bounded cerberus turn runs
+// before this returns. Both happen afterward in a background
+// goroutine, so review creation stays prompt no matter how long
+// Steward's turn takes to resolve.
 //
 // The review this returns is not an anonymous, in-memory handle: it is
 // the durable PlanReview row (keyed to the durable cerberus session

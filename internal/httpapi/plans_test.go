@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tonis2/foundry/internal/db"
 	"github.com/tonis2/foundry/internal/review"
@@ -157,6 +158,45 @@ func TestRunPlanRejectsMissingLocalCheckout(t *testing.T) {
 	}
 }
 
+// TestCreatePlanReviewReturnsQueuedReviewWithoutBlocking exercises the
+// non-blocking handler contract: createPlanReview returns 202
+// Accepted with exactly the queued review ReviewRunner.StartStewardReview
+// handed it, even while that review's background cerberus turn is
+// still unresolved, so the handler itself never waits on it.
+func TestCreatePlanReviewReturnsQueuedReviewWithoutBlocking(t *testing.T) {
+	h := newPlansHandler(t)
+	repoID := createTestPlanRepository(t, h, "queued-review-repo", "https://github.com/foo/queued-review-repo.git")
+	planID := createTestPlan(t, h, []int64{repoID}, "queued-review-plan")
+
+	queued := db.PlanReview{ID: 4242, PlanID: planID, Status: db.PlanReviewStatusQueued}
+	h.reviewRunner = &fakeReviewRunner{result: queued}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/plans/"+itoa(planID)+"/reviews", strings.NewReader(`{}`))
+	rec := httptest.NewRecorder()
+
+	done := make(chan struct{})
+	go func() {
+		h.HandlePlan(rec, req)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("createPlanReview did not return promptly")
+	}
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("create review status = %d, want %d, body = %s", rec.Code, http.StatusAccepted, rec.Body.String())
+	}
+	var view planReviewView
+	if err := json.Unmarshal(rec.Body.Bytes(), &view); err != nil {
+		t.Fatalf("unmarshal created review: %v", err)
+	}
+	if view.ID != queued.ID || view.Status != db.PlanReviewStatusQueued {
+		t.Fatalf("created review view = %+v, want queued review %+v", view, queued)
+	}
+}
+
 // TestPlanReviewEndpointsCoverLifecycleAndFailureStates exercises the
 // review create/list/detail endpoints: not-configured, plan-not-found,
 // successful create with a computed staleness flag, list ordering, and
@@ -248,8 +288,8 @@ func TestPlanReviewEndpointsCoverLifecycleAndFailureStates(t *testing.T) {
 	createOKReq := httptest.NewRequest(http.MethodPost, "/api/plans/"+itoa(planID)+"/reviews", strings.NewReader(`{}`))
 	createOKRec := httptest.NewRecorder()
 	h.HandlePlan(createOKRec, createOKReq)
-	if createOKRec.Code != http.StatusCreated {
-		t.Fatalf("create review status = %d, want %d, body = %s", createOKRec.Code, http.StatusCreated, createOKRec.Body.String())
+	if createOKRec.Code != http.StatusAccepted {
+		t.Fatalf("create review status = %d, want %d, body = %s", createOKRec.Code, http.StatusAccepted, createOKRec.Body.String())
 	}
 	var createdView planReviewView
 	if err := json.Unmarshal(createOKRec.Body.Bytes(), &createdView); err != nil {
