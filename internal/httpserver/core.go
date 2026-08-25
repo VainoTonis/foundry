@@ -16,6 +16,7 @@ import (
 	"github.com/tonis2/foundry/internal/db"
 	"github.com/tonis2/foundry/internal/httpapi"
 	"github.com/tonis2/foundry/internal/hub"
+	"github.com/tonis2/foundry/internal/review"
 	"github.com/tonis2/foundry/internal/webui"
 	"github.com/tonis2/foundry/internal/workflow"
 )
@@ -49,12 +50,25 @@ type TelemetrySecurity struct {
 	AllowUnauthenticated bool
 }
 
-func NewServer(pool *pgxpool.Pool, runner *workflow.Runner, cerb *cerberus.Client, eventHub *hub.EventHub, defaultBudget float64, gitRoot string, cfgPath string, cerberusProfile string, serverPort int, telemetrySecurity ...TelemetrySecurity) *Server {
+// ReviewSettings configures the Steward plan review (Plan 90) feature:
+// which engineering contract to check plans against, which economical
+// model to run the review with, and how long a single bounded review
+// turn is allowed to run. A zero-value ReviewSettings still enables the
+// runner; an incomplete contract/model/timeout simply fails each review
+// attempt at request time rather than disabling the feature outright.
+type ReviewSettings struct {
+	Contract review.ContractSource
+	Model    string
+	Timeout  time.Duration
+}
+
+func NewServer(pool *pgxpool.Pool, runner *workflow.Runner, cerb *cerberus.Client, eventHub *hub.EventHub, defaultBudget float64, gitRoot string, cfgPath string, cerberusProfile string, serverPort int, reviewSettings ReviewSettings, telemetrySecurity ...TelemetrySecurity) *Server {
 	security := TelemetrySecurity{}
 	if len(telemetrySecurity) > 0 {
 		security = telemetrySecurity[0]
 	}
 	s := &Server{pool: pool, runner: runner, cerb: cerb, eventHub: eventHub, defaultBudget: defaultBudget, gitRoot: gitRoot, cfgPath: cfgPath, serverPort: serverPort, cerberusProfile: cerberusProfile, telemetryToken: security.BearerToken, telemetryAllowUnauthenticated: security.AllowUnauthenticated, cerbBuffers: make(map[string]*cerberusTextBuffer)}
+	reviewSvc := review.NewService(pool, cerb)
 	s.chatSvc = chat.NewService(pool, cerb, s.callbackURL(), func() string {
 		_, profile := s.runtimeSettings()
 		return profile
@@ -72,6 +86,10 @@ func NewServer(pool *pgxpool.Pool, runner *workflow.Runner, cerb *cerberus.Clien
 		SpecDraftsService:   s.newSpecDraftsService,
 		ChatService:         func() httpapi.ChatService { return s.chatSvc },
 		Cerberus:            cerb,
+		ReviewRunner:        reviewSvc,
+		ReviewContract:      reviewSettings.Contract,
+		ReviewModel:         reviewSettings.Model,
+		ReviewTimeout:       reviewSettings.Timeout,
 		RepositoryLocalPathForWorkflow: func(ctx context.Context, workflowID int64) (string, error) {
 			_, _, repo, err := s.workflowRepository(ctx, workflowID)
 			if err != nil {

@@ -13,3 +13,12 @@ default_phase_timeout_seconds: 1800
 git_root: "~/git"
 
 cerberus_profile: ""
+
+# Steward plan review (Plan 90): engineering contract, model, and timeout
+# for one bounded Steward review turn. review_contract_path is required
+# for reviews to run; review_contract_appendix_path is optional.
+review_contract_path: ""
+review_contract_appendix_path: ""
+review_contract_version: "v1"
+review_model: ""
+review_timeout_seconds: 900

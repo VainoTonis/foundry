@@ -24,6 +24,13 @@ type Config struct {
 	DefaultWorkflowBudgetUSD      float64 `yaml:"default_workflow_budget_usd"`
 	DefaultPhaseTimeoutSeconds    int     `yaml:"default_phase_timeout_seconds"`
 	GitRoot                       string  `yaml:"git_root"`
+
+	// Steward plan review (Plan 90) runtime configuration.
+	ReviewContractPath         string `yaml:"review_contract_path"`
+	ReviewContractAppendixPath string `yaml:"review_contract_appendix_path"`
+	ReviewContractVersion      string `yaml:"review_contract_version"`
+	ReviewModel                string `yaml:"review_model"`
+	ReviewTimeoutSeconds       int    `yaml:"review_timeout_seconds"`
 }
 
 func Load(path string) (Config, error) {
@@ -71,6 +78,11 @@ func RuntimeSettingKeys() map[string]bool {
 		"default_workflow_budget_usd":   true,
 		"default_phase_timeout_seconds": true,
 		"git_root":                      true,
+		"review_contract_path":          true,
+		"review_contract_appendix_path": true,
+		"review_contract_version":       true,
+		"review_model":                  true,
+		"review_timeout_seconds":        true,
 	}
 }
 
@@ -85,6 +97,11 @@ func RuntimeDefaults(c Config) map[string]string {
 		"default_workflow_budget_usd":   strconv.FormatFloat(c.DefaultWorkflowBudgetUSD, 'f', -1, 64),
 		"default_phase_timeout_seconds": strconv.Itoa(c.DefaultPhaseTimeoutSeconds),
 		"git_root":                      c.GitRoot,
+		"review_contract_path":          c.ReviewContractPath,
+		"review_contract_appendix_path": c.ReviewContractAppendixPath,
+		"review_contract_version":       c.ReviewContractVersion,
+		"review_model":                  c.ReviewModel,
+		"review_timeout_seconds":        strconv.Itoa(c.ReviewTimeoutSeconds),
 	}
 }
 
@@ -121,6 +138,20 @@ func ApplyRuntimeSettings(c *Config, values map[string]string) error {
 			c.DefaultPhaseTimeoutSeconds = n
 		case "git_root":
 			c.GitRoot = expandHome(v)
+		case "review_contract_path":
+			c.ReviewContractPath = expandHome(v)
+		case "review_contract_appendix_path":
+			c.ReviewContractAppendixPath = expandHome(v)
+		case "review_contract_version":
+			c.ReviewContractVersion = v
+		case "review_model":
+			c.ReviewModel = v
+		case "review_timeout_seconds":
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				return fmt.Errorf("parse %s: %w", k, err)
+			}
+			c.ReviewTimeoutSeconds = n
 		}
 	}
 	setDefaults(c)
@@ -148,6 +179,21 @@ func setDefaults(c *Config) {
 	}
 	if c.GitRoot != "" {
 		c.GitRoot = expandHome(c.GitRoot)
+	}
+	if c.ReviewContractPath != "" {
+		c.ReviewContractPath = expandHome(c.ReviewContractPath)
+	}
+	if c.ReviewContractAppendixPath != "" {
+		c.ReviewContractAppendixPath = expandHome(c.ReviewContractAppendixPath)
+	}
+	if c.ReviewContractVersion == "" {
+		c.ReviewContractVersion = "v1"
+	}
+	if c.ReviewModel == "" {
+		c.ReviewModel = c.CerberusModel
+	}
+	if c.ReviewTimeoutSeconds == 0 {
+		c.ReviewTimeoutSeconds = 900
 	}
 }
 

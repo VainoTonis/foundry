@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
@@ -18,6 +19,7 @@ import (
 	"github.com/tonis2/foundry/internal/db"
 	"github.com/tonis2/foundry/internal/httpserver"
 	"github.com/tonis2/foundry/internal/hub"
+	"github.com/tonis2/foundry/internal/review"
 	"github.com/tonis2/foundry/internal/workflow"
 )
 
@@ -79,8 +81,19 @@ func main() {
 	// orphan draft recovery (non-blocking)
 	go authoring.RecoverOrphanDrafts(context.Background(), pool, cerb)
 
+	// Steward plan review (Plan 90) runtime configuration.
+	reviewSettings := httpserver.ReviewSettings{
+		Contract: review.ContractSource{
+			Version:      runtime.ReviewContractVersion,
+			GlobalPath:   runtime.ReviewContractPath,
+			AppendixPath: runtime.ReviewContractAppendixPath,
+		},
+		Model:   runtime.ReviewModel,
+		Timeout: time.Duration(runtime.ReviewTimeoutSeconds) * time.Second,
+	}
+
 	// HTTP edge server
-	srv := httpserver.NewServer(pool, runner, cerb, eventHub, runtime.DefaultWorkflowBudgetUSD, runtime.GitRoot, cfgPath, runtime.CerberusProfile, cfg.ServerPort, httpserver.TelemetrySecurity{
+	srv := httpserver.NewServer(pool, runner, cerb, eventHub, runtime.DefaultWorkflowBudgetUSD, runtime.GitRoot, cfgPath, runtime.CerberusProfile, cfg.ServerPort, reviewSettings, httpserver.TelemetrySecurity{
 		BearerToken:          cfg.TelemetryBearerToken,
 		AllowUnauthenticated: cfg.TelemetryAllowUnauthenticated,
 	})
