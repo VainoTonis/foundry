@@ -42,10 +42,18 @@ type TurnInput struct {
 }
 
 // TurnOutput is the JSON response from `cerberus turn` on stdout.
+//
+// Message carries the assistant's final message text for the turn. It
+// is populated whenever cerberus resolves the turn synchronously (in
+// particular, whenever TurnInput.CallbackURL is empty and streaming
+// events are not requested), so a caller that needs the model's actual
+// final reply — rather than incremental callback events — can read it
+// directly from the command's own stdout without a separate fetch.
 type TurnOutput struct {
 	Status       string  `json:"status"`
 	UUID         string  `json:"uuid"`
 	SessionID    string  `json:"session_id,omitempty"`
+	Message      string  `json:"message,omitempty"`
 	InputTokens  int     `json:"input_tokens,omitempty"`
 	OutputTokens int     `json:"output_tokens,omitempty"`
 	CostUSD      float64 `json:"cost_usd,omitempty"`
