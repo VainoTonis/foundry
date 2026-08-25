@@ -2,12 +2,14 @@ package httpapi
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tonis2/foundry/internal/authoring"
 	"github.com/tonis2/foundry/internal/cerberus"
 	"github.com/tonis2/foundry/internal/db"
 	"github.com/tonis2/foundry/internal/repository"
+	"github.com/tonis2/foundry/internal/review"
 )
 
 type ChatService interface {
@@ -39,6 +41,13 @@ type Config struct {
 	Cerberus                       *cerberus.Client
 	RepositoryLocalPathForWorkflow func(context.Context, int64) (string, error)
 	RemoveProfileFile              func(string)
+	// ReviewRunner executes one bounded Steward plan review. If nil,
+	// review create/list/detail endpoints report the feature as not
+	// configured rather than failing with an internal error.
+	ReviewRunner   ReviewRunner
+	ReviewContract review.ContractSource
+	ReviewModel    string
+	ReviewTimeout  time.Duration
 }
 
 type Handler struct {
@@ -57,6 +66,10 @@ type Handler struct {
 	cerb                           *cerberus.Client
 	repositoryLocalPathForWorkflow func(context.Context, int64) (string, error)
 	removeProfileFile              func(string)
+	reviewRunner                   ReviewRunner
+	reviewContract                 review.ContractSource
+	reviewModel                    string
+	reviewTimeout                  time.Duration
 }
 
 func New(pool *pgxpool.Pool, cfg Config) *Handler {
@@ -73,5 +86,9 @@ func New(pool *pgxpool.Pool, cfg Config) *Handler {
 		cerb:                           cfg.Cerberus,
 		repositoryLocalPathForWorkflow: cfg.RepositoryLocalPathForWorkflow,
 		removeProfileFile:              cfg.RemoveProfileFile,
+		reviewRunner:                   cfg.ReviewRunner,
+		reviewContract:                 cfg.ReviewContract,
+		reviewModel:                    cfg.ReviewModel,
+		reviewTimeout:                  cfg.ReviewTimeout,
 	}
 }

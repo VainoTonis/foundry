@@ -328,6 +328,69 @@ var runCmd = &cobra.Command{
 	},
 }
 
+var reviewCmd = &cobra.Command{
+	Use: "review <id>", Short: "Run a new Steward review for a plan", Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		id, err := planID(args[0])
+		if err != nil {
+			return err
+		}
+		var rev apiclient.PlanReview
+		if err := apiclient.NewClient(apiURL).Post("/api/plans/"+id+"/reviews", struct{}{}, &rev); err != nil {
+			return fmt.Errorf("failed to run plan review: %w", err)
+		}
+		return writeJSON(cmd.OutOrStdout(), rev)
+	},
+}
+
+var reviewsCmd = &cobra.Command{
+	Use: "reviews <id>", Short: "List Steward reviews for a plan, most recent first", Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		id, err := planID(args[0])
+		if err != nil {
+			return err
+		}
+		var reviews []apiclient.PlanReview
+		if err := apiclient.NewClient(apiURL).Get("/api/plans/"+id+"/reviews", &reviews); err != nil {
+			return fmt.Errorf("failed to list plan reviews: %w", err)
+		}
+		return writeJSON(cmd.OutOrStdout(), reviews)
+	},
+}
+
+// planReviewCheck is foundry plans check's output: either the most
+// recent Steward review of the plan, or an explicit no_review status
+// when none exists yet, so a caller never has to infer absence from an
+// empty list.
+type planReviewCheck struct {
+	PlanID int64                 `json:"plan_id"`
+	Status string                `json:"status"`
+	Review *apiclient.PlanReview `json:"review,omitempty"`
+}
+
+var checkCmd = &cobra.Command{
+	Use: "check <id>", Short: "Check the latest Steward review status for a plan", Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		id, err := planID(args[0])
+		if err != nil {
+			return err
+		}
+		pid, err := strconv.ParseInt(id, 10, 64)
+		if err != nil {
+			return err
+		}
+		var reviews []apiclient.PlanReview
+		if err := apiclient.NewClient(apiURL).Get("/api/plans/"+id+"/reviews", &reviews); err != nil {
+			return fmt.Errorf("failed to check plan review: %w", err)
+		}
+		if len(reviews) == 0 {
+			return writeJSON(cmd.OutOrStdout(), planReviewCheck{PlanID: pid, Status: "no_review"})
+		}
+		latest := reviews[0]
+		return writeJSON(cmd.OutOrStdout(), planReviewCheck{PlanID: pid, Status: latest.Status, Review: &latest})
+	},
+}
+
 func init() {
-	plansCmd.AddCommand(createCmd, runCmd, getCmd, listCmd, updateCmd, updateStepCmd)
+	plansCmd.AddCommand(createCmd, runCmd, getCmd, listCmd, updateCmd, updateStepCmd, checkCmd, reviewCmd, reviewsCmd)
 }

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -8,7 +9,152 @@ import (
 	"strings"
 
 	"github.com/tonis2/foundry/internal/db"
+	"github.com/tonis2/foundry/internal/review"
 )
+
+// ReviewRunner is the narrow Steward review execution surface HandlePlan
+// needs to create and run exactly one bounded review for a plan.
+// *review.Service satisfies this interface.
+type ReviewRunner interface {
+	RunStewardReview(ctx context.Context, opts review.RunOptions) (db.PlanReview, error)
+}
+
+// planReviewView is a plan review as exposed over the API, with a
+// computed Stale flag telling a caller whether the plan has changed
+// since this review's exact input snapshot was fingerprinted.
+type planReviewView struct {
+	db.PlanReview
+	Stale bool `json:"stale"`
+}
+
+// currentPlanSnapshotHash recomputes the exact snapshot fingerprint
+// RunStewardReview would compute for plan right now, from its current
+// steps and open feedback, so a stored review's input hash can be
+// compared against it to detect staleness.
+func (h *Handler) currentPlanSnapshotHash(ctx context.Context, plan db.Plan) (string, error) {
+	steps, err := db.ListPlanSteps(ctx, h.pool, plan.ID)
+	if err != nil {
+		return "", err
+	}
+	feedback, err := db.ListFeedback(ctx, h.pool)
+	if err != nil {
+		return "", err
+	}
+	snap, err := review.BuildSnapshot(plan, steps, feedback)
+	if err != nil {
+		return "", err
+	}
+	return snap.SHA256, nil
+}
+
+// newPlanReviewView wraps rv with a Stale flag. If currentHash could
+// not be computed (hashErr != nil), rv is conservatively reported as
+// stale rather than silently claiming it is current.
+func newPlanReviewView(rv db.PlanReview, currentHash string, hashErr error) planReviewView {
+	stale := true
+	if hashErr == nil {
+		stale = rv.InputSnapshotSHA256 != currentHash
+	}
+	return planReviewView{PlanReview: rv, Stale: stale}
+}
+
+// createPlanReview runs exactly one new Steward review for planID and
+// persists it. It fails with 503 if no ReviewRunner is configured, 404
+// if the plan does not exist, and 502 if Steward review execution
+// itself fails (a failed review attempt may still have been persisted;
+// see foundry plans reviews to inspect it).
+func (h *Handler) createPlanReview(w http.ResponseWriter, r *http.Request, planID int64) {
+	if h.reviewRunner == nil {
+		jsonErr(w, "plan review is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	plan, err := db.GetPlan(r.Context(), h.pool, planID)
+	if errors.Is(err, db.ErrNotFound) {
+		jsonErr(w, "plan not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		jsonErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	steps, err := db.ListPlanSteps(r.Context(), h.pool, planID)
+	if err != nil {
+		jsonErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	feedback, err := db.ListFeedback(r.Context(), h.pool)
+	if err != nil {
+		jsonErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	result, err := h.reviewRunner.RunStewardReview(r.Context(), review.RunOptions{
+		Plan:     plan,
+		Steps:    steps,
+		Feedback: feedback,
+		Contract: h.reviewContract,
+		Model:    h.reviewModel,
+		Timeout:  h.reviewTimeout,
+	})
+	if err != nil {
+		jsonErr(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	hash, hashErr := h.currentPlanSnapshotHash(r.Context(), plan)
+	jsonOK(w, newPlanReviewView(result, hash, hashErr), http.StatusCreated)
+}
+
+// listPlanReviews returns every review of planID, most recent first,
+// each with a computed staleness flag against the plan's current input.
+func (h *Handler) listPlanReviews(w http.ResponseWriter, r *http.Request, planID int64) {
+	plan, err := db.GetPlan(r.Context(), h.pool, planID)
+	if errors.Is(err, db.ErrNotFound) {
+		jsonErr(w, "plan not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		jsonErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	reviews, err := db.ListPlanReviews(r.Context(), h.pool, planID)
+	if err != nil {
+		jsonErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	hash, hashErr := h.currentPlanSnapshotHash(r.Context(), plan)
+	views := make([]planReviewView, 0, len(reviews))
+	for _, rv := range reviews {
+		views = append(views, newPlanReviewView(rv, hash, hashErr))
+	}
+	jsonOK(w, views, http.StatusOK)
+}
+
+// getPlanReview returns one review of planID by reviewID, with a
+// computed staleness flag. It fails with 404 if the plan does not
+// exist, or if reviewID does not name a review of that plan.
+func (h *Handler) getPlanReview(w http.ResponseWriter, r *http.Request, planID, reviewID int64) {
+	plan, err := db.GetPlan(r.Context(), h.pool, planID)
+	if errors.Is(err, db.ErrNotFound) {
+		jsonErr(w, "plan not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		jsonErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	rv, err := db.GetPlanReview(r.Context(), h.pool, reviewID)
+	if errors.Is(err, db.ErrNotFound) || (err == nil && rv.PlanID != planID) {
+		jsonErr(w, "review not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		jsonErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	hash, hashErr := h.currentPlanSnapshotHash(r.Context(), plan)
+	jsonOK(w, newPlanReviewView(rv, hash, hashErr), http.StatusOK)
+}
 
 func (h *Handler) HandlePlans(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -195,6 +341,21 @@ func (h *Handler) HandlePlan(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		jsonOK(w, step, http.StatusCreated)
+	case suffix == "reviews" && r.Method == http.MethodGet:
+		h.listPlanReviews(w, r, id)
+	case suffix == "reviews" && r.Method == http.MethodPost:
+		h.createPlanReview(w, r, id)
+	case strings.HasPrefix(suffix, "reviews/"):
+		if r.Method != http.MethodGet {
+			jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		reviewID, err := strconv.ParseInt(strings.TrimPrefix(suffix, "reviews/"), 10, 64)
+		if err != nil {
+			jsonErr(w, "invalid review id", http.StatusBadRequest)
+			return
+		}
+		h.getPlanReview(w, r, id, reviewID)
 	case strings.HasPrefix(suffix, "steps/"):
 		stepParts := strings.SplitN(suffix, "/", 2)
 		stepID, err := strconv.ParseInt(stepParts[1], 10, 64)

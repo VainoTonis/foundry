@@ -3,11 +3,30 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/tonis2/foundry/internal/db"
+	"github.com/tonis2/foundry/internal/review"
 )
+
+// fakeReviewRunner is a stub ReviewRunner returning a preconfigured
+// result or error, so review endpoint tests never invoke a real
+// Steward session.
+type fakeReviewRunner struct {
+	result db.PlanReview
+	err    error
+}
+
+func (f *fakeReviewRunner) RunStewardReview(ctx context.Context, opts review.RunOptions) (db.PlanReview, error) {
+	if f.err != nil {
+		return db.PlanReview{}, f.err
+	}
+	return f.result, nil
+}
 
 func newPlansHandler(t *testing.T) *Handler {
 	t.Helper()
@@ -135,5 +154,155 @@ func TestRunPlanRejectsMissingLocalCheckout(t *testing.T) {
 	}
 	if specCountAfter != specCountBefore {
 		t.Fatalf("runPlan created %d spec row(s) despite missing local checkout, want %d", specCountAfter, specCountBefore)
+	}
+}
+
+// TestPlanReviewEndpointsCoverLifecycleAndFailureStates exercises the
+// review create/list/detail endpoints: not-configured, plan-not-found,
+// successful create with a computed staleness flag, list ordering, and
+// detail lookup, plus a failed Steward run surfaced as a gateway error.
+func TestPlanReviewEndpointsCoverLifecycleAndFailureStates(t *testing.T) {
+	h := newPlansHandler(t)
+
+	repoID := createTestPlanRepository(t, h, "review-plan-repo", "https://github.com/foo/review-plan-repo.git")
+	planID := createTestPlan(t, h, []int64{repoID}, "review-plan")
+
+	// No ReviewRunner configured: create fails with 503, list/detail
+	// still work against the (empty) persisted review set.
+	createReq := httptest.NewRequest(http.MethodPost, "/api/plans/"+itoa(planID)+"/reviews", strings.NewReader(`{}`))
+	createRec := httptest.NewRecorder()
+	h.HandlePlan(createRec, createReq)
+	if createRec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("create review with no runner status = %d, want %d, body = %s", createRec.Code, http.StatusServiceUnavailable, createRec.Body.String())
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/plans/"+itoa(planID)+"/reviews", nil)
+	listRec := httptest.NewRecorder()
+	h.HandlePlan(listRec, listReq)
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("list reviews (empty) status = %d, body = %s", listRec.Code, listRec.Body.String())
+	}
+	var empty []planReviewView
+	if err := json.Unmarshal(listRec.Body.Bytes(), &empty); err != nil {
+		t.Fatalf("unmarshal empty review list: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("review list for new plan = %+v, want empty", empty)
+	}
+
+	// Unknown plan id: 404 on create and list.
+	missingCreateReq := httptest.NewRequest(http.MethodPost, "/api/plans/999999999/reviews", strings.NewReader(`{}`))
+	missingCreateRec := httptest.NewRecorder()
+	h.HandlePlan(missingCreateRec, missingCreateReq)
+	if missingCreateRec.Code != http.StatusNotFound {
+		t.Fatalf("create review for missing plan status = %d, want %d", missingCreateRec.Code, http.StatusNotFound)
+	}
+	missingListReq := httptest.NewRequest(http.MethodGet, "/api/plans/999999999/reviews", nil)
+	missingListRec := httptest.NewRecorder()
+	h.HandlePlan(missingListRec, missingListReq)
+	if missingListRec.Code != http.StatusNotFound {
+		t.Fatalf("list reviews for missing plan status = %d, want %d", missingListRec.Code, http.StatusNotFound)
+	}
+
+	// Configure a runner that fails: create surfaces 502.
+	h.reviewRunner = &fakeReviewRunner{err: fmt.Errorf("cerberus turn: boom")}
+	failReq := httptest.NewRequest(http.MethodPost, "/api/plans/"+itoa(planID)+"/reviews", strings.NewReader(`{}`))
+	failRec := httptest.NewRecorder()
+	h.HandlePlan(failRec, failReq)
+	if failRec.Code != http.StatusBadGateway {
+		t.Fatalf("create review with failing runner status = %d, want %d, body = %s", failRec.Code, http.StatusBadGateway, failRec.Body.String())
+	}
+
+	// Configure a runner that succeeds, persisting a real completed
+	// review via the db package directly (mirroring what review.Service
+	// would have done), so create/list/detail all observe it.
+	plan, err := db.GetPlan(context.Background(), h.pool, planID)
+	if err != nil {
+		t.Fatalf("get plan: %v", err)
+	}
+	snap, err := review.BuildSnapshot(plan, nil, nil)
+	if err != nil {
+		t.Fatalf("build snapshot: %v", err)
+	}
+	created, err := db.CreatePlanReview(context.Background(), h.pool, db.CreatePlanReviewParams{
+		PlanID:          planID,
+		InputSnapshot:   snap.JSON,
+		ContractVersion: "v1",
+		ContractContent: "contract body",
+		Model:           "test-model",
+		Session:         fmt.Sprintf("foundry-steward-test-%d", planID),
+	})
+	if err != nil {
+		t.Fatalf("seed create plan review: %v", err)
+	}
+	if _, err := db.StartPlanReview(context.Background(), h.pool, created.ID); err != nil {
+		t.Fatalf("seed start plan review: %v", err)
+	}
+	report := json.RawMessage(`{"verdict":"pass","pass1":"ok","pass2":"ok","evidence":"none","uncertainties":"none","unavailable_repositories":[]}`)
+	completed, err := db.CompletePlanReview(context.Background(), h.pool, created.ID, db.PlanReviewVerdictPass, report)
+	if err != nil {
+		t.Fatalf("seed complete plan review: %v", err)
+	}
+	h.reviewRunner = &fakeReviewRunner{result: completed}
+
+	createOKReq := httptest.NewRequest(http.MethodPost, "/api/plans/"+itoa(planID)+"/reviews", strings.NewReader(`{}`))
+	createOKRec := httptest.NewRecorder()
+	h.HandlePlan(createOKRec, createOKReq)
+	if createOKRec.Code != http.StatusCreated {
+		t.Fatalf("create review status = %d, want %d, body = %s", createOKRec.Code, http.StatusCreated, createOKRec.Body.String())
+	}
+	var createdView planReviewView
+	if err := json.Unmarshal(createOKRec.Body.Bytes(), &createdView); err != nil {
+		t.Fatalf("unmarshal created review: %v", err)
+	}
+	if createdView.ID != completed.ID || createdView.Verdict == nil || *createdView.Verdict != db.PlanReviewVerdictPass {
+		t.Fatalf("created review view = %+v", createdView)
+	}
+	if createdView.Stale {
+		t.Fatalf("freshly created review reported stale, want current: %+v", createdView)
+	}
+
+	listOKReq := httptest.NewRequest(http.MethodGet, "/api/plans/"+itoa(planID)+"/reviews", nil)
+	listOKRec := httptest.NewRecorder()
+	h.HandlePlan(listOKRec, listOKReq)
+	var list []planReviewView
+	if err := json.Unmarshal(listOKRec.Body.Bytes(), &list); err != nil {
+		t.Fatalf("unmarshal review list: %v", err)
+	}
+	if len(list) != 1 || list[0].ID != completed.ID {
+		t.Fatalf("review list = %+v", list)
+	}
+
+	detailReq := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/plans/%d/reviews/%d", planID, completed.ID), nil)
+	detailRec := httptest.NewRecorder()
+	h.HandlePlan(detailRec, detailReq)
+	if detailRec.Code != http.StatusOK {
+		t.Fatalf("get review status = %d, body = %s", detailRec.Code, detailRec.Body.String())
+	}
+	var detail planReviewView
+	if err := json.Unmarshal(detailRec.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("unmarshal review detail: %v", err)
+	}
+	if detail.ID != completed.ID || string(detail.Report) != string(report) {
+		t.Fatalf("review detail = %+v", detail)
+	}
+
+	// Detail for a review id that exists but belongs to a different
+	// plan is not found.
+	otherRepoID := createTestPlanRepository(t, h, "review-plan-repo-2", "https://github.com/foo/review-plan-repo-2.git")
+	otherPlanID := createTestPlan(t, h, []int64{otherRepoID}, "review-plan-other")
+	crossReq := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/plans/%d/reviews/%d", otherPlanID, completed.ID), nil)
+	crossRec := httptest.NewRecorder()
+	h.HandlePlan(crossRec, crossReq)
+	if crossRec.Code != http.StatusNotFound {
+		t.Fatalf("cross-plan review lookup status = %d, want %d", crossRec.Code, http.StatusNotFound)
+	}
+
+	// Unknown review id on a real plan is not found.
+	unknownReq := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/plans/%d/reviews/999999999", planID), nil)
+	unknownRec := httptest.NewRecorder()
+	h.HandlePlan(unknownRec, unknownReq)
+	if unknownRec.Code != http.StatusNotFound {
+		t.Fatalf("unknown review id status = %d, want %d", unknownRec.Code, http.StatusNotFound)
 	}
 }

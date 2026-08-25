@@ -71,6 +71,31 @@ type CreateStepInput struct {
 	ParallelGroup *int   `json:"parallel_group,omitempty"`
 }
 
+// PlanReview represents one immutable, fingerprinted Steward review of a
+// plan, as exposed by the plan review create/list/detail endpoints.
+// Report holds the two-pass structural findings, grounded evidence,
+// uncertainties, and unavailable repositories Steward returned, verbatim,
+// once the review completes. Stale is computed by the server at request
+// time: it is true whenever the plan has changed since this review's
+// exact input snapshot was fingerprinted.
+type PlanReview struct {
+	ID                  int64           `json:"id"`
+	PlanID              int64           `json:"plan_id"`
+	InputSnapshotSHA256 string          `json:"input_snapshot_sha256"`
+	ContractVersion     string          `json:"contract_version"`
+	ContractSHA256      string          `json:"contract_sha256"`
+	Model               string          `json:"model"`
+	Session             string          `json:"session"`
+	Status              string          `json:"status"`
+	Verdict             *string         `json:"verdict,omitempty"`
+	Report              json.RawMessage `json:"report,omitempty"`
+	Error               *string         `json:"error,omitempty"`
+	Stale               bool            `json:"stale"`
+	CreatedAt           time.Time       `json:"created_at"`
+	StartedAt           *time.Time      `json:"started_at,omitempty"`
+	CompletedAt         *time.Time      `json:"completed_at,omitempty"`
+}
+
 // ---- Constructor ----
 
 // NewClient creates a new API client with the given base URL.

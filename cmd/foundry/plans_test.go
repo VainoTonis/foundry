@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/tonis2/foundry/internal/apiclient"
 )
 
 func TestCreatePlanUsesZeroBasedPositionsAndParallelGroups(t *testing.T) {
@@ -151,5 +153,82 @@ func TestPlanCommandSurfacesAPIError(t *testing.T) {
 	err := updateCmd.RunE(updateCmd, []string{"8"})
 	if err == nil || !strings.Contains(err.Error(), "API error (status 409): cannot update") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestReviewReviewsAndCheckCommands(t *testing.T) {
+	var ranReview bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/plans/11/reviews":
+			ranReview = true
+			fmt.Fprint(w, `{"id":5,"plan_id":11,"status":"completed","verdict":"pass","stale":false}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/plans/11/reviews":
+			fmt.Fprint(w, `[{"id":5,"plan_id":11,"status":"completed","verdict":"pass","stale":true},{"id":4,"plan_id":11,"status":"failed","error":"boom"}]`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/plans/12/reviews":
+			fmt.Fprint(w, `[]`)
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	oldURL := apiURL
+	apiURL = server.URL
+	defer func() { apiURL = oldURL }()
+
+	var reviewOut bytes.Buffer
+	reviewCmd.SetOut(&reviewOut)
+	if err := reviewCmd.RunE(reviewCmd, []string{"11"}); err != nil {
+		t.Fatal(err)
+	}
+	if !ranReview {
+		t.Fatal("review command did not POST /api/plans/11/reviews")
+	}
+	var created apiclient.PlanReview
+	if err := json.Unmarshal(reviewOut.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.ID != 5 || created.Verdict == nil || *created.Verdict != "pass" {
+		t.Fatalf("review output = %+v", created)
+	}
+
+	var reviewsOut bytes.Buffer
+	reviewsCmd.SetOut(&reviewsOut)
+	if err := reviewsCmd.RunE(reviewsCmd, []string{"11"}); err != nil {
+		t.Fatal(err)
+	}
+	var reviews []apiclient.PlanReview
+	if err := json.Unmarshal(reviewsOut.Bytes(), &reviews); err != nil {
+		t.Fatal(err)
+	}
+	if len(reviews) != 2 || reviews[0].ID != 5 || reviews[1].Status != "failed" {
+		t.Fatalf("reviews output = %+v", reviews)
+	}
+
+	var checkOut bytes.Buffer
+	checkCmd.SetOut(&checkOut)
+	if err := checkCmd.RunE(checkCmd, []string{"11"}); err != nil {
+		t.Fatal(err)
+	}
+	var check planReviewCheck
+	if err := json.Unmarshal(checkOut.Bytes(), &check); err != nil {
+		t.Fatal(err)
+	}
+	if check.PlanID != 11 || check.Status != "completed" || check.Review == nil || check.Review.ID != 5 {
+		t.Fatalf("check output = %+v", check)
+	}
+
+	var noReviewOut bytes.Buffer
+	checkCmd.SetOut(&noReviewOut)
+	if err := checkCmd.RunE(checkCmd, []string{"12"}); err != nil {
+		t.Fatal(err)
+	}
+	var noReview planReviewCheck
+	if err := json.Unmarshal(noReviewOut.Bytes(), &noReview); err != nil {
+		t.Fatal(err)
+	}
+	if noReview.PlanID != 12 || noReview.Status != "no_review" || noReview.Review != nil {
+		t.Fatalf("no-review check output = %+v", noReview)
 	}
 }
