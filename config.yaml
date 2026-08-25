@@ -20,5 +20,5 @@ cerberus_profile: ""
 review_contract_path: ""
 review_contract_appendix_path: ""
 review_contract_version: "v1"
-review_model: ""
+review_model: "anthropic/claude-sonnet-5"
 review_timeout_seconds: 900
