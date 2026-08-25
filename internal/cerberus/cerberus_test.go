@@ -2,6 +2,7 @@ package cerberus
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -121,6 +122,78 @@ func TestPerRepoViewStatus(t *testing.T) {
 	want := repo + "|status|--name"
 	if !strings.Contains(out, want) {
 		t.Fatalf("Status output = %q, want to contain %q", out, want)
+	}
+}
+
+func TestTurnOutputDecodesLegacyMessageField(t *testing.T) {
+	raw := `{"status":"ok","uuid":"u1","message":"hello there"}`
+	var out TurnOutput
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Message != "hello there" {
+		t.Fatalf("Message = %q, want %q", out.Message, "hello there")
+	}
+	if out.Status != "ok" || out.UUID != "u1" {
+		t.Fatalf("unexpected fields: %+v", out)
+	}
+}
+
+func TestTurnOutputDecodesAssistantMessageString(t *testing.T) {
+	raw := `{"status":"ok","uuid":"u1","assistant_message":"hi from assistant"}`
+	var out TurnOutput
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Message != "hi from assistant" {
+		t.Fatalf("Message = %q, want %q", out.Message, "hi from assistant")
+	}
+}
+
+func TestTurnOutputDecodesAssistantMessageObjectWithStringContent(t *testing.T) {
+	raw := `{"status":"ok","uuid":"u1","assistant_message":{"content":"object content"}}`
+	var out TurnOutput
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Message != "object content" {
+		t.Fatalf("Message = %q, want %q", out.Message, "object content")
+	}
+}
+
+func TestTurnOutputDecodesAssistantMessageContentBlocks(t *testing.T) {
+	raw := `{"status":"ok","uuid":"u1","assistant_message":{"content":[{"type":"text","text":"part one "},{"type":"text","text":"part two"}]}}`
+	var out TurnOutput
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Message != "part one part two" {
+		t.Fatalf("Message = %q, want %q", out.Message, "part one part two")
+	}
+}
+
+func TestTurnOutputLegacyMessageTakesPrecedenceOverAssistantMessage(t *testing.T) {
+	raw := `{"status":"ok","uuid":"u1","message":"legacy wins","assistant_message":"should be ignored"}`
+	var out TurnOutput
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Message != "legacy wins" {
+		t.Fatalf("Message = %q, want %q", out.Message, "legacy wins")
+	}
+}
+
+func TestTurnOutputWithoutMessageOrAssistantMessage(t *testing.T) {
+	raw := `{"status":"error","uuid":"u1","error":"session not found"}`
+	var out TurnOutput
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Message != "" {
+		t.Fatalf("Message = %q, want empty", out.Message)
+	}
+	if out.Error != "session not found" {
+		t.Fatalf("Error = %q, want %q", out.Error, "session not found")
 	}
 }
 

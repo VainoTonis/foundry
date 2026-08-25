@@ -49,6 +49,14 @@ type TurnInput struct {
 // events are not requested), so a caller that needs the model's actual
 // final reply — rather than incremental callback events — can read it
 // directly from the command's own stdout without a separate fetch.
+//
+// Newer versions of cerberus report the assistant's reply under an
+// "assistant_message" key instead of the legacy "message" string field.
+// That key may itself be a plain string or an object shaped like
+// {"content": ...} where content is either a string or a list of
+// content blocks (each with a "text" field), mirroring common LLM
+// message formats. UnmarshalJSON below normalizes any of these shapes
+// into Message so callers only ever need to read TurnOutput.Message.
 type TurnOutput struct {
 	Status       string  `json:"status"`
 	UUID         string  `json:"uuid"`
@@ -58,6 +66,79 @@ type TurnOutput struct {
 	OutputTokens int     `json:"output_tokens,omitempty"`
 	CostUSD      float64 `json:"cost_usd,omitempty"`
 	Error        string  `json:"error,omitempty"`
+}
+
+// contentBlock is a single element of an "assistant_message" content
+// array, e.g. {"type": "text", "text": "..."}.
+type contentBlock struct {
+	Type string `json:"type,omitempty"`
+	Text string `json:"text,omitempty"`
+}
+
+// assistantMessage models the shape of a Cerberus "assistant_message"
+// field when it is an object rather than a plain string.
+type assistantMessage struct {
+	Content json.RawMessage `json:"content"`
+}
+
+// UnmarshalJSON implements custom decoding for TurnOutput so it accepts
+// both the legacy "message" string field and the newer "assistant_message"
+// field (string, or object with a string/array "content"). If both are
+// present, the legacy "message" field takes precedence for backward
+// compatibility.
+func (o *TurnOutput) UnmarshalJSON(data []byte) error {
+	type legacy TurnOutput // avoid recursive UnmarshalJSON calls
+	var aux struct {
+		legacy
+		AssistantMessage json.RawMessage `json:"assistant_message,omitempty"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	*o = TurnOutput(aux.legacy)
+
+	if o.Message == "" && len(aux.AssistantMessage) > 0 {
+		text, err := extractAssistantMessageText(aux.AssistantMessage)
+		if err != nil {
+			return fmt.Errorf("parse assistant_message: %w", err)
+		}
+		o.Message = text
+	}
+	return nil
+}
+
+// extractAssistantMessageText normalizes a Cerberus "assistant_message"
+// value into plain text. Supported shapes:
+//   - a plain JSON string
+//   - an object {"content": "..."}
+//   - an object {"content": [{"type": "text", "text": "..."}, ...]}
+func extractAssistantMessageText(raw json.RawMessage) (string, error) {
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s, nil
+	}
+
+	var msg assistantMessage
+	if err := json.Unmarshal(raw, &msg); err != nil {
+		return "", err
+	}
+	if len(msg.Content) == 0 {
+		return "", nil
+	}
+
+	if err := json.Unmarshal(msg.Content, &s); err == nil {
+		return s, nil
+	}
+
+	var blocks []contentBlock
+	if err := json.Unmarshal(msg.Content, &blocks); err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	for _, block := range blocks {
+		b.WriteString(block.Text)
+	}
+	return b.String(), nil
 }
 
 // ErrSessionNotFound is returned by Turn when cerberus reports the session uuid is gone.
