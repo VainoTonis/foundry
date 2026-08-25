@@ -324,8 +324,38 @@ var runCmd = &cobra.Command{
 		if err := apiclient.NewClient(apiURL).Post("/api/plans/"+id+"/run", struct{}{}, &workflow); err != nil {
 			return fmt.Errorf("failed to run plan: %w", err)
 		}
+		// Advisory only: printed to stderr so it never contaminates the
+		// workflow JSON on stdout, and never blocks the run that already
+		// happened above.
+		printReviewWarnings(cmd.ErrOrStderr(), workflow["review_warnings"])
 		return writeJSON(cmd.OutOrStdout(), workflow)
 	},
+}
+
+// printReviewWarnings writes one advisory line per warning in raw (the
+// run endpoint's review_warnings field, decoded generically since
+// runCmd treats the whole response as map[string]any) to w. It is
+// silent when raw is nil, empty, or not shaped as expected, since a
+// missing or malformed warnings field must never be mistaken for an
+// error in an already-completed run.
+func printReviewWarnings(w io.Writer, raw any) {
+	warnings, ok := raw.([]any)
+	if !ok || len(warnings) == 0 {
+		return
+	}
+	fmt.Fprintln(w, "Steward review warnings (advisory only; execution was not blocked):")
+	for _, item := range warnings {
+		warning, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		code, _ := warning["code"].(string)
+		message, _ := warning["message"].(string)
+		if code == "" && message == "" {
+			continue
+		}
+		fmt.Fprintf(w, "  - [%s] %s\n", code, message)
+	}
 }
 
 var reviewCmd = &cobra.Command{

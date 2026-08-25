@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -56,6 +57,126 @@ func newPlanReviewView(rv db.PlanReview, currentHash string, hashErr error) plan
 		stale = rv.InputSnapshotSHA256 != currentHash
 	}
 	return planReviewView{PlanReview: rv, Stale: stale}
+}
+
+// planReviewWarning is an advisory notice surfaced alongside plan
+// execution when the plan's most recent Steward review is missing,
+// stale, unresolved (revise/escalate), failed, or could not fully
+// ground its claims. It never blocks execution: runPlan always returns
+// it informationally, and a pass verdict on a current, fully grounded
+// review simply yields no warnings.
+type planReviewWarning struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+// Advisory warning codes. Each names exactly one review state a caller
+// should be told about before running a plan; none of them cause
+// execution to fail.
+const (
+	planReviewWarningMissing    = "review_missing"
+	planReviewWarningIncomplete = "review_incomplete"
+	planReviewWarningStale      = "review_stale"
+	planReviewWarningUnresolved = "review_unresolved"
+	planReviewWarningFailed     = "review_failed"
+	planReviewWarningUngrounded = "review_grounding_unavailable"
+)
+
+// planReviewWarnings inspects reviews (most recent first, as returned
+// by db.ListPlanReviews) against currentHash, the plan's exact current
+// input snapshot fingerprint, and returns every advisory warning a
+// caller should see before running the plan. A hashErr means staleness
+// could not be computed, so it is conservatively treated as stale
+// rather than silently reported current.
+//
+// Exactly one of these applies, based on the single most recent
+// review's terminal state:
+//   - no review exists at all: review_missing
+//   - the most recent review has not reached a terminal state yet
+//     (still queued or running): review_incomplete
+//   - the most recent review failed to complete: review_failed
+//   - the most recent review completed: independently, it may be
+//     stale against the plan's current content (review_stale), may
+//     have returned revise or escalate (review_unresolved), and/or may
+//     have been unable to ground its claims against every repository
+//     (review_grounding_unavailable). A pass verdict on a current,
+//     fully grounded review yields none of these.
+func planReviewWarnings(reviews []db.PlanReview, currentHash string, hashErr error) []planReviewWarning {
+	if len(reviews) == 0 {
+		return []planReviewWarning{{
+			Code:    planReviewWarningMissing,
+			Message: "no Steward review has ever been run for this plan",
+		}}
+	}
+
+	latest := reviews[0]
+	switch latest.Status {
+	case db.PlanReviewStatusFailed:
+		msg := "the most recent Steward review failed to complete"
+		if latest.Error != nil && strings.TrimSpace(*latest.Error) != "" {
+			msg += ": " + strings.TrimSpace(*latest.Error)
+		}
+		return []planReviewWarning{{Code: planReviewWarningFailed, Message: msg}}
+	case db.PlanReviewStatusCompleted:
+		var warnings []planReviewWarning
+		if hashErr != nil || latest.InputSnapshotSHA256 != currentHash {
+			warnings = append(warnings, planReviewWarning{
+				Code:    planReviewWarningStale,
+				Message: "the most recent Steward review no longer matches the plan's current content",
+			})
+		}
+		if latest.Verdict != nil && (*latest.Verdict == db.PlanReviewVerdictRevise || *latest.Verdict == db.PlanReviewVerdictEscalate) {
+			warnings = append(warnings, planReviewWarning{
+				Code:    planReviewWarningUnresolved,
+				Message: fmt.Sprintf("the most recent Steward review returned verdict %q and has not since been re-reviewed as passing", *latest.Verdict),
+			})
+		}
+		if reportHasUnavailableGrounding(latest.Report) {
+			warnings = append(warnings, planReviewWarning{
+				Code:    planReviewWarningUngrounded,
+				Message: "the most recent Steward review could not ground its claims against every attached repository",
+			})
+		}
+		return warnings
+	default: // queued or running: no terminal outcome to evaluate yet.
+		return []planReviewWarning{{
+			Code:    planReviewWarningIncomplete,
+			Message: "the most recent Steward review has not finished running",
+		}}
+	}
+}
+
+// reportHasUnavailableGrounding reports whether report's
+// review.ReportFieldUnavailable field is present and non-empty,
+// meaning Steward itself disclosed at least one repository or claim it
+// could not ground against inspected source. A missing, null, empty
+// array, empty string, or unparsable report is treated as no
+// disclosed gap rather than a false warning.
+func reportHasUnavailableGrounding(report json.RawMessage) bool {
+	if len(report) == 0 {
+		return false
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(report, &fields); err != nil {
+		return false
+	}
+	raw, ok := fields[review.ReportFieldUnavailable]
+	if !ok {
+		return false
+	}
+	switch strings.TrimSpace(string(raw)) {
+	case "", "null", "[]", `""`:
+		return false
+	}
+	var arr []json.RawMessage
+	if err := json.Unmarshal(raw, &arr); err == nil {
+		return len(arr) > 0
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return strings.TrimSpace(s) != ""
+	}
+	return true
 }
 
 // createPlanReview runs exactly one new Steward review for planID and
@@ -262,7 +383,34 @@ func (h *Handler) runPlan(w http.ResponseWriter, r *http.Request, id int64) {
 	if h.workflowRunner != nil {
 		h.workflowRunner.Start(wf.ID)
 	}
-	jsonOK(w, wf, http.StatusCreated)
+
+	// Advisory only: a missing, stale, unresolved, failed, or
+	// incompletely grounded review is reported alongside the created
+	// workflow, but never blocks or alters execution above.
+	warnings := h.runPlanReviewWarnings(r.Context(), plan)
+	jsonOK(w, runPlanResult{Workflow: wf, ReviewWarnings: warnings}, http.StatusCreated)
+}
+
+// runPlanResult is runPlan's response: the created workflow plus any
+// advisory Steward review warnings, so a caller sees both without the
+// workflow's own JSON shape changing.
+type runPlanResult struct {
+	db.Workflow
+	ReviewWarnings []planReviewWarning `json:"review_warnings"`
+}
+
+// runPlanReviewWarnings computes plan's advisory review warnings for
+// runPlan's response. It never fails runPlan: if reviews or the
+// current snapshot hash cannot be loaded, the review is conservatively
+// reported missing/stale rather than surfacing an unrelated 500 from
+// an already-started run.
+func (h *Handler) runPlanReviewWarnings(ctx context.Context, plan db.Plan) []planReviewWarning {
+	reviews, err := db.ListPlanReviews(ctx, h.pool, plan.ID)
+	if err != nil {
+		reviews = nil
+	}
+	hash, hashErr := h.currentPlanSnapshotHash(ctx, plan)
+	return planReviewWarnings(reviews, hash, hashErr)
 }
 
 func (h *Handler) HandlePlan(w http.ResponseWriter, r *http.Request) {
