@@ -88,7 +88,7 @@ func NewServer(pool *pgxpool.Pool, runner *workflow.Runner, cerb *cerberus.Clien
 		Cerberus:            cerb,
 		ReviewRunner:        reviewSvc,
 		ReviewContract:      reviewSettings.Contract,
-		ReviewModel:         reviewSettings.Model,
+		ReviewModel:         resolveReviewModel(reviewSettings.Model, cerb),
 		ReviewTimeout:       reviewSettings.Timeout,
 		RepositoryLocalPathForWorkflow: func(ctx context.Context, workflowID int64) (string, error) {
 			_, _, repo, err := s.workflowRepository(ctx, workflowID)
@@ -127,6 +127,21 @@ func (s *Server) runChatIdleJanitor(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// resolveReviewModel preserves an explicit review_model override, but
+// falls back to Cerberus's own configured default-model resolution
+// (cerb.Model, itself derived from cerberus_model) when review_model
+// was omitted from Steward's runtime settings. An empty result simply
+// means cerberus itself picks its default model.
+func resolveReviewModel(explicit string, cerb *cerberus.Client) string {
+	if strings.TrimSpace(explicit) != "" {
+		return explicit
+	}
+	if cerb == nil {
+		return ""
+	}
+	return cerb.Model()
 }
 
 func (s *Server) callbackURL() string {

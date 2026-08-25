@@ -189,9 +189,12 @@ func setDefaults(c *Config) {
 	if c.ReviewContractVersion == "" {
 		c.ReviewContractVersion = "v1"
 	}
-	if c.ReviewModel == "" {
-		c.ReviewModel = c.CerberusModel
-	}
+	// review_model is intentionally left empty when omitted: an
+	// explicit review_model always wins, but an omitted one is
+	// resolved dynamically at request time to Cerberus's own
+	// default-model resolution (internal/httpserver.resolveReviewModel)
+	// rather than being permanently baked into this field at load
+	// time, so later cerberus_model changes are still honored.
 	if c.ReviewTimeoutSeconds == 0 {
 		c.ReviewTimeoutSeconds = 900
 	}

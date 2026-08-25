@@ -86,6 +86,15 @@ func New(bin, image, model, profile string) *Client {
 	return &Client{bin: bin, image: image, model: model, profile: profile}
 }
 
+// Model returns the client's configured default model override, i.e.
+// the model cerberus falls back to (via Turn/Start/Chat/Generate) when
+// a caller does not specify one explicitly. It is empty when no
+// default override is configured, in which case cerberus itself picks
+// its own default model.
+func (c *Client) Model() string {
+	return c.model
+}
+
 // WithRepo returns an immutable, per-repo command API for the given repo path.
 // All commands executed via the returned PerRepoView use the specified repo path
 // without mutating the shared Client state.
