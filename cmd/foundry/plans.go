@@ -358,8 +358,15 @@ func printReviewWarnings(w io.Writer, raw any) {
 	}
 }
 
+// reviewCmd starts a new Steward review and returns as soon as the API
+// reports it, which is promptly: the server persists the review and
+// hands its bounded cerberus turn to a background job rather than
+// blocking the request on it, so the printed review is normally still
+// "queued" or "running", not yet a terminal outcome. Use `foundry
+// plans check <id>` or `foundry plans reviews <id>` to observe it reach
+// completed or failed.
 var reviewCmd = &cobra.Command{
-	Use: "review <id>", Short: "Run a new Steward review for a plan", Args: cobra.ExactArgs(1),
+	Use: "review <id>", Short: "Start a new Steward review for a plan (returns promptly; poll status via check/reviews)", Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		id, err := planID(args[0])
 		if err != nil {
@@ -367,7 +374,7 @@ var reviewCmd = &cobra.Command{
 		}
 		var rev apiclient.PlanReview
 		if err := apiclient.NewClient(apiURL).Post("/api/plans/"+id+"/reviews", struct{}{}, &rev); err != nil {
-			return fmt.Errorf("failed to run plan review: %w", err)
+			return fmt.Errorf("failed to start plan review: %w", err)
 		}
 		return writeJSON(cmd.OutOrStdout(), rev)
 	},

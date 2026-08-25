@@ -21,7 +21,7 @@ type fakeReviewRunner struct {
 	err    error
 }
 
-func (f *fakeReviewRunner) RunStewardReview(ctx context.Context, opts review.RunOptions) (db.PlanReview, error) {
+func (f *fakeReviewRunner) StartStewardReview(ctx context.Context, opts review.RunOptions) (db.PlanReview, error) {
 	if f.err != nil {
 		return db.PlanReview{}, f.err
 	}

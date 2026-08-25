@@ -21,10 +21,15 @@ type fakePlanReviewStore struct {
 	mu          sync.Mutex
 	nextID      int64
 	reviews     map[int64]db.PlanReview
-	createErr   error
-	startErr    error
-	completeErr error
-	failErr     error
+	createErr      error
+	startErr       error
+	completeErr    error
+	failErr        error
+	listRunningErr error
+	// done, if set, receives a value every time a review transitions to
+	// a terminal state, so a test can wait for background work started
+	// by StartStewardReview instead of racing it.
+	done chan struct{}
 }
 
 func newFakePlanReviewStore() *fakePlanReviewStore {
@@ -75,6 +80,7 @@ func (f *fakePlanReviewStore) CompletePlanReview(_ context.Context, id int64, ve
 	r.Verdict = &v
 	r.Report = report
 	f.reviews[id] = r
+	f.signalDone()
 	return r, nil
 }
 
@@ -89,7 +95,35 @@ func (f *fakePlanReviewStore) FailPlanReview(_ context.Context, id int64, errMsg
 	e := errMsg
 	r.Error = &e
 	f.reviews[id] = r
+	f.signalDone()
 	return r, nil
+}
+
+// signalDone notifies f.done, if set, that a review just reached a
+// terminal state. It must be called with f.mu held.
+func (f *fakePlanReviewStore) signalDone() {
+	if f.done == nil {
+		return
+	}
+	select {
+	case f.done <- struct{}{}:
+	default:
+	}
+}
+
+func (f *fakePlanReviewStore) ListRunningPlanReviews(_ context.Context) ([]db.PlanReview, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.listRunningErr != nil {
+		return nil, f.listRunningErr
+	}
+	var out []db.PlanReview
+	for _, r := range f.reviews {
+		if r.Status == db.PlanReviewStatusRunning {
+			out = append(out, r)
+		}
+	}
+	return out, nil
 }
 
 func (f *fakePlanReviewStore) get(id int64) db.PlanReview {
@@ -397,6 +431,95 @@ func TestRunStewardReview_PersistenceFailureNeverFabricatesAPass(t *testing.T) {
 	// not be persisted.
 	if len(cerb.cleanedSessions()) != 1 {
 		t.Fatalf("cleaned sessions = %v, want exactly one cleanup", cerb.cleanedSessions())
+	}
+}
+
+func TestStartStewardReview_ReturnsPromptlyThenCompletesInBackground(t *testing.T) {
+	plan := allLocalPlan(t)
+	store := newFakePlanReviewStore()
+	store.done = make(chan struct{}, 1)
+	turnStarted := make(chan struct{})
+	unblock := make(chan struct{})
+	cerb := &fakeCerberus{
+		turnFunc: func(ctx context.Context, _ cerberus.TurnInput) (cerberus.TurnOutput, error) {
+			close(turnStarted)
+			<-unblock
+			return cerberus.TurnOutput{Status: "ok", Message: validReportMessage("pass")}, nil
+		},
+	}
+	svc := newService(store, cerb)
+
+	review, err := svc.StartStewardReview(context.Background(), withContract(t, testRunOptions(plan)))
+	if err != nil {
+		t.Fatalf("StartStewardReview() error = %v", err)
+	}
+	// StartStewardReview must return before the cerberus turn resolves:
+	// the turn is still blocked on unblock, so the review it returned
+	// can only be running, never a terminal state.
+	if review.Status != db.PlanReviewStatusRunning {
+		t.Fatalf("review.Status = %q, want running (StartStewardReview must return promptly)", review.Status)
+	}
+	<-turnStarted
+	close(unblock)
+
+	select {
+	case <-store.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for background review execution to persist a terminal outcome")
+	}
+
+	stored := store.get(review.ID)
+	if stored.Status != db.PlanReviewStatusCompleted {
+		t.Fatalf("stored review status = %q, want completed", stored.Status)
+	}
+	if stored.Verdict == nil || *stored.Verdict != db.PlanReviewVerdictPass {
+		t.Fatalf("stored review verdict = %v, want pass", stored.Verdict)
+	}
+	if len(cerb.cleanedSessions()) != 1 {
+		t.Fatalf("cleaned sessions = %v, want exactly one cleanup", cerb.cleanedSessions())
+	}
+}
+
+func TestReconcileInterruptedReviews_FailsOrphanedRunningReviews(t *testing.T) {
+	plan := allLocalPlan(t)
+	store := newFakePlanReviewStore()
+	cerb := &fakeCerberus{}
+	svc := newService(store, cerb)
+
+	// Simulate a review left running by a process that died mid-turn:
+	// prepareReview alone takes it from queued to running, and nothing
+	// ever resolves it further.
+	prep, err := svc.prepareReview(context.Background(), withContract(t, testRunOptions(plan)))
+	if err != nil {
+		t.Fatalf("prepareReview() error = %v", err)
+	}
+	if prep.review.Status != db.PlanReviewStatusRunning {
+		t.Fatalf("prep.review.Status = %q, want running", prep.review.Status)
+	}
+
+	n, err := svc.ReconcileInterruptedReviews(context.Background())
+	if err != nil {
+		t.Fatalf("ReconcileInterruptedReviews() error = %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("ReconcileInterruptedReviews() = %d, want 1", n)
+	}
+
+	stored := store.get(prep.review.ID)
+	if stored.Status != db.PlanReviewStatusFailed {
+		t.Fatalf("stored review status = %q, want failed", stored.Status)
+	}
+	if stored.Error == nil || strings.TrimSpace(*stored.Error) == "" {
+		t.Fatalf("stored review has no error message: %v", stored.Error)
+	}
+
+	// A second reconciliation pass finds nothing left to fail.
+	n2, err := svc.ReconcileInterruptedReviews(context.Background())
+	if err != nil {
+		t.Fatalf("ReconcileInterruptedReviews() second pass error = %v", err)
+	}
+	if n2 != 0 {
+		t.Fatalf("ReconcileInterruptedReviews() second pass = %d, want 0", n2)
 	}
 }
 

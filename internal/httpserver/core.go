@@ -69,6 +69,16 @@ func NewServer(pool *pgxpool.Pool, runner *workflow.Runner, cerb *cerberus.Clien
 	}
 	s := &Server{pool: pool, runner: runner, cerb: cerb, eventHub: eventHub, defaultBudget: defaultBudget, gitRoot: gitRoot, cfgPath: cfgPath, serverPort: serverPort, cerberusProfile: cerberusProfile, telemetryToken: security.BearerToken, telemetryAllowUnauthenticated: security.AllowUnauthenticated, cerbBuffers: make(map[string]*cerberusTextBuffer)}
 	reviewSvc := review.NewService(pool, cerb)
+	// Fail any plan review left "running" by a previous process (e.g.
+	// a crash or restart mid-turn): its background goroutine is gone,
+	// so without this it would stay running forever with no terminal,
+	// persisted outcome. Best-effort: a failure here must not block
+	// server startup.
+	if n, err := reviewSvc.ReconcileInterruptedReviews(context.Background()); err != nil {
+		log.Printf("reconcile interrupted plan reviews: %v", err)
+	} else if n > 0 {
+		log.Printf("reconciled %d interrupted plan review(s) as failed", n)
+	}
 	s.chatSvc = chat.NewService(pool, cerb, s.callbackURL(), func() string {
 		_, profile := s.runtimeSettings()
 		return profile

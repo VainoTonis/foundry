@@ -279,6 +279,31 @@ func ListPlanReviews(ctx context.Context, pool querier, planID int64) ([]PlanRev
 	return out, rows.Err()
 }
 
+// ListRunningPlanReviews returns every plan review currently in the
+// running state, across all plans, oldest-started first. It exists so
+// a caller (e.g. a startup reconciliation pass) can find every review
+// whose executing process may have died without the review ever
+// reaching a terminal state, without needing any in-memory registry
+// of in-flight reviews.
+func ListRunningPlanReviews(ctx context.Context, pool querier) ([]PlanReview, error) {
+	rows, err := pool.Query(ctx,
+		`SELECT `+planReviewSelectColumns+` FROM plan_reviews WHERE status = 'running' ORDER BY started_at ASC, id ASC`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PlanReview
+	for rows.Next() {
+		r, err := scanPlanReview(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // GetLatestPlanReviewByInputHash returns the most recently created
 // review of planID whose input_snapshot_sha256 matches inputHash, so a
 // caller holding a freshly computed snapshot fingerprint can tell

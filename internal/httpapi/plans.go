@@ -14,10 +14,14 @@ import (
 )
 
 // ReviewRunner is the narrow Steward review execution surface HandlePlan
-// needs to create and run exactly one bounded review for a plan.
-// *review.Service satisfies this interface.
+// needs to create and start exactly one bounded review for a plan.
+// *review.Service satisfies this interface. StartStewardReview returns
+// as soon as the review has left queued for running, without waiting
+// for its cerberus turn to resolve, so review creation stays prompt;
+// the review's eventual completed/failed outcome is later visible via
+// GetPlanReview/ListPlanReviews.
 type ReviewRunner interface {
-	RunStewardReview(ctx context.Context, opts review.RunOptions) (db.PlanReview, error)
+	StartStewardReview(ctx context.Context, opts review.RunOptions) (db.PlanReview, error)
 }
 
 // planReviewView is a plan review as exposed over the API, with a
@@ -179,11 +183,13 @@ func reportHasUnavailableGrounding(report json.RawMessage) bool {
 	return true
 }
 
-// createPlanReview runs exactly one new Steward review for planID and
-// persists it. It fails with 503 if no ReviewRunner is configured, 404
-// if the plan does not exist, and 502 if Steward review execution
-// itself fails (a failed review attempt may still have been persisted;
-// see foundry plans reviews to inspect it).
+// createPlanReview starts exactly one new Steward review for planID
+// and returns as soon as it is persisted and running, without waiting
+// for Steward's bounded cerberus turn to resolve. It fails with 503 if
+// no ReviewRunner is configured, 404 if the plan does not exist, and
+// 502 if the review could not even be started (a review that started
+// but later fails its turn is instead persisted as a failed review;
+// see foundry plans reviews/check to observe it).
 func (h *Handler) createPlanReview(w http.ResponseWriter, r *http.Request, planID int64) {
 	if h.reviewRunner == nil {
 		jsonErr(w, "plan review is not configured", http.StatusServiceUnavailable)
@@ -209,7 +215,7 @@ func (h *Handler) createPlanReview(w http.ResponseWriter, r *http.Request, planI
 		return
 	}
 
-	result, err := h.reviewRunner.RunStewardReview(r.Context(), review.RunOptions{
+	result, err := h.reviewRunner.StartStewardReview(r.Context(), review.RunOptions{
 		Plan:     plan,
 		Steps:    steps,
 		Feedback: feedback,

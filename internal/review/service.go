@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -49,6 +50,11 @@ type planReviewStore interface {
 	StartPlanReview(ctx context.Context, id int64) (db.PlanReview, error)
 	CompletePlanReview(ctx context.Context, id int64, verdict string, report json.RawMessage) (db.PlanReview, error)
 	FailPlanReview(ctx context.Context, id int64, errMsg string) (db.PlanReview, error)
+	// ListRunningPlanReviews returns every plan review still marked
+	// running, across all plans, so an orphaned review (its executing
+	// process is gone) can be found and reconciled to a terminal state
+	// without any in-memory registry of in-flight reviews.
+	ListRunningPlanReviews(ctx context.Context) ([]db.PlanReview, error)
 }
 
 type pgPlanReviewStore struct{ pool *pgxpool.Pool }
@@ -67,6 +73,10 @@ func (s pgPlanReviewStore) CompletePlanReview(ctx context.Context, id int64, ver
 
 func (s pgPlanReviewStore) FailPlanReview(ctx context.Context, id int64, errMsg string) (db.PlanReview, error) {
 	return db.FailPlanReview(ctx, s.pool, id, errMsg)
+}
+
+func (s pgPlanReviewStore) ListRunningPlanReviews(ctx context.Context) ([]db.PlanReview, error) {
+	return db.ListRunningPlanReviews(ctx, s.pool)
 }
 
 // Service executes bounded Steward plan reviews.
@@ -100,33 +110,44 @@ type RunOptions struct {
 	Timeout time.Duration
 }
 
-// RunStewardReview builds the deterministic snapshot and contract-bound
-// prompt for opts.Plan, mounts every locally available plan repository
-// read-only, sends exactly one bounded cerberus turn using opts.Model,
-// strictly validates the final assistant message as a two-pass report,
-// and persists an honest queued -> running -> completed|failed
-// lifecycle. It always cleans up the cerberus session it created,
-// whatever the outcome, and never persists a passing verdict unless
-// Steward actually returned a well-formed report saying so.
-func (s *Service) RunStewardReview(ctx context.Context, opts RunOptions) (db.PlanReview, error) {
+// stewardReviewPrep is the fast, purely local half of one Steward
+// review attempt: the queued-then-started PlanReview row plus the
+// exact bounded turn (prompt, mounts) it still owes cerberus. It never
+// touches cerberus itself, so preparing it is always quick, which is
+// what lets both RunStewardReview and StartStewardReview return
+// promptly up through "running" before the (possibly slow) cerberus
+// turn is attempted.
+type stewardReviewPrep struct {
+	review db.PlanReview
+	opts   RunOptions
+	prompt string
+}
+
+// prepareReview builds the deterministic snapshot and contract-bound
+// prompt for opts.Plan and persists the review's queued -> running
+// transition, without ever calling cerberus. It is the synchronous,
+// always-fast half of a Steward review attempt shared by
+// RunStewardReview (which then runs the turn inline) and
+// StartStewardReview (which then runs it in the background).
+func (s *Service) prepareReview(ctx context.Context, opts RunOptions) (stewardReviewPrep, error) {
 	if strings.TrimSpace(opts.Model) == "" {
-		return db.PlanReview{}, fmt.Errorf("run steward review: model is required")
+		return stewardReviewPrep{}, fmt.Errorf("run steward review: model is required")
 	}
 	if opts.Timeout <= 0 {
-		return db.PlanReview{}, fmt.Errorf("run steward review: timeout is required")
+		return stewardReviewPrep{}, fmt.Errorf("run steward review: timeout is required")
 	}
 
 	contract, err := LoadContract(opts.Contract)
 	if err != nil {
-		return db.PlanReview{}, fmt.Errorf("run steward review: %w", err)
+		return stewardReviewPrep{}, fmt.Errorf("run steward review: %w", err)
 	}
 	snapshot, err := BuildSnapshot(opts.Plan, opts.Steps, opts.Feedback)
 	if err != nil {
-		return db.PlanReview{}, fmt.Errorf("run steward review: %w", err)
+		return stewardReviewPrep{}, fmt.Errorf("run steward review: %w", err)
 	}
 	promptCtx, err := BuildContext(snapshot, contract)
 	if err != nil {
-		return db.PlanReview{}, fmt.Errorf("run steward review: %w", err)
+		return stewardReviewPrep{}, fmt.Errorf("run steward review: %w", err)
 	}
 
 	session := stewardSessionName(opts.Plan.ID, snapshot.SHA256)
@@ -140,27 +161,40 @@ func (s *Service) RunStewardReview(ctx context.Context, opts RunOptions) (db.Pla
 		Session:         session,
 	})
 	if err != nil {
-		return db.PlanReview{}, fmt.Errorf("run steward review: create review: %w", err)
+		return stewardReviewPrep{}, fmt.Errorf("run steward review: create review: %w", err)
 	}
 
-	if _, err := s.store.StartPlanReview(ctx, review.ID); err != nil {
-		return db.PlanReview{}, fmt.Errorf("run steward review: start review: %w", err)
+	review, err = s.store.StartPlanReview(ctx, review.ID)
+	if err != nil {
+		return stewardReviewPrep{}, fmt.Errorf("run steward review: start review: %w", err)
 	}
+
+	return stewardReviewPrep{review: review, opts: opts, prompt: promptCtx.Prompt}, nil
+}
+
+// executeReview sends prep's single bounded cerberus turn, strictly
+// validates the final assistant message as a two-pass report, and
+// persists the review's running -> completed|failed transition. It
+// always cleans up the cerberus session it created, whatever the
+// outcome, and never persists a passing verdict unless Steward
+// actually returned a well-formed report saying so.
+func (s *Service) executeReview(ctx context.Context, prep stewardReviewPrep) (db.PlanReview, error) {
+	review, opts := prep.review, prep.opts
 
 	// From this point the session exists (or may exist) in cerberus, so
 	// it is always cleaned up, whatever the turn or validation outcome.
 	defer func() {
-		_ = s.cerb.Clean(context.Background(), session)
+		_ = s.cerb.Clean(context.Background(), review.Session)
 	}()
 
 	turnCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
 	defer cancel()
 
 	out, turnErr := s.cerb.Turn(turnCtx, cerberus.TurnInput{
-		Name:        session,
+		Name:        review.Session,
 		NoRepo:      true,
 		Model:       opts.Model,
-		Message:     promptCtx.Prompt,
+		Message:     prep.prompt,
 		ExtraMounts: BuildMountManifest(opts.Plan),
 	})
 	if turnErr != nil {
@@ -191,6 +225,71 @@ func (s *Service) RunStewardReview(ctx context.Context, opts RunOptions) (db.Pla
 		return db.PlanReview{}, fmt.Errorf("run steward review: complete review: %w", err)
 	}
 	return completed, nil
+}
+
+// RunStewardReview runs exactly one Steward review of opts.Plan
+// end-to-end and blocks until it reaches a terminal, persisted
+// queued -> running -> completed|failed outcome: it prepares the
+// review (see prepareReview) and then executes its bounded cerberus
+// turn (see executeReview) inline, in the caller's own goroutine.
+func (s *Service) RunStewardReview(ctx context.Context, opts RunOptions) (db.PlanReview, error) {
+	prep, err := s.prepareReview(ctx, opts)
+	if err != nil {
+		return db.PlanReview{}, err
+	}
+	return s.executeReview(ctx, prep)
+}
+
+// StartStewardReview creates and starts exactly one Steward review the
+// same way RunStewardReview does, then hands its bounded cerberus turn
+// to a background goroutine and returns as soon as the review has left
+// queued for running, without waiting for that turn to resolve. This
+// is what lets review creation return promptly.
+//
+// The review this returns is not an anonymous, in-memory handle: it is
+// the durable PlanReview row (keyed to the durable cerberus session
+// prepareReview named for it), so its eventual completed or failed
+// outcome is always later visible via GetPlanReview/ListPlanReviews
+// even though this call has already returned, and
+// ReconcileInterruptedReviews can always find and terminate it if the
+// goroutine executing it never gets the chance to.
+func (s *Service) StartStewardReview(ctx context.Context, opts RunOptions) (db.PlanReview, error) {
+	prep, err := s.prepareReview(ctx, opts)
+	if err != nil {
+		return db.PlanReview{}, err
+	}
+	go func() {
+		if _, err := s.executeReview(context.Background(), prep); err != nil {
+			log.Printf("steward review %d (plan %d): %v", prep.review.ID, prep.opts.Plan.ID, err)
+		}
+	}()
+	return prep.review, nil
+}
+
+// ReconcileInterruptedReviews fails every plan review still marked
+// running, on the assumption that whatever was executing it (a
+// StartStewardReview goroutine) is gone: an in-memory goroutine never
+// survives a process restart, so a review left running by one is an
+// orphan that would otherwise stay "running" forever with no terminal
+// outcome ever persisted. It should be called once at startup, before
+// any new review is started, so every review row is guaranteed to
+// reach a terminal, persisted outcome instead of depending on an
+// anonymous in-memory job surviving a restart. It returns the number
+// of reviews it failed.
+func (s *Service) ReconcileInterruptedReviews(ctx context.Context) (int, error) {
+	running, err := s.store.ListRunningPlanReviews(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("reconcile interrupted plan reviews: %w", err)
+	}
+	failed := 0
+	for _, rv := range running {
+		_ = s.cerb.Clean(ctx, rv.Session)
+		if _, err := s.store.FailPlanReview(ctx, rv.ID, "steward review was interrupted before completing (service restarted while it was running)"); err != nil {
+			return failed, fmt.Errorf("reconcile interrupted plan reviews: fail review %d: %w", rv.ID, err)
+		}
+		failed++
+	}
+	return failed, nil
 }
 
 // failReview records cause as review's terminal failure and returns
