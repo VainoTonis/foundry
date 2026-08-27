@@ -1,10 +1,16 @@
 package db
 
 import (
+	"bytes"
 	"context"
 	"testing"
 	"time"
 )
+
+// defaultPhaseFeedback is the literal jsonb default that ClearPhaseFeedback
+// resets phase_feedback to (see UpdatePhase in phases.go). phase_feedback is
+// a NOT NULL column, so clearing it yields this value rather than NULL.
+var defaultPhaseFeedback = []byte(`{"result":"","useful_context":[],"problems":[],"confidence":0}`)
 
 // TestAddPhaseCost_AccumulatesAdditively_Postgres exercises AddPhaseCost's
 // COALESCE-based additive update against real PostgreSQL: applying 0.01
@@ -198,8 +204,8 @@ func TestPhaseRetryCycle_Postgres(t *testing.T) {
 	if afterRetry.CerberusCommit != nil {
 		t.Fatalf("afterRetry.CerberusCommit = %v, want nil after retry reset", afterRetry.CerberusCommit)
 	}
-	if afterRetry.PhaseFeedback != nil {
-		t.Fatalf("afterRetry.PhaseFeedback = %v, want nil after retry reset", afterRetry.PhaseFeedback)
+	if !bytes.Equal(afterRetry.PhaseFeedback, defaultPhaseFeedback) {
+		t.Fatalf("afterRetry.PhaseFeedback = %s, want default %s after retry reset", afterRetry.PhaseFeedback, defaultPhaseFeedback)
 	}
 
 	// Read back independently to confirm the clear actually persisted
@@ -209,7 +215,7 @@ func TestPhaseRetryCycle_Postgres(t *testing.T) {
 		t.Fatalf("GetPhase() error = %v", err)
 	}
 	if reread.Status != "pending" || reread.StartedAt != nil || reread.FinishedAt != nil ||
-		reread.ReviewVerdict != nil || reread.CerberusCommit != nil || reread.PhaseFeedback != nil {
-		t.Fatalf("GetPhase() reread = %+v, want pending with started_at/finished_at/review_verdict/cerberus_commit/phase_feedback all nil", reread)
+		reread.ReviewVerdict != nil || reread.CerberusCommit != nil || !bytes.Equal(reread.PhaseFeedback, defaultPhaseFeedback) {
+		t.Fatalf("GetPhase() reread = %+v, want pending with started_at/finished_at/review_verdict/cerberus_commit nil and phase_feedback = %s", reread, defaultPhaseFeedback)
 	}
 }
