@@ -217,7 +217,7 @@ func TestResolveManagedCerberusAttribution_PhaseLaunchedSessionUnchanged_Postgre
 	}
 	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM specs WHERE id = $1`, spec.ID) })
 
-	wf, err := db.CreateWorkflow(ctx, pool, spec.ID, "default", nil)
+	wf, err := db.CreateWorkflow(ctx, pool, spec.ID, "poc", nil)
 	if err != nil {
 		t.Fatalf("CreateWorkflow() error = %v", err)
 	}
