@@ -156,7 +156,7 @@ func UpdatePhase(ctx context.Context, pool *pgxpool.Pool, id int64, p UpdatePhas
 		n++
 	}
 	if p.ClearPhaseFeedback {
-		set = append(set, "phase_feedback = NULL")
+		set = append(set, `phase_feedback = '{"result":"","useful_context":[],"problems":[],"confidence":0}'::jsonb`)
 	} else if p.PhaseFeedback != nil {
 		set = append(set, "phase_feedback = $"+itoa(n))
 		args = append(args, p.PhaseFeedback)
