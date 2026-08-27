@@ -211,7 +211,7 @@ func TestResolveManagedCerberusAttribution_PhaseLaunchedSessionUnchanged_Postgre
 	}
 	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM repositories WHERE id = $1`, repo.ID) })
 
-	spec, err := db.CreateSpec(ctx, pool, repo.ID, "spec-phase-launch", "content", nil)
+	spec, err := db.CreateSpec(ctx, pool, repo.ID, "spec-phase-launch", "content", []byte(`[]`))
 	if err != nil {
 		t.Fatalf("CreateSpec() error = %v", err)
 	}
