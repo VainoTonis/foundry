@@ -30,9 +30,9 @@ type UpdatePhaseParams struct {
 	// field above is nil). This is needed for retry resets, which must
 	// explicitly wipe the previous attempt's outcome fields rather than
 	// simply not mentioning them.
-	ClearStartedAt     bool
-	ClearFinishedAt    bool
-	ClearReviewVerdict bool
+	ClearStartedAt      bool
+	ClearFinishedAt     bool
+	ClearReviewVerdict  bool
 	ClearCerberusCommit bool
 	ClearPhaseFeedback  bool
 }
