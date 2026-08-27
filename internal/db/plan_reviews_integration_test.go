@@ -477,15 +477,15 @@ func TestPlanReviewsTableMigrationRoundTrip_Postgres(t *testing.T) {
 	ctx := context.Background()
 	m := testMigrator(t)
 
-	if err := m.Steps(-2); err != nil {
-		t.Fatalf("migrate down two steps (039, 038 down): %v", err)
+	if err := m.Migrate(37); err != nil {
+		t.Fatalf("migrate down to version 37 (039, 038 down): %v", err)
 	}
 	restored := false
 	t.Cleanup(func() {
 		if restored {
 			return
 		}
-		if err := m.Steps(2); err != nil {
+		if err := m.Migrate(39); err != nil {
 			t.Errorf("re-apply migrations 038, 039 in cleanup: %v", err)
 		}
 	})
@@ -500,8 +500,8 @@ func TestPlanReviewsTableMigrationRoundTrip_Postgres(t *testing.T) {
 		t.Fatal("plan_reviews table still exists after migrating down, want it dropped")
 	}
 
-	if err := m.Steps(2); err != nil {
-		t.Fatalf("migrate up two steps (038, 039 up): %v", err)
+	if err := m.Migrate(39); err != nil {
+		t.Fatalf("migrate up to version 39 (038, 039 up): %v", err)
 	}
 	restored = true
 
@@ -548,15 +548,15 @@ func TestPlanReviewLifecycleMigrationRoundTrip_Postgres(t *testing.T) {
 		t.Fatalf("StartPlanReview() error = %v", err)
 	}
 
-	if err := m.Steps(-1); err != nil {
-		t.Fatalf("migrate down one step (039 down): %v", err)
+	if err := m.Migrate(38); err != nil {
+		t.Fatalf("migrate down to version 38 (039 down): %v", err)
 	}
 	restored := false
 	t.Cleanup(func() {
 		if restored {
 			return
 		}
-		if err := m.Steps(1); err != nil {
+		if err := m.Migrate(39); err != nil {
 			t.Errorf("re-apply migration 039 in cleanup: %v", err)
 		}
 	})
@@ -587,8 +587,8 @@ func TestPlanReviewLifecycleMigrationRoundTrip_Postgres(t *testing.T) {
 		}
 	}
 
-	if err := m.Steps(1); err != nil {
-		t.Fatalf("migrate up one step (039 up): %v", err)
+	if err := m.Migrate(39); err != nil {
+		t.Fatalf("migrate up to version 39 (039 up): %v", err)
 	}
 	restored = true
 

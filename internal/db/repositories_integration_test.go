@@ -428,8 +428,8 @@ func TestCerberusSessionLookup_Postgres(t *testing.T) {
 		session := "cerberus-lookup-local-session"
 		var phaseID int64
 		row := pool.QueryRow(ctx,
-			`INSERT INTO phases (workflow_id, position, name, goal, status, cerberus_session)
-			 VALUES ($1, 1, 'phase-1', 'goal', 'done', $2) RETURNING id`,
+			`INSERT INTO phases (workflow_id, position, name, goal, status, cerberus_session, started_at, finished_at, review_verdict, cerberus_commit)
+			 VALUES ($1, 1, 'phase-1', 'goal', 'done', $2, now(), now(), 'pass', 'deadbeef') RETURNING id`,
 			wf.ID, session,
 		)
 		if err := row.Scan(&phaseID); err != nil {

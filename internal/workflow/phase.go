@@ -140,7 +140,6 @@ loop:
 		diff = ""
 	}
 
-	now3 := time.Now()
 	verdict := "pass"
 	notes := "cerberus produced changes"
 	if strings.TrimSpace(diff) == "" {
@@ -159,7 +158,6 @@ loop:
 		FilesTouched:   filesJSON,
 		PhaseFeedback:  phaseFeedback,
 		CerberusCommit: &commitHash,
-		FinishedAt:     &now3,
 	})
 
 	if verdict == "pass" {
@@ -179,8 +177,9 @@ loop:
 					failVerdict := "fail"
 					notes := err.Error()
 					feedback := buildPhaseFeedback(failVerdict, notes, filesJSON, commitHash)
+					finishedAt := time.Now()
 					_, _ = db.UpdatePhase(context.Background(), r.pool, phase.ID, db.UpdatePhaseParams{
-						Status: &failed, ReviewVerdict: &failVerdict, ReviewNotes: &notes, PhaseFeedback: feedback,
+						Status: &failed, ReviewVerdict: &failVerdict, ReviewNotes: &notes, PhaseFeedback: feedback, FinishedAt: &finishedAt,
 					})
 					r.publishPhaseUpdate(wf.ID, phase.ID, failed)
 					return err
@@ -193,17 +192,20 @@ loop:
 				failVerdict := "fail"
 				cherryErr := fmt.Sprintf("cherry-pick %s failed: %v - %s", commitHash, err, strings.TrimSpace(string(out)))
 				phaseFeedback = buildPhaseFeedback(failVerdict, cherryErr, filesJSON, commitHash)
+				finishedAt := time.Now()
 				_, _ = db.UpdatePhase(ctx, r.pool, phase.ID, db.UpdatePhaseParams{
 					Status:        &failStatus,
 					ReviewVerdict: &failVerdict,
 					ReviewNotes:   &cherryErr,
 					PhaseFeedback: phaseFeedback,
+					FinishedAt:    &finishedAt,
 				})
 				r.publishPhaseUpdate(wf.ID, phase.ID, "failed")
 				return fmt.Errorf("phase %d cherry-pick: %w", phase.ID, err)
 			}
 			doneStatus := "done"
-			_, _ = db.UpdatePhase(ctx, r.pool, phase.ID, db.UpdatePhaseParams{Status: &doneStatus})
+			finishedAt := time.Now()
+			_, _ = db.UpdatePhase(ctx, r.pool, phase.ID, db.UpdatePhaseParams{Status: &doneStatus, FinishedAt: &finishedAt})
 			r.publishPhaseUpdate(wf.ID, phase.ID, "done")
 			return nil
 		}
@@ -211,7 +213,8 @@ loop:
 
 	if isRetry || phase.RetryCount >= 1 {
 		failStatus := "failed"
-		_, _ = db.UpdatePhase(ctx, r.pool, phase.ID, db.UpdatePhaseParams{Status: &failStatus})
+		finishedAt := time.Now()
+		_, _ = db.UpdatePhase(ctx, r.pool, phase.ID, db.UpdatePhaseParams{Status: &failStatus, FinishedAt: &finishedAt})
 		r.publishPhaseUpdate(wf.ID, phase.ID, "failed")
 		return fmt.Errorf("phase %d failed after retry", phase.ID)
 	}
@@ -219,9 +222,14 @@ loop:
 	adjusted := prompt + "\n\n[Previous attempt produced no changes. Try again.]"
 	newRetry := phase.RetryCount + 1
 	_, _ = db.UpdatePhase(ctx, r.pool, phase.ID, db.UpdatePhaseParams{
-		AdjustedPrompt: &adjusted,
-		RetryCount:     &newRetry,
-		Status:         strPtr("pending"),
+		AdjustedPrompt:      &adjusted,
+		RetryCount:          &newRetry,
+		Status:              strPtr("pending"),
+		ClearStartedAt:      true,
+		ClearFinishedAt:     true,
+		ClearReviewVerdict:  true,
+		ClearCerberusCommit: true,
+		ClearPhaseFeedback:  true,
 	})
 
 	phase2, err := db.GetPhase(ctx, r.pool, phase.ID)
