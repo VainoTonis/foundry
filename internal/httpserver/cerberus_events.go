@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,6 +14,33 @@ import (
 	"github.com/tonis2/foundry/internal/db"
 	"github.com/tonis2/foundry/internal/telemetry"
 )
+
+// stewardSessionNamePrefix is the fixed prefix used by
+// internal/review.stewardSessionName when naming a Cerberus session
+// launched for a Steward plan review: "foundry-steward-<planID>-<fingerprint>-<timestamp>".
+const stewardSessionNamePrefix = "foundry-steward-"
+
+// stewardSessionPlanID defensively parses the plan id out of a Cerberus
+// session name following the Steward naming convention
+// (foundry-steward-<planID>-<fingerprint>-<timestamp>). It returns
+// ok=false, never panicking or guessing, if session does not have the
+// expected prefix, does not have enough '-'-separated segments, or the
+// planID segment is not a valid non-negative integer.
+func stewardSessionPlanID(session string) (planID int64, ok bool) {
+	if !strings.HasPrefix(session, stewardSessionNamePrefix) {
+		return 0, false
+	}
+	rest := strings.TrimPrefix(session, stewardSessionNamePrefix)
+	parts := strings.Split(rest, "-")
+	if len(parts) < 3 {
+		return 0, false
+	}
+	id, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || id <= 0 {
+		return 0, false
+	}
+	return id, true
+}
 
 const cerberusTextFlushBytes = 3 * 1024
 
@@ -541,12 +569,52 @@ func (s *Server) ingestCerberusTelemetryWith(ctx context.Context, raw []byte, ev
 	if !ok {
 		return
 	}
+	phaseAttributed := false
 	if tev.Type == telemetry.EventSessionStart {
 		if attribution, ok := s.resolveManagedCerberusAttribution(ctx, evt.Session); ok {
 			tev.Attribution = applyManagedCerberusAttribution(tev.Attribution, attribution)
+			phaseAttributed = true
 		}
 	}
 	if err := ingest(ctx, s.pool, tev); err != nil && !errors.Is(err, telemetry.ErrDuplicateEvent) {
 		log.Printf("cerberus telemetry ingest: %v", err)
+	}
+	if tev.Type == telemetry.EventSessionStart && !phaseAttributed {
+		s.linkStewardSessionToPlan(ctx, evt.Session)
+	}
+}
+
+// linkStewardSessionToPlan records a system_derived session_plan_links
+// row for session if, and only if, session's name follows the Steward
+// naming convention (foundry-steward-<planID>-<fingerprint>-<timestamp>)
+// used by internal/review.stewardSessionName. It is only meaningful to
+// call for session-start events, and only when the session was not
+// already resolved as a phase-launched session by
+// resolveManagedCerberusAttribution, so a Steward review session never
+// gets misattributed to a phase and a phase-launched session is never
+// double-linked. A malformed or non-numeric plan id segment is ignored
+// (logged, never treated as an error and never guessed at); any
+// resulting session_plan_links insert failure (e.g. the parsed plan id
+// does not name a real plan) is likewise logged and swallowed, since
+// this is a best-effort attribution that must never affect event
+// ingest.
+func (s *Server) linkStewardSessionToPlan(ctx context.Context, session string) {
+	planID, ok := stewardSessionPlanID(session)
+	if !ok {
+		return
+	}
+	agentSession, err := db.GetAgentSessionBySession(ctx, s.pool, session)
+	if err != nil {
+		if !errors.Is(err, db.ErrNotFound) {
+			log.Printf("link steward session %q to plan %d: get agent session: %v", session, planID, err)
+		}
+		return
+	}
+	if _, err := db.CreateSessionPlanLink(ctx, s.pool, db.CreateSessionPlanLinkParams{
+		AgentSessionID: agentSession.ID,
+		PlanID:         planID,
+		Method:         db.SessionPlanLinkMethodSystemDerived,
+	}); err != nil {
+		log.Printf("link steward session %q to plan %d: %v", session, planID, err)
 	}
 }
