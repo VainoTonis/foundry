@@ -24,6 +24,17 @@ type UpdatePhaseParams struct {
 	FilesTouched      []byte
 	PhaseFeedback     []byte
 	RetryCount        *int
+
+	// Clear* flags force the corresponding column to NULL, distinct from
+	// leaving the field untouched (the default when the matching pointer
+	// field above is nil). This is needed for retry resets, which must
+	// explicitly wipe the previous attempt's outcome fields rather than
+	// simply not mentioning them.
+	ClearStartedAt     bool
+	ClearFinishedAt    bool
+	ClearReviewVerdict bool
+	ClearCerberusCommit bool
+	ClearPhaseFeedback  bool
 }
 
 func CreatePhase(ctx context.Context, pool *pgxpool.Pool, workflowID int64, position int, name, goal string, timeoutSeconds int) (Phase, error) {
@@ -101,31 +112,39 @@ func UpdatePhase(ctx context.Context, pool *pgxpool.Pool, id int64, p UpdatePhas
 	set := []string{}
 	args := []any{}
 	n := 1
-	maybeStr := func(field string, v *string) {
+	maybeStr := func(field string, v *string, clear bool) {
+		if clear {
+			set = append(set, field+" = NULL")
+			return
+		}
 		if v != nil {
 			set = append(set, field+" = $"+itoa(n))
 			args = append(args, *v)
 			n++
 		}
 	}
-	maybeTime := func(field string, v *time.Time) {
+	maybeTime := func(field string, v *time.Time, clear bool) {
+		if clear {
+			set = append(set, field+" = NULL")
+			return
+		}
 		if v != nil {
 			set = append(set, field+" = $"+itoa(n))
 			args = append(args, *v)
 			n++
 		}
 	}
-	maybeStr("status", p.Status)
-	maybeStr("prompt_sent", p.PromptSent)
-	maybeStr("cerberus_session", p.CerberusSession)
-	maybeStr("cerberus_commit", p.CerberusCommit)
-	maybeStr("review_verdict", p.ReviewVerdict)
-	maybeStr("review_notes", p.ReviewNotes)
-	maybeStr("adjusted_prompt", p.AdjustedPrompt)
-	maybeStr("decision_summary", p.DecisionSummary)
-	maybeStr("decision_rationale", p.DecisionRationale)
-	maybeTime("started_at", p.StartedAt)
-	maybeTime("finished_at", p.FinishedAt)
+	maybeStr("status", p.Status, false)
+	maybeStr("prompt_sent", p.PromptSent, false)
+	maybeStr("cerberus_session", p.CerberusSession, false)
+	maybeStr("cerberus_commit", p.CerberusCommit, p.ClearCerberusCommit)
+	maybeStr("review_verdict", p.ReviewVerdict, p.ClearReviewVerdict)
+	maybeStr("review_notes", p.ReviewNotes, false)
+	maybeStr("adjusted_prompt", p.AdjustedPrompt, false)
+	maybeStr("decision_summary", p.DecisionSummary, false)
+	maybeStr("decision_rationale", p.DecisionRationale, false)
+	maybeTime("started_at", p.StartedAt, p.ClearStartedAt)
+	maybeTime("finished_at", p.FinishedAt, p.ClearFinishedAt)
 	if p.CostUSD != nil {
 		set = append(set, "cost_usd = $"+itoa(n))
 		args = append(args, *p.CostUSD)
@@ -136,7 +155,9 @@ func UpdatePhase(ctx context.Context, pool *pgxpool.Pool, id int64, p UpdatePhas
 		args = append(args, p.FilesTouched)
 		n++
 	}
-	if p.PhaseFeedback != nil {
+	if p.ClearPhaseFeedback {
+		set = append(set, "phase_feedback = NULL")
+	} else if p.PhaseFeedback != nil {
 		set = append(set, "phase_feedback = $"+itoa(n))
 		args = append(args, p.PhaseFeedback)
 		n++

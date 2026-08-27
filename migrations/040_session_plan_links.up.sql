@@ -130,22 +130,23 @@ CREATE TRIGGER plan_steps_set_updated_at
     BEFORE UPDATE ON plan_steps
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
--- 6. phases_lifecycle_check mirrors plan_reviews_lifecycle_check (see
--- migrations/039_plan_review_lifecycle.up.sql): each status implies a
--- specific, self-describing shape for the timestamp/verdict/commit
--- columns that accompany it, so a half-finished row can never be
--- committed. pending phases have not started; running and
--- awaiting_review phases have started but have no finished_at or verdict
--- yet (awaiting_review differs only in that a session has produced a
--- commit awaiting decision, and is not further constrained here); done
--- phases must have started, finished, and been reviewed as a pass; failed
--- phases must have finished_at set, but may or may not have started or
--- produced a commit, since failure can occur either before the session
--- ever started or after an unfavorable review.
+-- 6. phases_lifecycle_check only constrains the two truly terminal
+-- statuses. It does NOT mirror plan_reviews_lifecycle_check's per-status
+-- shape for every status: the actual write path in
+-- internal/workflow/phase.go records review outcome fields (finished_at,
+-- review_verdict, cerberus_commit) in an UpdatePhase call that happens
+-- before a later, separate UpdatePhase call that sets the terminal
+-- status, so a valid row can legitimately sit at status='awaiting_review'
+-- with finished_at already set. Likewise, status='pending' is reused when
+-- a phase is reset for a retry, and the prior attempt's started_at is not
+-- guaranteed to be cleared, so a legitimately-retrying pending row can
+-- have started_at set. pending, running, and awaiting_review are
+-- therefore left unconstrained on started_at/finished_at/review_verdict/
+-- cerberus_commit; only the terminal statuses done and failed impose a
+-- shape: done phases must have started, finished, and been reviewed as a
+-- pass with a commit recorded; failed phases must have finished_at set.
 ALTER TABLE phases ADD CONSTRAINT phases_lifecycle_check CHECK (
-    (status = 'pending'          AND started_at IS NULL     AND finished_at IS NULL     AND review_verdict IS NULL AND cerberus_commit IS NULL) OR
-    (status = 'running'          AND started_at IS NOT NULL AND finished_at IS NULL     AND review_verdict IS NULL) OR
-    (status = 'awaiting_review'  AND started_at IS NOT NULL AND finished_at IS NULL     AND review_verdict IS NULL) OR
+    (status IN ('pending', 'running', 'awaiting_review')) OR
     (status = 'done'             AND started_at IS NOT NULL AND finished_at IS NOT NULL AND review_verdict = 'pass' AND cerberus_commit IS NOT NULL) OR
     (status = 'failed'           AND finished_at IS NOT NULL)
 ) NOT VALID;
