@@ -674,6 +674,18 @@ func (s *Server) linkStewardSessionToPlan(ctx context.Context, session string) {
 // could otherwise be mistaken for one that was never linked at all. It
 // is best-effort: a failure here must never block server startup. It
 // returns the number of links it created.
+//
+// A per-row failure (e.g. SessionPlanLinkExists erroring, or
+// CreateSessionPlanLink failing because the parsed plan id no longer
+// names a real plan) is logged and the loop continues on to the next
+// session, rather than aborting the whole pass: this scans every
+// Steward-named session in the database in one go, so one bad row must
+// never prevent every other, otherwise-reconcilable session from being
+// repaired in the same pass. Consistent with linkStewardSessionToPlan
+// (which never returns an error at all, only logs), this function
+// returns nil once the scan completes, even if individual rows failed;
+// the per-row log lines are the record of any such failures, and the
+// returned count already only reflects links actually created.
 func (s *Server) ReconcileStewardSessionPlanLinks(ctx context.Context) (int, error) {
 	sessions, err := db.ListAgentSessionsByNamePrefix(ctx, s.pool, stewardSessionNamePrefix)
 	if err != nil {
@@ -687,7 +699,8 @@ func (s *Server) ReconcileStewardSessionPlanLinks(ctx context.Context) (int, err
 		}
 		exists, err := db.SessionPlanLinkExists(ctx, s.pool, agentSession.ID, planID, db.SessionPlanLinkMethodSystemDerived)
 		if err != nil {
-			return fixed, fmt.Errorf("reconcile steward session plan links: check session %q: %w", agentSession.Session, err)
+			log.Printf("reconcile steward session plan links: check session %q: %v", agentSession.Session, err)
+			continue
 		}
 		if exists {
 			continue
@@ -697,7 +710,8 @@ func (s *Server) ReconcileStewardSessionPlanLinks(ctx context.Context) (int, err
 			PlanID:         planID,
 			Method:         db.SessionPlanLinkMethodSystemDerived,
 		}); err != nil {
-			return fixed, fmt.Errorf("reconcile steward session plan links: link session %q to plan %d: %w", agentSession.Session, planID, err)
+			log.Printf("reconcile steward session plan links: link session %q to plan %d: %v", agentSession.Session, planID, err)
+			continue
 		}
 		fixed++
 	}

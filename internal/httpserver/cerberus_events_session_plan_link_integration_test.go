@@ -112,6 +112,8 @@ func TestIngestCerberusTelemetryWith_StewardSessionLinksToPlan_Postgres(t *testi
 	plan := createTestPlanForSessionLinkEvents(t, pool, "steward-ok")
 	session := fmt.Sprintf("foundry-steward-%d-abcdef123456-%d", plan.ID, time.Now().UnixNano())
 
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM agent_sessions WHERE session = $1`, session) })
+
 	raw := sessionStartEventJSON(session, "src-"+session)
 	evt := compactCerberusEvent{Type: "session_start", Session: session}
 	s.ingestCerberusTelemetryWith(ctx, raw, evt, telemetry.Ingest)
@@ -157,6 +159,8 @@ func TestIngestCerberusTelemetryWith_MalformedStewardSessionNameIgnored_Postgres
 
 	for _, session := range cases {
 		t.Run(session, func(t *testing.T) {
+			t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM agent_sessions WHERE session = $1`, session) })
+
 			raw := sessionStartEventJSON(session, "src-"+session)
 			evt := compactCerberusEvent{Type: "session_start", Session: session}
 
@@ -208,6 +212,7 @@ func TestReconcileStewardSessionPlanLinks_CreatesMissingLink_Postgres(t *testing
 	if err != nil {
 		t.Fatalf("EnsureAgentSession() error = %v", err)
 	}
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM agent_sessions WHERE id = $1`, agentSession.ID) })
 
 	n, err := s.ReconcileStewardSessionPlanLinks(ctx)
 	if err != nil {
@@ -251,6 +256,7 @@ func TestReconcileStewardSessionPlanLinks_ExistingLinkNotDuplicated_Postgres(t *
 	if err != nil {
 		t.Fatalf("EnsureAgentSession() error = %v", err)
 	}
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM agent_sessions WHERE id = $1`, agentSession.ID) })
 
 	if _, err := db.CreateSessionPlanLink(ctx, pool, db.CreateSessionPlanLinkParams{
 		AgentSessionID: agentSession.ID,
@@ -295,6 +301,7 @@ func TestReconcileStewardSessionPlanLinks_MalformedNameSkipped_Postgres(t *testi
 	}); err != nil {
 		t.Fatalf("EnsureAgentSession() error = %v", err)
 	}
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM agent_sessions WHERE session = $1`, session) })
 
 	if _, err := s.ReconcileStewardSessionPlanLinks(ctx); err != nil {
 		t.Fatalf("ReconcileStewardSessionPlanLinks() error = %v, want nil", err)
