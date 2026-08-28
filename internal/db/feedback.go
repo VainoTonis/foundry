@@ -11,7 +11,7 @@ import (
 )
 
 const feedbackColumns = `id, body, model, session_id, processed, dimension, target, score, tags,
-	evidence, impact, recommended_action, owner, status, created_at, scope_status`
+	evidence, impact, recommended_action, owner, status, created_at, scope_status, agent_session_id`
 
 func scanFeedback(row interface {
 	Scan(dest ...interface{}) error
@@ -19,7 +19,7 @@ func scanFeedback(row interface {
 	var f Feedback
 	var body, model, sessionID *string
 	err := row.Scan(&f.ID, &body, &model, &sessionID, &f.Processed, &f.Dimension, &f.Target, &f.Score, &f.Tags,
-		&f.Evidence, &f.Impact, &f.RecommendedAction, &f.Owner, &f.Status, &f.CreatedAt, &f.ScopeStatus)
+		&f.Evidence, &f.Impact, &f.RecommendedAction, &f.Owner, &f.Status, &f.CreatedAt, &f.ScopeStatus, &f.AgentSessionID)
 	if body != nil {
 		f.Body = *body
 	}
@@ -30,6 +30,26 @@ func scanFeedback(row interface {
 		f.SessionID = *sessionID
 	}
 	return f, err
+}
+
+// lookupAgentSessionIDBySourceSessionID resolves sessionID to the id of the
+// matching agent_sessions row (by source_session_id), for best-effort
+// attribution of a feedback row to the agent session it was submitted
+// from. It returns nil, nil (never an error) when sessionID is empty or
+// does not match any agent_sessions row, so callers can always proceed
+// with feedback creation regardless of the lookup outcome.
+func lookupAgentSessionIDBySourceSessionID(ctx context.Context, q querier, sessionID string) (*int64, error) {
+	if sessionID == "" {
+		return nil, nil
+	}
+	s, err := GetAgentSessionBySourceSessionID(ctx, q, sessionID)
+	if errors.Is(err, ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &s.ID, nil
 }
 
 // loadFeedbackRepositories returns the (unordered) repository membership
@@ -138,9 +158,14 @@ func CreateFeedback(ctx context.Context, pool *pgxpool.Pool, body, model, sessio
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
+	agentSessionID, err := lookupAgentSessionIDBySourceSessionID(ctx, tx, sessionID)
+	if err != nil {
+		return Feedback{}, err
+	}
+
 	f, err := scanFeedback(tx.QueryRow(ctx,
-		`INSERT INTO feedback (body, model, session_id, scope_status) VALUES ($1, $2, $3, 'linked') RETURNING `+feedbackColumns,
-		body, model, sessionID,
+		`INSERT INTO feedback (body, model, session_id, scope_status, agent_session_id) VALUES ($1, $2, $3, 'linked', $4) RETURNING `+feedbackColumns,
+		body, model, sessionID, agentSessionID,
 	))
 	if err != nil {
 		return Feedback{}, err
@@ -200,13 +225,18 @@ func CreateStructuredFeedback(ctx context.Context, pool *pgxpool.Pool, in Struct
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
+	agentSessionID, err := lookupAgentSessionIDBySourceSessionID(ctx, tx, in.SessionID)
+	if err != nil {
+		return Feedback{}, err
+	}
+
 	f, err := scanFeedback(tx.QueryRow(ctx,
-		`INSERT INTO feedback (body, model, session_id, dimension, target, score, tags, evidence, impact, recommended_action, owner, status, scope_status)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'linked')
+		`INSERT INTO feedback (body, model, session_id, dimension, target, score, tags, evidence, impact, recommended_action, owner, status, scope_status, agent_session_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'linked', $13)
 		 RETURNING `+feedbackColumns,
 		in.Body, nullableString(in.Model), nullableString(in.SessionID), nullableString(in.Dimension), nullableString(in.Target),
 		nullableInt(in.Score), in.Tags, nullableString(in.Evidence), nullableString(in.Impact),
-		nullableString(in.RecommendedAction), nullableString(in.Owner), status,
+		nullableString(in.RecommendedAction), nullableString(in.Owner), status, agentSessionID,
 	))
 	if err != nil {
 		return Feedback{}, err
