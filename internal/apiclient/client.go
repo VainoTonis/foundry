@@ -96,6 +96,20 @@ type PlanReview struct {
 	CompletedAt         *time.Time      `json:"completed_at,omitempty"`
 }
 
+// SessionPlanLink represents an attribution of an agent session to a
+// plan (and optionally a specific plan step), as returned by the
+// plan/session attachment endpoint.
+type SessionPlanLink struct {
+	ID             int64     `json:"id"`
+	AgentSessionID int64     `json:"agent_session_id"`
+	PlanID         int64     `json:"plan_id"`
+	PlanStepID     *int64    `json:"plan_step_id,omitempty"`
+	Method         string    `json:"method"`
+	Confidence     *float64  `json:"confidence,omitempty"`
+	Note           *string   `json:"note,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
 // ---- Constructor ----
 
 // NewClient creates a new API client with the given base URL.
