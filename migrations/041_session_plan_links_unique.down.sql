@@ -1,0 +1,2 @@
+DROP INDEX IF EXISTS session_plan_links_step_level_unique_idx;
+DROP INDEX IF EXISTS session_plan_links_plan_level_unique_idx;

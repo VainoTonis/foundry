@@ -102,6 +102,102 @@ func TestSessionPlanLinks_CompositeStepFK_Postgres(t *testing.T) {
 	})
 }
 
+// TestCreateSessionPlanLink_IdempotentPlanLevel_Postgres verifies that
+// calling CreateSessionPlanLink twice with the identical
+// (agent_session_id, plan_id, method) tuple at plan level (PlanStepID
+// nil) returns the same row both times, with no error and without
+// creating a second, duplicate row -- exercising the
+// session_plan_links_plan_level_unique_idx partial unique index added
+// in migration 041 and CreateSessionPlanLink's ON CONFLICT DO UPDATE
+// handling for it.
+func TestCreateSessionPlanLink_IdempotentPlanLevel_Postgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+
+	session := createTestSessionPlanLinksSession(t, pool, "idempotent-plan-level")
+	plan := createTestPlanForSessionLinks(t, pool, "idempotent-plan-level")
+
+	params := CreateSessionPlanLinkParams{
+		AgentSessionID: session.ID,
+		PlanID:         plan.ID,
+		Method:         SessionPlanLinkMethodSystemDerived,
+	}
+
+	first, err := CreateSessionPlanLink(ctx, pool, params)
+	if err != nil {
+		t.Fatalf("CreateSessionPlanLink() first call error = %v", err)
+	}
+
+	second, err := CreateSessionPlanLink(ctx, pool, params)
+	if err != nil {
+		t.Fatalf("CreateSessionPlanLink() second call error = %v", err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("second.ID = %d, want %d (same row as first call)", second.ID, first.ID)
+	}
+
+	var count int
+	if err := pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM session_plan_links WHERE agent_session_id = $1 AND plan_id = $2 AND method = $3`,
+		session.ID, plan.ID, SessionPlanLinkMethodSystemDerived,
+	).Scan(&count); err != nil {
+		t.Fatalf("count session_plan_links: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("count session_plan_links rows = %d, want 1", count)
+	}
+}
+
+// TestCreateSessionPlanLink_IdempotentStepLevel_Postgres is the
+// step-level counterpart of
+// TestCreateSessionPlanLink_IdempotentPlanLevel_Postgres: calling
+// CreateSessionPlanLink twice with the identical
+// (agent_session_id, plan_id, plan_step_id, method) tuple must return
+// the same row both times, exercising
+// session_plan_links_step_level_unique_idx.
+func TestCreateSessionPlanLink_IdempotentStepLevel_Postgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+
+	session := createTestSessionPlanLinksSession(t, pool, "idempotent-step-level")
+	plan := createTestPlanForSessionLinks(t, pool, "idempotent-step-level")
+	step, err := CreatePlanStep(ctx, pool, plan.ID, 0, "step", nil)
+	if err != nil {
+		t.Fatalf("CreatePlanStep() error = %v", err)
+	}
+
+	params := CreateSessionPlanLinkParams{
+		AgentSessionID: session.ID,
+		PlanID:         plan.ID,
+		PlanStepID:     &step.ID,
+		Method:         SessionPlanLinkMethodExplicit,
+	}
+
+	first, err := CreateSessionPlanLink(ctx, pool, params)
+	if err != nil {
+		t.Fatalf("CreateSessionPlanLink() first call error = %v", err)
+	}
+
+	second, err := CreateSessionPlanLink(ctx, pool, params)
+	if err != nil {
+		t.Fatalf("CreateSessionPlanLink() second call error = %v", err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("second.ID = %d, want %d (same row as first call)", second.ID, first.ID)
+	}
+
+	var count int
+	if err := pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM session_plan_links WHERE agent_session_id = $1 AND plan_id = $2 AND plan_step_id = $3 AND method = $4`,
+		session.ID, plan.ID, step.ID, SessionPlanLinkMethodExplicit,
+	).Scan(&count); err != nil {
+		t.Fatalf("count session_plan_links: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("count session_plan_links rows = %d, want 1", count)
+	}
+}
+
 // TestSessionPlanLinks_StepDeleteSetsNull_Postgres verifies the
 // column-specific ON DELETE SET NULL (plan_step_id) behavior: deleting
 // the referenced plan_steps row must leave the session_plan_links row in

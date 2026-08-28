@@ -188,6 +188,131 @@ func TestIngestCerberusTelemetryWith_MalformedStewardSessionNameIgnored_Postgres
 	}
 }
 
+// TestReconcileStewardSessionPlanLinks_CreatesMissingLink_Postgres
+// verifies that ReconcileStewardSessionPlanLinks creates exactly one
+// system_derived session_plan_links row for a Steward-named
+// agent_sessions row that names a valid plan and has no existing link.
+func TestReconcileStewardSessionPlanLinks_CreatesMissingLink_Postgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	s := &Server{pool: pool}
+
+	plan := createTestPlanForSessionLinkEvents(t, pool, "reconcile-missing")
+	session := fmt.Sprintf("foundry-steward-%d-abcdef123456-%d", plan.ID, time.Now().UnixNano())
+
+	agentSession, err := db.EnsureAgentSession(ctx, pool, db.EnsureAgentSessionParams{
+		Session:         session,
+		SourceSessionID: "src-" + session,
+		Origin:          "cerberus",
+	})
+	if err != nil {
+		t.Fatalf("EnsureAgentSession() error = %v", err)
+	}
+
+	n, err := s.ReconcileStewardSessionPlanLinks(ctx)
+	if err != nil {
+		t.Fatalf("ReconcileStewardSessionPlanLinks() error = %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("ReconcileStewardSessionPlanLinks() n = %d, want 1", n)
+	}
+
+	links, err := db.ListSessionPlanLinksByPlan(ctx, pool, plan.ID)
+	if err != nil {
+		t.Fatalf("ListSessionPlanLinksByPlan() error = %v", err)
+	}
+	if len(links) != 1 {
+		t.Fatalf("len(links) = %d, want 1 (links=%+v)", len(links), links)
+	}
+	if links[0].AgentSessionID != agentSession.ID {
+		t.Fatalf("links[0].AgentSessionID = %d, want %d", links[0].AgentSessionID, agentSession.ID)
+	}
+	if links[0].Method != db.SessionPlanLinkMethodSystemDerived {
+		t.Fatalf("links[0].Method = %q, want %q", links[0].Method, db.SessionPlanLinkMethodSystemDerived)
+	}
+}
+
+// TestReconcileStewardSessionPlanLinks_ExistingLinkNotDuplicated_Postgres
+// verifies that ReconcileStewardSessionPlanLinks does not create a
+// second link for a Steward-named session that is already linked.
+func TestReconcileStewardSessionPlanLinks_ExistingLinkNotDuplicated_Postgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	s := &Server{pool: pool}
+
+	plan := createTestPlanForSessionLinkEvents(t, pool, "reconcile-existing")
+	session := fmt.Sprintf("foundry-steward-%d-abcdef123456-%d", plan.ID, time.Now().UnixNano())
+
+	agentSession, err := db.EnsureAgentSession(ctx, pool, db.EnsureAgentSessionParams{
+		Session:         session,
+		SourceSessionID: "src-" + session,
+		Origin:          "cerberus",
+	})
+	if err != nil {
+		t.Fatalf("EnsureAgentSession() error = %v", err)
+	}
+
+	if _, err := db.CreateSessionPlanLink(ctx, pool, db.CreateSessionPlanLinkParams{
+		AgentSessionID: agentSession.ID,
+		PlanID:         plan.ID,
+		Method:         db.SessionPlanLinkMethodSystemDerived,
+	}); err != nil {
+		t.Fatalf("CreateSessionPlanLink() error = %v", err)
+	}
+
+	n, err := s.ReconcileStewardSessionPlanLinks(ctx)
+	if err != nil {
+		t.Fatalf("ReconcileStewardSessionPlanLinks() error = %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("ReconcileStewardSessionPlanLinks() n = %d, want 0 (already linked)", n)
+	}
+
+	links, err := db.ListSessionPlanLinksByPlan(ctx, pool, plan.ID)
+	if err != nil {
+		t.Fatalf("ListSessionPlanLinksByPlan() error = %v", err)
+	}
+	if len(links) != 1 {
+		t.Fatalf("len(links) = %d, want 1 (links=%+v)", len(links), links)
+	}
+}
+
+// TestReconcileStewardSessionPlanLinks_MalformedNameSkipped_Postgres
+// verifies that a Steward-style session name with a malformed plan id
+// segment is skipped without error, matching the same defensive
+// behavior already required of the live-linking path
+// (stewardSessionPlanID).
+func TestReconcileStewardSessionPlanLinks_MalformedNameSkipped_Postgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	s := &Server{pool: pool}
+
+	session := fmt.Sprintf("foundry-steward-notanumber-abcdef123456-%d", time.Now().UnixNano())
+	if _, err := db.EnsureAgentSession(ctx, pool, db.EnsureAgentSessionParams{
+		Session:         session,
+		SourceSessionID: "src-" + session,
+		Origin:          "cerberus",
+	}); err != nil {
+		t.Fatalf("EnsureAgentSession() error = %v", err)
+	}
+
+	if _, err := s.ReconcileStewardSessionPlanLinks(ctx); err != nil {
+		t.Fatalf("ReconcileStewardSessionPlanLinks() error = %v, want nil", err)
+	}
+
+	var n int
+	if err := pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM session_plan_links l
+		 JOIN agent_sessions a ON a.id = l.agent_session_id
+		 WHERE a.session = $1`, session,
+	).Scan(&n); err != nil {
+		t.Fatalf("count session_plan_links: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("session_plan_links rows for malformed session %q = %d, want 0", session, n)
+	}
+}
+
 // TestResolveManagedCerberusAttribution_PhaseLaunchedSessionUnchanged_Postgres
 // is a regression test guarding that a phase-launched session's
 // attribution (resolved live via the phases table lookup) is unaffected

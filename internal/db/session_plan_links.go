@@ -58,17 +58,45 @@ type CreateSessionPlanLinkParams struct {
 // p.Method is empty, or if the referenced agent session, plan, or plan
 // step does not exist (in which case the returned error wraps
 // ErrNotFound).
+//
+// It is idempotent against the two partial unique indexes added by
+// migration 041 (one covering plan-level links, where plan_step_id IS
+// NULL, and one covering step-level links, where plan_step_id IS NOT
+// NULL): a repeated call with the same
+// (agent_session_id, plan_id, plan_step_id, method) tuple conflicts on
+// whichever of those two indexes applies and, via ON CONFLICT ... DO
+// UPDATE, returns the existing row rather than erroring or creating a
+// duplicate. DO NOTHING is deliberately not used here: combined with
+// RETURNING it would return zero rows on a conflict, but every caller of
+// this function expects exactly one row back. The DO UPDATE clause has
+// nothing that actually needs to change on conflict, so it sets
+// created_at to its own existing value purely so the statement succeeds
+// and RETURNING yields the pre-existing row.
 func CreateSessionPlanLink(ctx context.Context, pool querier, p CreateSessionPlanLinkParams) (SessionPlanLink, error) {
 	if p.Method == "" {
 		return SessionPlanLink{}, fmt.Errorf("create session plan link: method is required")
 	}
 
-	row := pool.QueryRow(ctx,
-		`INSERT INTO session_plan_links (agent_session_id, plan_id, plan_step_id, method, confidence, note)
-		 VALUES ($1, $2, $3, $4, $5, $6)
-		 RETURNING `+sessionPlanLinkSelectColumns,
-		p.AgentSessionID, p.PlanID, p.PlanStepID, p.Method, p.Confidence, p.Note,
-	)
+	var row pgx.Row
+	if p.PlanStepID == nil {
+		row = pool.QueryRow(ctx,
+			`INSERT INTO session_plan_links (agent_session_id, plan_id, plan_step_id, method, confidence, note)
+			 VALUES ($1, $2, $3, $4, $5, $6)
+			 ON CONFLICT (agent_session_id, plan_id, method) WHERE plan_step_id IS NULL
+			 DO UPDATE SET created_at = session_plan_links.created_at
+			 RETURNING `+sessionPlanLinkSelectColumns,
+			p.AgentSessionID, p.PlanID, p.PlanStepID, p.Method, p.Confidence, p.Note,
+		)
+	} else {
+		row = pool.QueryRow(ctx,
+			`INSERT INTO session_plan_links (agent_session_id, plan_id, plan_step_id, method, confidence, note)
+			 VALUES ($1, $2, $3, $4, $5, $6)
+			 ON CONFLICT (agent_session_id, plan_id, plan_step_id, method) WHERE plan_step_id IS NOT NULL
+			 DO UPDATE SET created_at = session_plan_links.created_at
+			 RETURNING `+sessionPlanLinkSelectColumns,
+			p.AgentSessionID, p.PlanID, p.PlanStepID, p.Method, p.Confidence, p.Note,
+		)
+	}
 	l, err := scanSessionPlanLink(row)
 	if err != nil {
 		if isForeignKeyViolation(err) {
@@ -77,6 +105,22 @@ func CreateSessionPlanLink(ctx context.Context, pool querier, p CreateSessionPla
 		return SessionPlanLink{}, err
 	}
 	return l, nil
+}
+
+// SessionPlanLinkExists reports whether a session_plan_links row already
+// links agentSessionID to planID via method, regardless of plan_step_id.
+// It is used by reconciliation passes that must not create a duplicate
+// link for a session that is already linked.
+func SessionPlanLinkExists(ctx context.Context, pool querier, agentSessionID, planID int64, method string) (bool, error) {
+	var exists bool
+	err := pool.QueryRow(ctx,
+		`SELECT EXISTS (
+			SELECT 1 FROM session_plan_links
+			WHERE agent_session_id = $1 AND plan_id = $2 AND method = $3
+		 )`,
+		agentSessionID, planID, method,
+	).Scan(&exists)
+	return exists, err
 }
 
 // ListSessionPlanLinksByPlan returns every session_plan_links row for

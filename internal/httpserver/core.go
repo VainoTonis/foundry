@@ -79,6 +79,15 @@ func NewServer(pool *pgxpool.Pool, runner *workflow.Runner, cerb *cerberus.Clien
 	} else if n > 0 {
 		log.Printf("reconciled %d interrupted plan review(s) as failed", n)
 	}
+	// Repair any Steward review session left unlinked from its plan by a
+	// crash or transient failure between the agent_sessions insert and the
+	// session_plan_links insert (see ReconcileStewardSessionPlanLinks).
+	// Best-effort: a failure here must not block server startup.
+	if n, err := s.ReconcileStewardSessionPlanLinks(context.Background()); err != nil {
+		log.Printf("reconcile steward session plan links: %v", err)
+	} else if n > 0 {
+		log.Printf("reconciled %d steward session plan link(s)", n)
+	}
 	s.chatSvc = chat.NewService(pool, cerb, s.callbackURL(), func() string {
 		_, profile := s.runtimeSettings()
 		return profile
