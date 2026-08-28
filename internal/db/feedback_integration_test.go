@@ -301,3 +301,166 @@ func TestListFeedbackFiltered_RepositoryID_Postgres(t *testing.T) {
 		t.Fatalf("ListFeedbackFiltered(repositoryID=%d) did not include feedback %d linked to it", repoA.ID, linkedToA.ID)
 	}
 }
+
+// TestCreateFeedback_AgentSessionID_Postgres verifies that CreateFeedback
+// and CreateStructuredFeedback resolve agent_session_id from sessionID by
+// looking up agent_sessions.source_session_id, and that a missing or
+// non-matching sessionID leaves agent_session_id NULL without ever
+// failing feedback creation.
+func TestCreateFeedback_AgentSessionID_Postgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+
+	getFeedbackAgentSessionID := func(t *testing.T, id int64) *int64 {
+		t.Helper()
+		var agentSessionID *int64
+		if err := pool.QueryRow(ctx, `SELECT agent_session_id FROM feedback WHERE id = $1`, id).Scan(&agentSessionID); err != nil {
+			t.Fatalf("select agent_session_id for feedback %d: %v", id, err)
+		}
+		return agentSessionID
+	}
+
+	t.Run("CreateFeedback with matching sessionID sets agent_session_id", func(t *testing.T) {
+		repo := createTestFeedbackRepo(t, pool, "agent-session-match")
+		sourceSessionID := "feedback-agent-session-match-src"
+		session := createTestAgentSession(t, pool, EnsureAgentSessionParams{
+			Session:         "feedback-agent-session-match-sess",
+			SourceSessionID: sourceSessionID,
+			Origin:          "test",
+		})
+
+		body := "feedback-agent-session-match"
+		created, err := CreateFeedback(ctx, pool, body, "model", sourceSessionID, []int64{repo.ID})
+		if err != nil {
+			t.Fatalf("CreateFeedback() error = %v", err)
+		}
+		t.Cleanup(func() { deleteTestFeedback(t, pool, created.ID) })
+
+		if created.AgentSessionID == nil || *created.AgentSessionID != session.ID {
+			t.Fatalf("CreateFeedback().AgentSessionID = %v, want %d", created.AgentSessionID, session.ID)
+		}
+		if got := getFeedbackAgentSessionID(t, created.ID); got == nil || *got != session.ID {
+			t.Fatalf("feedback.agent_session_id in db = %v, want %d", got, session.ID)
+		}
+	})
+
+	t.Run("CreateFeedback with empty sessionID succeeds with NULL agent_session_id", func(t *testing.T) {
+		repo := createTestFeedbackRepo(t, pool, "agent-session-empty")
+
+		body := "feedback-agent-session-empty"
+		created, err := CreateFeedback(ctx, pool, body, "model", "", []int64{repo.ID})
+		if err != nil {
+			t.Fatalf("CreateFeedback() error = %v", err)
+		}
+		t.Cleanup(func() { deleteTestFeedback(t, pool, created.ID) })
+
+		if created.AgentSessionID != nil {
+			t.Fatalf("CreateFeedback().AgentSessionID = %v, want nil", created.AgentSessionID)
+		}
+		if got := getFeedbackAgentSessionID(t, created.ID); got != nil {
+			t.Fatalf("feedback.agent_session_id in db = %v, want NULL", got)
+		}
+	})
+
+	t.Run("CreateFeedback with non-matching sessionID succeeds with NULL agent_session_id", func(t *testing.T) {
+		repo := createTestFeedbackRepo(t, pool, "agent-session-no-match")
+
+		body := "feedback-agent-session-no-match"
+		created, err := CreateFeedback(ctx, pool, body, "model", "no-such-source-session-id", []int64{repo.ID})
+		if err != nil {
+			t.Fatalf("CreateFeedback() error = %v", err)
+		}
+		t.Cleanup(func() { deleteTestFeedback(t, pool, created.ID) })
+
+		if created.AgentSessionID != nil {
+			t.Fatalf("CreateFeedback().AgentSessionID = %v, want nil", created.AgentSessionID)
+		}
+		if got := getFeedbackAgentSessionID(t, created.ID); got != nil {
+			t.Fatalf("feedback.agent_session_id in db = %v, want NULL", got)
+		}
+	})
+
+	t.Run("CreateStructuredFeedback with matching sessionID sets agent_session_id", func(t *testing.T) {
+		repo := createTestFeedbackRepo(t, pool, "agent-session-structured-match")
+		sourceSessionID := "feedback-agent-session-structured-match-src"
+		session := createTestAgentSession(t, pool, EnsureAgentSessionParams{
+			Session:         "feedback-agent-session-structured-match-sess",
+			SourceSessionID: sourceSessionID,
+			Origin:          "test",
+		})
+
+		body := "structured-feedback-agent-session-match"
+		in := StructuredFeedbackInput{
+			Body:      body,
+			Model:     "model",
+			SessionID: sourceSessionID,
+			Dimension: "prompt_quality",
+			Target:    "orchestrator_prompt",
+			Score:     3,
+		}
+		created, err := CreateStructuredFeedback(ctx, pool, in, []int64{repo.ID})
+		if err != nil {
+			t.Fatalf("CreateStructuredFeedback() error = %v", err)
+		}
+		t.Cleanup(func() { deleteTestFeedback(t, pool, created.ID) })
+
+		if created.AgentSessionID == nil || *created.AgentSessionID != session.ID {
+			t.Fatalf("CreateStructuredFeedback().AgentSessionID = %v, want %d", created.AgentSessionID, session.ID)
+		}
+		if got := getFeedbackAgentSessionID(t, created.ID); got == nil || *got != session.ID {
+			t.Fatalf("feedback.agent_session_id in db = %v, want %d", got, session.ID)
+		}
+	})
+
+	t.Run("CreateStructuredFeedback with empty sessionID succeeds with NULL agent_session_id", func(t *testing.T) {
+		repo := createTestFeedbackRepo(t, pool, "agent-session-structured-empty")
+
+		body := "structured-feedback-agent-session-empty"
+		in := StructuredFeedbackInput{
+			Body:      body,
+			Model:     "model",
+			SessionID: "",
+			Dimension: "prompt_quality",
+			Target:    "orchestrator_prompt",
+			Score:     3,
+		}
+		created, err := CreateStructuredFeedback(ctx, pool, in, []int64{repo.ID})
+		if err != nil {
+			t.Fatalf("CreateStructuredFeedback() error = %v", err)
+		}
+		t.Cleanup(func() { deleteTestFeedback(t, pool, created.ID) })
+
+		if created.AgentSessionID != nil {
+			t.Fatalf("CreateStructuredFeedback().AgentSessionID = %v, want nil", created.AgentSessionID)
+		}
+		if got := getFeedbackAgentSessionID(t, created.ID); got != nil {
+			t.Fatalf("feedback.agent_session_id in db = %v, want NULL", got)
+		}
+	})
+
+	t.Run("CreateStructuredFeedback with non-matching sessionID succeeds with NULL agent_session_id", func(t *testing.T) {
+		repo := createTestFeedbackRepo(t, pool, "agent-session-structured-no-match")
+
+		body := "structured-feedback-agent-session-no-match"
+		in := StructuredFeedbackInput{
+			Body:      body,
+			Model:     "model",
+			SessionID: "no-such-source-session-id-structured",
+			Dimension: "prompt_quality",
+			Target:    "orchestrator_prompt",
+			Score:     3,
+		}
+		created, err := CreateStructuredFeedback(ctx, pool, in, []int64{repo.ID})
+		if err != nil {
+			t.Fatalf("CreateStructuredFeedback() error = %v", err)
+		}
+		t.Cleanup(func() { deleteTestFeedback(t, pool, created.ID) })
+
+		if created.AgentSessionID != nil {
+			t.Fatalf("CreateStructuredFeedback().AgentSessionID = %v, want nil", created.AgentSessionID)
+		}
+		if got := getFeedbackAgentSessionID(t, created.ID); got != nil {
+			t.Fatalf("feedback.agent_session_id in db = %v, want NULL", got)
+		}
+	})
+}

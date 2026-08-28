@@ -158,6 +158,45 @@ func GetAgentSessionBySession(ctx context.Context, pool querier, session string)
 	return scanAgentSession(row)
 }
 
+// ListAgentSessionsByNamePrefix returns every agent_sessions row whose
+// session name starts with prefix, ordered by id. It is used by
+// startup-time reconciliation passes (e.g. re-linking Steward review
+// sessions to their plan) that need to scan for sessions matching a
+// known naming convention rather than looking one up by exact name.
+func ListAgentSessionsByNamePrefix(ctx context.Context, pool querier, prefix string) ([]AgentSession, error) {
+	rows, err := pool.Query(ctx,
+		`SELECT `+agentSessionSelectColumns+` FROM agent_sessions WHERE session LIKE $1 ORDER BY id`,
+		prefix+"%",
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AgentSession
+	for rows.Next() {
+		s, err := scanAgentSession(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// GetAgentSessionBySourceSessionID looks up an agent session by its
+// producer-assigned source_session_id, as opposed to GetAgentSessionBySession
+// which keys on the internal display session name. It returns ErrNotFound
+// when no such source_session_id has been recorded yet -- an expected,
+// normal outcome when a child session's session_start event arrives before
+// its parent's, not an error condition.
+func GetAgentSessionBySourceSessionID(ctx context.Context, pool querier, sourceSessionID string) (AgentSession, error) {
+	row := pool.QueryRow(ctx,
+		`SELECT `+agentSessionSelectColumns+` FROM agent_sessions WHERE source_session_id = $1`,
+		sourceSessionID,
+	)
+	return scanAgentSession(row)
+}
+
 func AllocateAgentSessionSeq(ctx context.Context, pool querier, agentSessionID int64) (int64, error) {
 	var seq int64
 	err := pool.QueryRow(ctx,

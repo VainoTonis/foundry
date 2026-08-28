@@ -228,6 +228,7 @@ type Feedback struct {
 	CreatedAt         time.Time            `json:"created_at"`
 	Repositories      []FeedbackRepository `json:"repositories,omitempty"`
 	ScopeStatus       string               `json:"scope_status"`
+	AgentSessionID    *int64               `json:"agent_session_id,omitempty"`
 }
 
 type AgentSession struct {

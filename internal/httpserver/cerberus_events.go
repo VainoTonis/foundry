@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,6 +14,33 @@ import (
 	"github.com/tonis2/foundry/internal/db"
 	"github.com/tonis2/foundry/internal/telemetry"
 )
+
+// stewardSessionNamePrefix is the fixed prefix used by
+// internal/review.stewardSessionName when naming a Cerberus session
+// launched for a Steward plan review: "foundry-steward-<planID>-<fingerprint>-<timestamp>".
+const stewardSessionNamePrefix = "foundry-steward-"
+
+// stewardSessionPlanID defensively parses the plan id out of a Cerberus
+// session name following the Steward naming convention
+// (foundry-steward-<planID>-<fingerprint>-<timestamp>). It returns
+// ok=false, never panicking or guessing, if session does not have the
+// expected prefix, does not have enough '-'-separated segments, or the
+// planID segment is not a valid non-negative integer.
+func stewardSessionPlanID(session string) (planID int64, ok bool) {
+	if !strings.HasPrefix(session, stewardSessionNamePrefix) {
+		return 0, false
+	}
+	rest := strings.TrimPrefix(session, stewardSessionNamePrefix)
+	parts := strings.Split(rest, "-")
+	if len(parts) < 3 {
+		return 0, false
+	}
+	id, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || id <= 0 {
+		return 0, false
+	}
+	return id, true
+}
 
 const cerberusTextFlushBytes = 3 * 1024
 
@@ -505,6 +533,31 @@ func applyManagedCerberusAttribution(current, managed telemetry.Attribution) tel
 	return current
 }
 
+// cerberusPiParentSessionPrefix identifies the one parent_session shape this
+// code resolves to a parent_source_session_id: a literal "pi:" prefix
+// followed by the parent's source_session_id. This matches the scope of the
+// migration 040 backfill exactly; any other shape (raw paths, empty, etc.)
+// is left unresolved.
+const cerberusPiParentSessionPrefix = "pi:"
+
+// resolveCerberusParentSourceSessionID resolves a session_start event's
+// parent_session field to the parent's source_session_id, when possible. It
+// only attempts resolution for the "pi:<source_session_id>" shape, and only
+// returns a non-nil value when an agent_sessions row already exists for that
+// source_session_id. A parent that has not been recorded yet is an expected,
+// normal race given event ordering -- not an error -- so this never blocks
+// or retries; it simply leaves the value unresolved for now.
+func resolveCerberusParentSourceSessionID(ctx context.Context, pool *pgxpool.Pool, parentSession string) *string {
+	sourceSessionID, ok := strings.CutPrefix(parentSession, cerberusPiParentSessionPrefix)
+	if !ok || sourceSessionID == "" {
+		return nil
+	}
+	if _, err := db.GetAgentSessionBySourceSessionID(ctx, pool, sourceSessionID); err != nil {
+		return nil
+	}
+	return &sourceSessionID
+}
+
 func managedMessageEndCostDecision(phaseID int64, phaseErr error, costUSD float64) (int64, float64, bool) {
 	if phaseErr != nil {
 		return 0, 0, false
@@ -541,12 +594,126 @@ func (s *Server) ingestCerberusTelemetryWith(ctx context.Context, raw []byte, ev
 	if !ok {
 		return
 	}
+	phaseAttributed := false
 	if tev.Type == telemetry.EventSessionStart {
 		if attribution, ok := s.resolveManagedCerberusAttribution(ctx, evt.Session); ok {
 			tev.Attribution = applyManagedCerberusAttribution(tev.Attribution, attribution)
+			phaseAttributed = true
 		}
+		tev.Session.ParentSourceSessionID = resolveCerberusParentSourceSessionID(ctx, s.pool, fields.ParentSession)
 	}
-	if err := ingest(ctx, s.pool, tev); err != nil && !errors.Is(err, telemetry.ErrDuplicateEvent) {
-		log.Printf("cerberus telemetry ingest: %v", err)
+	ingestErr := ingest(ctx, s.pool, tev)
+	if ingestErr != nil && !errors.Is(ingestErr, telemetry.ErrDuplicateEvent) {
+		log.Printf("cerberus telemetry ingest: %v", ingestErr)
 	}
+	// A redelivered session_start callback surfaces here as
+	// ErrDuplicateEvent; skipping linkStewardSessionToPlan in that case is
+	// a cheap optimization to avoid unnecessary work on a known-duplicate
+	// delivery, not the source of correctness -- the partial unique
+	// indexes added in migration 041 (enforced via CreateSessionPlanLink's
+	// ON CONFLICT handling) are what actually guarantee no duplicate
+	// session_plan_links row is ever created, including for duplicates
+	// this check does not catch (e.g. any other repeated call).
+	if tev.Type == telemetry.EventSessionStart && !phaseAttributed && !errors.Is(ingestErr, telemetry.ErrDuplicateEvent) {
+		s.linkStewardSessionToPlan(ctx, evt.Session)
+	}
+}
+
+// linkStewardSessionToPlan records a system_derived session_plan_links
+// row for session if, and only if, session's name follows the Steward
+// naming convention (foundry-steward-<planID>-<fingerprint>-<timestamp>)
+// used by internal/review.stewardSessionName. It is only meaningful to
+// call for session-start events, and only when the session was not
+// already resolved as a phase-launched session by
+// resolveManagedCerberusAttribution, so a Steward review session never
+// gets misattributed to a phase and a phase-launched session is never
+// double-linked. A malformed or non-numeric plan id segment is ignored
+// (logged, never treated as an error and never guessed at); any
+// resulting session_plan_links insert failure (e.g. the parsed plan id
+// does not name a real plan) is likewise logged and swallowed, since
+// this is a best-effort attribution that must never affect event
+// ingest.
+func (s *Server) linkStewardSessionToPlan(ctx context.Context, session string) {
+	planID, ok := stewardSessionPlanID(session)
+	if !ok {
+		return
+	}
+	agentSession, err := db.GetAgentSessionBySession(ctx, s.pool, session)
+	if err != nil {
+		if !errors.Is(err, db.ErrNotFound) {
+			log.Printf("link steward session %q to plan %d: get agent session: %v", session, planID, err)
+		}
+		return
+	}
+	if _, err := db.CreateSessionPlanLink(ctx, s.pool, db.CreateSessionPlanLinkParams{
+		AgentSessionID: agentSession.ID,
+		PlanID:         planID,
+		Method:         db.SessionPlanLinkMethodSystemDerived,
+	}); err != nil {
+		log.Printf("link steward session %q to plan %d: %v", session, planID, err)
+	}
+}
+
+// ReconcileStewardSessionPlanLinks is a best-effort startup reconciliation
+// pass for the same session_plan_links attribution that
+// linkStewardSessionToPlan performs inline, on every session_start event.
+// The agent_sessions insert (in telemetry.Ingest's own transaction) and
+// the session_plan_links insert (a separate, later call in
+// ingestCerberusTelemetryWith) are not atomic: a process crash or
+// transient database failure between the two leaves a valid Steward
+// review session permanently unlinked, since linkStewardSessionToPlan
+// only logs its errors and never retries. This function repairs that by
+// scanning every agent_sessions row whose name follows the Steward
+// naming convention (reusing stewardSessionPlanID to parse the plan id,
+// so the two code paths can never disagree on what counts as a Steward
+// session name) and creating the missing system_derived link for any
+// such session that does not already have one.
+//
+// It should be called once at startup, before any new telemetry is
+// ingested, so a session orphaned by a prior crash is repaired before it
+// could otherwise be mistaken for one that was never linked at all. It
+// is best-effort: a failure here must never block server startup. It
+// returns the number of links it created.
+//
+// A per-row failure (e.g. SessionPlanLinkExists erroring, or
+// CreateSessionPlanLink failing because the parsed plan id no longer
+// names a real plan) is logged and the loop continues on to the next
+// session, rather than aborting the whole pass: this scans every
+// Steward-named session in the database in one go, so one bad row must
+// never prevent every other, otherwise-reconcilable session from being
+// repaired in the same pass. Consistent with linkStewardSessionToPlan
+// (which never returns an error at all, only logs), this function
+// returns nil once the scan completes, even if individual rows failed;
+// the per-row log lines are the record of any such failures, and the
+// returned count already only reflects links actually created.
+func (s *Server) ReconcileStewardSessionPlanLinks(ctx context.Context) (int, error) {
+	sessions, err := db.ListAgentSessionsByNamePrefix(ctx, s.pool, stewardSessionNamePrefix)
+	if err != nil {
+		return 0, fmt.Errorf("reconcile steward session plan links: %w", err)
+	}
+	fixed := 0
+	for _, agentSession := range sessions {
+		planID, ok := stewardSessionPlanID(agentSession.Session)
+		if !ok {
+			continue
+		}
+		exists, err := db.SessionPlanLinkExists(ctx, s.pool, agentSession.ID, planID, db.SessionPlanLinkMethodSystemDerived)
+		if err != nil {
+			log.Printf("reconcile steward session plan links: check session %q: %v", agentSession.Session, err)
+			continue
+		}
+		if exists {
+			continue
+		}
+		if _, err := db.CreateSessionPlanLink(ctx, s.pool, db.CreateSessionPlanLinkParams{
+			AgentSessionID: agentSession.ID,
+			PlanID:         planID,
+			Method:         db.SessionPlanLinkMethodSystemDerived,
+		}); err != nil {
+			log.Printf("reconcile steward session plan links: link session %q to plan %d: %v", agentSession.Session, planID, err)
+			continue
+		}
+		fixed++
+	}
+	return fixed, nil
 }

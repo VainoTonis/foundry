@@ -421,6 +421,70 @@ func (h *Handler) runPlanReviewWarnings(ctx context.Context, plan db.Plan) []pla
 	return planReviewWarnings(reviews, hash, hashErr)
 }
 
+// attachSessionToPlan explicitly attributes an externally-launched agent
+// session (one Foundry itself never started, so there is no session-start
+// event to derive attribution from) to planID, and optionally to one of
+// its steps, recording the link with method "explicit". The session is
+// identified by its agent_sessions.session display name rather than the
+// internal agent_sessions.id, since a caller attaching an external
+// session has no reason to know the latter.
+func (h *Handler) attachSessionToPlan(w http.ResponseWriter, r *http.Request, planID int64) {
+	var body struct {
+		Session    string   `json:"session"`
+		PlanStepID *int64   `json:"plan_step_id"`
+		Confidence *float64 `json:"confidence"`
+		Note       *string  `json:"note"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonErr(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(body.Session) == "" {
+		jsonErr(w, "session is required", http.StatusBadRequest)
+		return
+	}
+
+	session, err := db.GetAgentSessionBySession(r.Context(), h.pool, body.Session)
+	if errors.Is(err, db.ErrNotFound) {
+		jsonErr(w, "session not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		jsonErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if _, err := db.GetPlan(r.Context(), h.pool, planID); errors.Is(err, db.ErrNotFound) {
+		jsonErr(w, "plan not found", http.StatusNotFound)
+		return
+	} else if err != nil {
+		jsonErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	link, err := db.CreateSessionPlanLink(r.Context(), h.pool, db.CreateSessionPlanLinkParams{
+		AgentSessionID: session.ID,
+		PlanID:         planID,
+		PlanStepID:     body.PlanStepID,
+		Method:         db.SessionPlanLinkMethodExplicit,
+		Confidence:     body.Confidence,
+		Note:           body.Note,
+	})
+	if errors.Is(err, db.ErrNotFound) {
+		// Plan and session were already confirmed to exist above, so the
+		// only remaining way CreateSessionPlanLink can hit the composite
+		// FK is a plan_step_id that does not belong to planID: the
+		// caller's mistake, not a server error.
+		jsonErr(w, "plan_step_id does not belong to this plan", http.StatusBadRequest)
+		return
+	}
+	if err != nil {
+		jsonErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonOK(w, link, http.StatusCreated)
+}
+
 func (h *Handler) HandlePlan(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/plans/")
 	parts := strings.SplitN(path, "/", 2)
@@ -474,6 +538,8 @@ func (h *Handler) HandlePlan(w http.ResponseWriter, r *http.Request) {
 		jsonOK(w, p, http.StatusOK)
 	case suffix == "run" && r.Method == http.MethodPost:
 		h.runPlan(w, r, id)
+	case suffix == "sessions" && r.Method == http.MethodPost:
+		h.attachSessionToPlan(w, r, id)
 	case suffix == "steps" && r.Method == http.MethodGet:
 		steps, err := db.ListPlanSteps(r.Context(), h.pool, id)
 		if err != nil {
