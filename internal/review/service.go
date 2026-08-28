@@ -103,6 +103,13 @@ type RunOptions struct {
 	Steps    []db.PlanStep
 	Feedback []db.Feedback
 	Contract ContractSource
+	// SessionAttribution is an informational summary of how many agent
+	// sessions are currently linked to Plan, rendered as its own prompt
+	// section but never folded into the fingerprinted plan snapshot: see
+	// SessionAttributionSummary in snapshot.go. It is the caller's
+	// responsibility to look this up; a zero-value summary just renders
+	// as "no sessions linked".
+	SessionAttribution SessionAttributionSummary
 	// Model is the configured economical review model. Required.
 	Model string
 	// Timeout bounds the single cerberus turn this review sends.
@@ -147,7 +154,7 @@ func (s *Service) prepareReview(ctx context.Context, opts RunOptions) (stewardRe
 	if err != nil {
 		return stewardReviewPrep{}, fmt.Errorf("run steward review: %w", err)
 	}
-	promptCtx, err := BuildContext(snapshot, contract)
+	promptCtx, err := BuildContext(snapshot, contract, opts.SessionAttribution)
 	if err != nil {
 		return stewardReviewPrep{}, fmt.Errorf("run steward review: %w", err)
 	}

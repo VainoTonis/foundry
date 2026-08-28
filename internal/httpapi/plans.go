@@ -33,6 +33,25 @@ type planReviewView struct {
 	Stale bool `json:"stale"`
 }
 
+// summarizeSessionAttribution reduces links -- one row per session
+// currently attributed to the plan being reviewed -- to a minimal-
+// disclosure count and per-method breakdown, never exposing any
+// individual session's name or id. See review.SessionAttributionSummary
+// for why this is passed to a review as informational-only, never as
+// part of its fingerprinted content.
+func summarizeSessionAttribution(links []db.SessionPlanLink) review.SessionAttributionSummary {
+	summary := review.SessionAttributionSummary{Total: len(links)}
+	if len(links) == 0 {
+		return summary
+	}
+	byMethod := make(map[string]int)
+	for _, l := range links {
+		byMethod[l.Method]++
+	}
+	summary.ByMethod = byMethod
+	return summary
+}
+
 // currentPlanSnapshotHash recomputes the exact snapshot fingerprint
 // RunStewardReview would compute for plan right now, from its current
 // steps and open feedback, so a stored review's input hash can be
@@ -217,13 +236,20 @@ func (h *Handler) createPlanReview(w http.ResponseWriter, r *http.Request, planI
 		return
 	}
 
+	links, err := db.ListSessionPlanLinksByPlan(r.Context(), h.pool, planID)
+	if err != nil {
+		jsonErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	result, err := h.reviewRunner.StartStewardReview(r.Context(), review.RunOptions{
-		Plan:     plan,
-		Steps:    steps,
-		Feedback: feedback,
-		Contract: h.reviewContract,
-		Model:    h.reviewModel,
-		Timeout:  h.reviewTimeout,
+		Plan:               plan,
+		Steps:              steps,
+		Feedback:           feedback,
+		Contract:           h.reviewContract,
+		SessionAttribution: summarizeSessionAttribution(links),
+		Model:              h.reviewModel,
+		Timeout:            h.reviewTimeout,
 	})
 	if err != nil {
 		jsonErr(w, err.Error(), http.StatusBadGateway)
@@ -399,6 +425,16 @@ func (h *Handler) runPlan(w http.ResponseWriter, r *http.Request, id int64) {
 	jsonOK(w, runPlanResult{Workflow: wf, ReviewWarnings: warnings}, http.StatusCreated)
 }
 
+// planWithLinkedSessions is the GET /api/plans/{id} response: the plan
+// itself plus how many session_plan_links rows reference it, so a caller
+// can tell whether any session has ever been attributed to this plan
+// without fetching full session details (which would bloat this response
+// for no benefit here).
+type planWithLinkedSessions struct {
+	db.Plan
+	LinkedSessions int `json:"linked_sessions"`
+}
+
 // runPlanResult is runPlan's response: the created workflow plus any
 // advisory Steward review warnings, so a caller sees both without the
 // workflow's own JSON shape changing.
@@ -509,7 +545,12 @@ func (h *Handler) HandlePlan(w http.ResponseWriter, r *http.Request) {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		jsonOK(w, p, http.StatusOK)
+		links, err := db.ListSessionPlanLinksByPlan(r.Context(), h.pool, id)
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonOK(w, planWithLinkedSessions{Plan: p, LinkedSessions: len(links)}, http.StatusOK)
 	case suffix == "" && r.Method == http.MethodPatch:
 		var body struct {
 			Status        *string  `json:"status"`

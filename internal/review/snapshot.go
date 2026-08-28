@@ -98,6 +98,23 @@ type FeedbackSnapshot struct {
 	Repositories []int `json:"repositories,omitempty"`
 }
 
+// SessionAttributionSummary is a minimal-disclosure summary of how many
+// agent sessions are currently linked to a plan under review, broken
+// down by session_plan_links.method (see migration
+// 040_session_plan_links.up.sql for the exact, closed set of methods).
+// It deliberately carries only counts -- never session names, ids, or
+// any other identifying detail -- and it is NOT part of PlanSnapshot: it
+// reflects session attribution activity, not plan content, so it must
+// never affect Snapshot.SHA256 or make an otherwise-still-valid review
+// look stale. See buildPrompt's session attribution section in
+// context.go for how it is rendered.
+type SessionAttributionSummary struct {
+	Total int `json:"total"`
+	// ByMethod is keyed by one of db.SessionPlanLinkMethod* and holds
+	// only methods with at least one linked session.
+	ByMethod map[string]int `json:"by_method,omitempty"`
+}
+
 // PlanSnapshot is the exact, canonical content a review reads and is
 // fingerprinted against.
 type PlanSnapshot struct {

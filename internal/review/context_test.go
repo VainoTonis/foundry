@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/tonis2/foundry/internal/db"
 )
 
 func testContract() Contract {
@@ -27,7 +29,7 @@ func TestBuildContext_Validation(t *testing.T) {
 		{"empty contract content", snap, Contract{Version: "v1"}},
 	}
 	for _, c := range cases {
-		if _, err := BuildContext(c.snapshot, c.contract); err == nil {
+		if _, err := BuildContext(c.snapshot, c.contract, SessionAttributionSummary{}); err == nil {
 			t.Errorf("%s: BuildContext() error = nil, want error", c.name)
 		}
 	}
@@ -40,11 +42,11 @@ func TestBuildContext_PromptDeterministicSeparatesPassesAndReportsStrictly(t *te
 		t.Fatalf("BuildSnapshot() error = %v", err)
 	}
 
-	a, err := BuildContext(snap, testContract())
+	a, err := BuildContext(snap, testContract(), SessionAttributionSummary{})
 	if err != nil {
 		t.Fatalf("BuildContext() error = %v", err)
 	}
-	b, err := BuildContext(snap, testContract())
+	b, err := BuildContext(snap, testContract(), SessionAttributionSummary{})
 	if err != nil {
 		t.Fatalf("BuildContext() error = %v", err)
 	}
@@ -101,7 +103,7 @@ func TestBuildContext_ContractFingerprintOfExactBytes(t *testing.T) {
 		t.Fatalf("BuildSnapshot() error = %v", err)
 	}
 	contract := testContract()
-	ctx, err := BuildContext(snap, contract)
+	ctx, err := BuildContext(snap, contract, SessionAttributionSummary{})
 	if err != nil {
 		t.Fatalf("BuildContext() error = %v", err)
 	}
@@ -112,12 +114,103 @@ func TestBuildContext_ContractFingerprintOfExactBytes(t *testing.T) {
 
 	altered := contract
 	altered.Content += " "
-	altCtx, err := BuildContext(snap, altered)
+	altCtx, err := BuildContext(snap, altered, SessionAttributionSummary{})
 	if err != nil {
 		t.Fatalf("BuildContext() error = %v", err)
 	}
 	if strings.Contains(altCtx.Prompt, "sha256:"+want) {
 		t.Fatalf("BuildContext() contract fingerprint did not change with altered content")
+	}
+}
+
+// TestBuildContext_SessionAttributionNeverAffectsSnapshotFingerprint is
+// the core invariant this whole feature depends on: session attribution
+// is informational only, so two BuildContext calls with the identical
+// Snapshot and Contract but different SessionAttributionSummary values
+// must render different prompt text while leaving Snapshot.SHA256 (and
+// the raw snapshot JSON) byte-identical. If this ever regresses, an
+// existing, otherwise-still-valid review could incorrectly be reported
+// stale purely because a new session got attributed to the plan.
+func TestBuildContext_SessionAttributionNeverAffectsSnapshotFingerprint(t *testing.T) {
+	snap, err := BuildSnapshot(testPlan(t), testSteps(), nil)
+	if err != nil {
+		t.Fatalf("BuildSnapshot() error = %v", err)
+	}
+	contract := testContract()
+
+	empty, err := BuildContext(snap, contract, SessionAttributionSummary{})
+	if err != nil {
+		t.Fatalf("BuildContext() error = %v", err)
+	}
+	nonEmpty, err := BuildContext(snap, contract, SessionAttributionSummary{
+		Total: 5,
+		ByMethod: map[string]int{
+			db.SessionPlanLinkMethodSystemDerived: 3,
+			db.SessionPlanLinkMethodExplicit:      2,
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildContext() error = %v", err)
+	}
+
+	if empty.Snapshot.SHA256 != nonEmpty.Snapshot.SHA256 {
+		t.Fatalf("BuildContext() snapshot fingerprint changed with session attribution: %q vs %q",
+			empty.Snapshot.SHA256, nonEmpty.Snapshot.SHA256)
+	}
+	if string(empty.Snapshot.JSON) != string(nonEmpty.Snapshot.JSON) {
+		t.Fatalf("BuildContext() snapshot JSON changed with session attribution")
+	}
+	if empty.Prompt == nonEmpty.Prompt {
+		t.Fatalf("BuildContext() prompt did not change with different session attribution")
+	}
+}
+
+// TestBuildContext_SessionAttributionSectionRendering verifies both the
+// populated and the empty/zero rendering of the session attribution
+// section, and that the section is clearly marked informational and
+// distinct from the plan snapshot's own fingerprinted content.
+func TestBuildContext_SessionAttributionSectionRendering(t *testing.T) {
+	snap, err := BuildSnapshot(testPlan(t), nil, nil)
+	if err != nil {
+		t.Fatalf("BuildSnapshot() error = %v", err)
+	}
+	contract := testContract()
+
+	populated, err := BuildContext(snap, contract, SessionAttributionSummary{
+		Total: 4,
+		ByMethod: map[string]int{
+			db.SessionPlanLinkMethodSystemDerived: 2,
+			db.SessionPlanLinkMethodExplicit:      1,
+			db.SessionPlanLinkMethodAPIInferred:   1,
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildContext() error = %v", err)
+	}
+	if !strings.Contains(populated.Prompt, "## Session attribution (informational; not part of the reviewed content or its fingerprint)") {
+		t.Fatalf("BuildContext() prompt missing session attribution section header")
+	}
+	if !strings.Contains(populated.Prompt, "4 agent session(s)") {
+		t.Fatalf("BuildContext() prompt missing session attribution total")
+	}
+	for _, want := range []string{"system_derived: 2", "explicit: 1", "api_inferred: 1"} {
+		if !strings.Contains(populated.Prompt, want) {
+			t.Fatalf("BuildContext() prompt missing session attribution breakdown %q", want)
+		}
+	}
+	if strings.Contains(populated.Prompt, "heuristic") {
+		t.Fatalf("BuildContext() prompt lists a method with zero linked sessions")
+	}
+
+	empty, err := BuildContext(snap, contract, SessionAttributionSummary{})
+	if err != nil {
+		t.Fatalf("BuildContext() error = %v", err)
+	}
+	if !strings.Contains(empty.Prompt, "No agent sessions are currently linked to this plan.") {
+		t.Fatalf("BuildContext() prompt missing zero-session rendering")
+	}
+	if strings.Contains(empty.Prompt, "agent session(s) are currently linked") {
+		t.Fatalf("BuildContext() zero-session prompt unexpectedly rendered a non-zero breakdown")
 	}
 }
 

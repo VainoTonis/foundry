@@ -50,6 +50,10 @@ type Plan struct {
 	Status       string           `json:"status"`
 	CreatedAt    time.Time        `json:"created_at"`
 	UpdatedAt    time.Time        `json:"updated_at"`
+	// LinkedSessions is how many session_plan_links rows reference this
+	// plan, as returned by GET /api/plans/{id}. It is 0 (the zero value)
+	// on responses from endpoints that do not populate it.
+	LinkedSessions int `json:"linked_sessions"`
 }
 
 // PlanStep represents a single step in a plan.

@@ -151,7 +151,18 @@ var getCmd = &cobra.Command{
 		if err := client.Get("/api/plans/"+id+"/steps", &steps); err != nil {
 			return fmt.Errorf("failed to get plan steps: %w", err)
 		}
-		return writeJSON(cmd.OutOrStdout(), planOutput{Plan: &plan, Steps: steps})
+		if err := writeJSON(cmd.OutOrStdout(), planOutput{Plan: &plan, Steps: steps}); err != nil {
+			return err
+		}
+		if plan.LinkedSessions == 0 {
+			// Human-facing nudge only (stderr), so scripts piping the JSON
+			// on stdout are unaffected. See AGENTS.md's "Attribute your own
+			// session to the plan you're working on" for the full rationale.
+			fmt.Fprintln(cmd.ErrOrStderr(), "note: this plan has no linked sessions yet -- if an external "+
+				"session is working on it, run 'foundry sessions attach' (or 'foundry sessions attach --self') "+
+				"so the work gets attributed.")
+		}
+		return nil
 	},
 }
 
