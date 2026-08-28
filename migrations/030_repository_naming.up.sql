@@ -18,7 +18,7 @@
 -- deleting or renaming anything, since that row would violate the
 -- locator-presence invariant once validated below.
 
--- nucleus-hooks:ignore-next-er-check reason: "data-only cleanup of unreferenced locatorless projects rows plus a read-only referenced-row count check ahead of the projects->repositories rename; no schema/ER change happens in this block, the DDL renames follow separately below"
+-- nucleus-hooks:ignore-next: data-only cleanup of unreferenced locatorless projects rows plus a read-only referenced-row count check ahead of the projects->repositories rename; no schema/ER change happens in this block, the DDL renames follow separately below
 DO $$
 DECLARE
     unenforceable_count BIGINT;

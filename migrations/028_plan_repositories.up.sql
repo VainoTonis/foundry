@@ -33,7 +33,7 @@ SELECT 'easyparkgroup/fleet-memory', '/home/tonis/git/arrive/fleet-memory', 'ssh
 WHERE NOT EXISTS (SELECT 1 FROM projects WHERE name = 'easyparkgroup/fleet-memory');
 
 -- Backfill plan_repositories, position 0, one row per plan.
--- nucleus-hooks:ignore-next-er-check reason: "data-only backfill loop over existing plans/repo_name values into plan_repositories; no schema/ER change, just populating the new join table from legacy columns before they are dropped below"
+-- nucleus-hooks:ignore-next: data-only backfill loop over existing plans/repo_name values into plan_repositories; no schema/ER change, just populating the new join table from legacy columns before they are dropped below
 DO $$
 DECLARE
     plan_rec RECORD;
@@ -68,7 +68,7 @@ BEGIN
 END $$;
 
 -- Verify every plan ended up with a position-0 row.
--- nucleus-hooks:ignore-next-er-check reason: "data-only post-backfill assertion that every plan has a position-0 plan_repositories row; read-only validation, does not alter schema or relationships"
+-- nucleus-hooks:ignore-next: data-only post-backfill assertion that every plan has a position-0 plan_repositories row; read-only validation, does not alter schema or relationships
 DO $$
 DECLARE
     missing_count BIGINT;
