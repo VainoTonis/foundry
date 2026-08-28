@@ -399,6 +399,16 @@ func (h *Handler) runPlan(w http.ResponseWriter, r *http.Request, id int64) {
 	jsonOK(w, runPlanResult{Workflow: wf, ReviewWarnings: warnings}, http.StatusCreated)
 }
 
+// planWithLinkedSessions is the GET /api/plans/{id} response: the plan
+// itself plus how many session_plan_links rows reference it, so a caller
+// can tell whether any session has ever been attributed to this plan
+// without fetching full session details (which would bloat this response
+// for no benefit here).
+type planWithLinkedSessions struct {
+	db.Plan
+	LinkedSessions int `json:"linked_sessions"`
+}
+
 // runPlanResult is runPlan's response: the created workflow plus any
 // advisory Steward review warnings, so a caller sees both without the
 // workflow's own JSON shape changing.
@@ -509,7 +519,12 @@ func (h *Handler) HandlePlan(w http.ResponseWriter, r *http.Request) {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		jsonOK(w, p, http.StatusOK)
+		links, err := db.ListSessionPlanLinksByPlan(r.Context(), h.pool, id)
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonOK(w, planWithLinkedSessions{Plan: p, LinkedSessions: len(links)}, http.StatusOK)
 	case suffix == "" && r.Method == http.MethodPatch:
 		var body struct {
 			Status        *string  `json:"status"`

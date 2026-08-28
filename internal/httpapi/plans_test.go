@@ -84,6 +84,50 @@ func createTestPlan(t *testing.T, h *Handler, repositoryIDs []int64, title strin
 	return created.ID
 }
 
+// TestGetPlanLinkedSessionsCount covers GET /api/plans/{id}: the
+// linked_sessions field is 0 when no session_plan_links rows reference
+// the plan, and reflects the exact count once some are created via
+// db.CreateSessionPlanLink.
+func TestGetPlanLinkedSessionsCount(t *testing.T) {
+	h := newPlansHandler(t)
+
+	repoID := createTestPlanRepository(t, h, "linked-sessions-repo", "https://github.com/foo/linked-sessions.git")
+	planID := createTestPlan(t, h, []int64{repoID}, "linked-sessions-plan")
+
+	getPlan := func() (code int, linkedSessions int) {
+		req := httptest.NewRequest(http.MethodGet, "/api/plans/"+itoa(planID), nil)
+		rec := httptest.NewRecorder()
+		h.HandlePlan(rec, req)
+		var body struct {
+			LinkedSessions int `json:"linked_sessions"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("unmarshal plan response: %v (body=%s)", err, rec.Body.String())
+		}
+		return rec.Code, body.LinkedSessions
+	}
+
+	if code, count := getPlan(); code != http.StatusOK || count != 0 {
+		t.Fatalf("before linking: status = %d, linked_sessions = %d", code, count)
+	}
+
+	sessionOneID := createTestAgentSession(t, h, "linked-sessions-session-one")
+	sessionTwoID := createTestAgentSession(t, h, "linked-sessions-session-two")
+	for _, agentSessionID := range []int64{sessionOneID, sessionTwoID} {
+		if _, err := db.CreateSessionPlanLink(t.Context(), h.pool, db.CreateSessionPlanLinkParams{
+			AgentSessionID: agentSessionID,
+			PlanID:         planID,
+			Method:         db.SessionPlanLinkMethodExplicit,
+		}); err != nil {
+			t.Fatalf("CreateSessionPlanLink: %v", err)
+		}
+	}
+
+	if code, count := getPlan(); code != http.StatusOK || count != 2 {
+		t.Fatalf("after linking: status = %d, linked_sessions = %d", code, count)
+	}
+}
+
 // TestHandlePlanPatchRepositoryIDs covers PATCH /api/plans/{id} with a
 // repository_ids body field: a valid replacement round-trips and an
 // empty array is rejected with 400 before reaching the DB layer.

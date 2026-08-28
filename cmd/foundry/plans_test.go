@@ -232,3 +232,47 @@ func TestReviewReviewsAndCheckCommands(t *testing.T) {
 		t.Fatalf("no-review check output = %+v", noReview)
 	}
 }
+
+func TestGetPlanNudgesOnStderrOnlyWhenNoLinkedSessions(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/plans/20":
+			fmt.Fprint(w, `{"id":20,"linked_sessions":0}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/plans/20/steps":
+			fmt.Fprint(w, `[]`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/plans/21":
+			fmt.Fprint(w, `{"id":21,"linked_sessions":2}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/plans/21/steps":
+			fmt.Fprint(w, `[]`)
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	oldURL := apiURL
+	apiURL = server.URL
+	defer func() { apiURL = oldURL }()
+
+	var out, errOut bytes.Buffer
+	getCmd.SetOut(&out)
+	getCmd.SetErr(&errOut)
+	if err := getCmd.RunE(getCmd, []string{"20"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(errOut.String(), "foundry sessions attach") {
+		t.Fatalf("expected nudge on stderr for plan with no linked sessions, got %q", errOut.String())
+	}
+	if strings.Contains(out.String(), "foundry sessions attach") {
+		t.Fatalf("nudge must not leak into stdout JSON, got %q", out.String())
+	}
+
+	out.Reset()
+	errOut.Reset()
+	if err := getCmd.RunE(getCmd, []string{"21"}); err != nil {
+		t.Fatal(err)
+	}
+	if errOut.String() != "" {
+		t.Fatalf("expected no nudge for plan with linked sessions, got %q", errOut.String())
+	}
+}
