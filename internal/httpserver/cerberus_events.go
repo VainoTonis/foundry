@@ -505,6 +505,31 @@ func applyManagedCerberusAttribution(current, managed telemetry.Attribution) tel
 	return current
 }
 
+// cerberusPiParentSessionPrefix identifies the one parent_session shape this
+// code resolves to a parent_source_session_id: a literal "pi:" prefix
+// followed by the parent's source_session_id. This matches the scope of the
+// migration 040 backfill exactly; any other shape (raw paths, empty, etc.)
+// is left unresolved.
+const cerberusPiParentSessionPrefix = "pi:"
+
+// resolveCerberusParentSourceSessionID resolves a session_start event's
+// parent_session field to the parent's source_session_id, when possible. It
+// only attempts resolution for the "pi:<source_session_id>" shape, and only
+// returns a non-nil value when an agent_sessions row already exists for that
+// source_session_id. A parent that has not been recorded yet is an expected,
+// normal race given event ordering -- not an error -- so this never blocks
+// or retries; it simply leaves the value unresolved for now.
+func resolveCerberusParentSourceSessionID(ctx context.Context, pool *pgxpool.Pool, parentSession string) *string {
+	sourceSessionID, ok := strings.CutPrefix(parentSession, cerberusPiParentSessionPrefix)
+	if !ok || sourceSessionID == "" {
+		return nil
+	}
+	if _, err := db.GetAgentSessionBySourceSessionID(ctx, pool, sourceSessionID); err != nil {
+		return nil
+	}
+	return &sourceSessionID
+}
+
 func managedMessageEndCostDecision(phaseID int64, phaseErr error, costUSD float64) (int64, float64, bool) {
 	if phaseErr != nil {
 		return 0, 0, false
@@ -545,6 +570,7 @@ func (s *Server) ingestCerberusTelemetryWith(ctx context.Context, raw []byte, ev
 		if attribution, ok := s.resolveManagedCerberusAttribution(ctx, evt.Session); ok {
 			tev.Attribution = applyManagedCerberusAttribution(tev.Attribution, attribution)
 		}
+		tev.Session.ParentSourceSessionID = resolveCerberusParentSourceSessionID(ctx, s.pool, fields.ParentSession)
 	}
 	if err := ingest(ctx, s.pool, tev); err != nil && !errors.Is(err, telemetry.ErrDuplicateEvent) {
 		log.Printf("cerberus telemetry ingest: %v", err)
