@@ -3,6 +3,7 @@ package review
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -83,9 +84,14 @@ const (
 )
 
 // BuildContext assembles the bounded, two-pass review prompt for one
-// plan snapshot and one contract. It fails if snapshot has no encoded
-// JSON, or if contract's version or content is blank.
-func BuildContext(snapshot Snapshot, contract Contract) (Context, error) {
+// plan snapshot and one contract, plus an informational session
+// attribution summary. attribution is rendered as its own prompt
+// section but is deliberately never folded into snapshot itself: it
+// reflects session attribution activity, not plan content, so it must
+// never affect Snapshot.SHA256 or make an otherwise-still-valid review
+// look stale. BuildContext fails if snapshot has no encoded JSON, or if
+// contract's version or content is blank.
+func BuildContext(snapshot Snapshot, contract Contract, attribution SessionAttributionSummary) (Context, error) {
 	if len(snapshot.JSON) == 0 {
 		return Context{}, fmt.Errorf("build context: snapshot is required")
 	}
@@ -99,15 +105,16 @@ func BuildContext(snapshot Snapshot, contract Contract) (Context, error) {
 	return Context{
 		Snapshot: snapshot,
 		Contract: contract,
-		Prompt:   buildPrompt(snapshot, contract),
+		Prompt:   buildPrompt(snapshot, contract, attribution),
 	}, nil
 }
 
 // buildPrompt renders the contract, the fingerprinted plan snapshot, the
-// read-only mount manifest (container paths and unavailable disclosures
-// only, never a host path), and the fixed two-pass, strict-report
-// instructions, in that order.
-func buildPrompt(snapshot Snapshot, contract Contract) string {
+// informational session attribution summary (never part of the
+// snapshot or its fingerprint), the read-only mount manifest (container
+// paths and unavailable disclosures only, never a host path), and the
+// fixed two-pass, strict-report instructions, in that order.
+func buildPrompt(snapshot Snapshot, contract Contract, attribution SessionAttributionSummary) string {
 	var b strings.Builder
 
 	b.WriteString("# Steward plan review\n\n")
@@ -121,9 +128,37 @@ func buildPrompt(snapshot Snapshot, contract Contract) string {
 	b.Write(snapshot.JSON)
 	b.WriteString("\n```\n\n")
 
+	b.WriteString(sessionAttributionSection(attribution))
 	b.WriteString(mountManifestSection(snapshot.Plan.Repositories))
 	b.WriteString(passInstructions)
 
+	return b.String()
+}
+
+// sessionAttributionSection renders attribution as an explicitly
+// informational section: how many agent sessions are currently linked
+// to the plan under review, and their breakdown by attribution method.
+// This section is never part of the reviewed content or its fingerprint
+// -- session attribution activity is not a change to the plan itself,
+// so it must never make an existing, otherwise-still-valid review look
+// stale. See SessionAttributionSummary in snapshot.go.
+func sessionAttributionSection(attribution SessionAttributionSummary) string {
+	var b strings.Builder
+	b.WriteString("## Session attribution (informational; not part of the reviewed content or its fingerprint)\n\n")
+	if attribution.Total == 0 {
+		b.WriteString("No agent sessions are currently linked to this plan.\n\n")
+		return b.String()
+	}
+	fmt.Fprintf(&b, "%d agent session(s) are currently linked to this plan, by attribution method:\n\n", attribution.Total)
+	methods := make([]string, 0, len(attribution.ByMethod))
+	for method := range attribution.ByMethod {
+		methods = append(methods, method)
+	}
+	sort.Strings(methods)
+	for _, method := range methods {
+		fmt.Fprintf(&b, "- %s: %d\n", method, attribution.ByMethod[method])
+	}
+	b.WriteString("\n")
 	return b.String()
 }
 

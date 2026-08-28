@@ -33,6 +33,25 @@ type planReviewView struct {
 	Stale bool `json:"stale"`
 }
 
+// summarizeSessionAttribution reduces links -- one row per session
+// currently attributed to the plan being reviewed -- to a minimal-
+// disclosure count and per-method breakdown, never exposing any
+// individual session's name or id. See review.SessionAttributionSummary
+// for why this is passed to a review as informational-only, never as
+// part of its fingerprinted content.
+func summarizeSessionAttribution(links []db.SessionPlanLink) review.SessionAttributionSummary {
+	summary := review.SessionAttributionSummary{Total: len(links)}
+	if len(links) == 0 {
+		return summary
+	}
+	byMethod := make(map[string]int)
+	for _, l := range links {
+		byMethod[l.Method]++
+	}
+	summary.ByMethod = byMethod
+	return summary
+}
+
 // currentPlanSnapshotHash recomputes the exact snapshot fingerprint
 // RunStewardReview would compute for plan right now, from its current
 // steps and open feedback, so a stored review's input hash can be
@@ -217,13 +236,20 @@ func (h *Handler) createPlanReview(w http.ResponseWriter, r *http.Request, planI
 		return
 	}
 
+	links, err := db.ListSessionPlanLinksByPlan(r.Context(), h.pool, planID)
+	if err != nil {
+		jsonErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	result, err := h.reviewRunner.StartStewardReview(r.Context(), review.RunOptions{
-		Plan:     plan,
-		Steps:    steps,
-		Feedback: feedback,
-		Contract: h.reviewContract,
-		Model:    h.reviewModel,
-		Timeout:  h.reviewTimeout,
+		Plan:               plan,
+		Steps:              steps,
+		Feedback:           feedback,
+		Contract:           h.reviewContract,
+		SessionAttribution: summarizeSessionAttribution(links),
+		Model:              h.reviewModel,
+		Timeout:            h.reviewTimeout,
 	})
 	if err != nil {
 		jsonErr(w, err.Error(), http.StatusBadGateway)
